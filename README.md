@@ -9,3 +9,6 @@ Paper:https://link.springer.com/chapter/10.1007/978-3-031-46914-5_21
 
 motivation for work: https://www.youtube.com/watch?v=Z7hZWCBp4qc&t=89s
 
+scope of work: https://gtvault-my.sharepoint.com/:p:/g/personal/bshi42_gatech_edu/EbASuKEgRJBPtxvYBjpL_XABHrGXoHJ8gNl4RgKLdm43cg?e=iji9O3
+
+
