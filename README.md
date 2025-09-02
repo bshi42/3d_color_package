@@ -13,5 +13,7 @@ scope of work: https://gtvault-my.sharepoint.com/:p:/g/personal/bshi42_gatech_ed
 
 motivating paper for 2D: https://onlinelibrary.wiley.com/doi/10.1111/ele.14378
 
+make model gif: https://ezgif.com/maker/ezgif-4e97056e891470-split
+
 
 
