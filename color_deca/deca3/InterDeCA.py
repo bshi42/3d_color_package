@@ -841,8 +841,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # run DeCA shape analysis
     if self.analysisTypeShape.checked:
       self.logInfoDC.appendPlainText(f"Calculating point correspondences to atlas")
-      logic.runDCAlign(atlasModelPath, atlasLMPath, self.folderNames['alignedModels'],
-      self.folderNames['alignedLMs'], self.folderNames['output'], self.writeErrorCheckBox.checked)
+      logic.runDCAlign(atlasModelPath, atlasLMPath, self.folderNames['alignedModels'], 
+                       self.folderNames['alignedLMs'], self.folderNames['output'], 
+                       self.writeErrorCheckBox.checked)
     # run DeCA symmetry analysis
     else:
       # generate mirrored landmarks and models
@@ -1071,7 +1072,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           slicer.mrmlScene.RemoveNode(rigidTransformNode)
           slicer.mrmlScene.RemoveNode(mirrorLMNode)
 
-  def runDCAlign(self, baseMeshPath, baseLMPath, meshDirectory, landmarkDirectory, outputDirectory, optionErrorOutput):
+  def runDCAlign(self, baseMeshPath, baseLMPath, alignedMeshDir, landmarkDirectory, outputDirectory, optionErrorOutput):
+    """ Main function for dense correspondence. UV transfer is now integrated into denseSurfaceCorrespondencePair. """
     if optionErrorOutput:
       self.errorCheckPath = os.path.join(outputDirectory, "errorChecking")
       if not os.path.exists(self.errorCheckPath):
@@ -1080,15 +1082,13 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     baseMesh = baseNode.GetPolyData()
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
     modelExt=['ply','stl','vtp']
-    self.modelNames, models = self.importMeshes(meshDirectory, modelExt)
+    self.modelNames, models = self.importMeshes(alignedMeshDir, modelExt) 
     landmarkNames,landmarks = self.importLandmarks(landmarkDirectory)
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks)
 
-    # --- BEGIN DEFINITIVE FIX: Save resampled models using Slicer's coordinate-aware logic ---
     resampledModelPath = os.path.join(outputDirectory, "resampledModels")
     if os.path.exists(resampledModelPath):
       print(f"Saving {denseCorrespondenceGroup.GetNumberOfBlocks()} resampled models to: {resampledModelPath}")
-      # Create a single temporary node that we will reuse for saving
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
       
       for i in range(denseCorrespondenceGroup.GetNumberOfBlocks()):
@@ -1096,18 +1096,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         subjectName = self.modelNames[i].replace('_align', '')
         outputFileName = os.path.join(resampledModelPath, f"{subjectName}_resampled.ply")
         
-        # Assign the polydata to our temporary node
         tempModelNode.SetAndObservePolyData(resampledMesh)
-        
-        # Use slicer.util.saveNode(), which correctly handles RAS/LPS coordinates
         slicer.util.saveNode(tempModelNode, outputFileName)
 
-      # Clean up the temporary node from the scene after the loop is done
       slicer.mrmlScene.RemoveNode(tempModelNode)
-    # --- END DEFINITIVE FIX ---
 
     self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
-    # save results to output directory
     outputModelName = 'decaResultModel.vtp'
     outputModelPath = os.path.join(outputDirectory, outputModelName)
     slicer.util.saveNode(baseNode, outputModelPath)
@@ -1456,44 +1450,64 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanTransformBaseFilter.SetInputData(baseMesh)
     meanTransformBaseFilter.SetTransform(meanTransformBase)
     meanTransformBaseFilter.Update()
-    meanWarpedBase = meanTransformBaseFilter.GetOutput()
+    meanWarpedBase = meanTransformBaseFilter.GetOutput() # Warped atlas
 
-    # write ouput
-    if hasattr(self,"errorCheckPath"):
-      plyWriterSubject = vtk.vtkPLYWriter()
-      plyName = "subject_" + self.modelNames[iteration] + ".ply"
-      plyPath = os.path.join(self.errorCheckPath, plyName)
-      plyWriterSubject.SetFileName(plyPath)
-      plyWriterSubject.SetInputData(meanWarpedMesh)
-      plyWriterSubject.Write()
+    # --- BEGIN INTEGRATED RESAMPLING AND UV TRANSFER ---
 
-      plyWriterBase = vtk.vtkPLYWriter()
-      plyName = "base.ply"
-      plyPath = os.path.join(self.errorCheckPath, plyName)
-      plyWriterBase.SetFileName(plyPath)
-      plyWriterBase.SetInputData(meanWarpedBase)
-      plyWriterBase.Write()
+    # Check if the warped subject mesh has UVs to transfer
+    warpedUVs = meanWarpedMesh.GetPointData().GetTCoords()
+    if warpedUVs:
+        print(f"UVs found for subject {self.modelNames[iteration]}, preparing for transfer.")
+        newUVs = vtk.vtkFloatArray()
+        newUVs.SetName("TransferredUVs")
+        newUVs.SetNumberOfComponents(2)
+        newUVs.SetNumberOfTuples(meanWarpedBase.GetNumberOfPoints())
 
-    # Dense correspondence
+    # Build search locator on the warped subject mesh
     cellLocator = vtk.vtkCellLocator()
     cellLocator.SetDataSet(meanWarpedMesh)
     cellLocator.BuildLocator()
 
-    point = [0,0,0]
-    correspondingPoint = [0,0,0]
     correspondingPoints = vtk.vtkPoints()
-    cellId = vtk.reference(0)
-    subId = vtk.reference(0)
-    distance = vtk.reference(0.0)
     for i in range(meanWarpedBase.GetNumberOfPoints()):
-      meanWarpedBase.GetPoint(i,point)
-      cellLocator.FindClosestPoint(point,correspondingPoint,cellId, subId, distance)
-      correspondingPoints.InsertPoint(i,correspondingPoint)
+        point = meanWarpedBase.GetPoint(i)
 
-    #Copy points into mesh with base connectivity
+        # Find the closest point on the warped SUBJECT's surface
+        closestPoint, closestCellId, subId, dist2 = [0.0, 0.0, 0.0], vtk.reference(0), vtk.reference(0), vtk.reference(0.0)
+        cellLocator.FindClosestPoint(point, closestPoint, closestCellId, subId, dist2)
+        
+        # This new point is the resampled POSITION
+        correspondingPoints.InsertPoint(i, closestPoint)
+
+        # If we have UVs, calculate the resampled UV as well
+        if warpedUVs:
+            actualCellId = closestCellId.get()
+            cell = meanWarpedMesh.GetCell(actualCellId)
+            
+            if cell and cell.GetNumberOfPoints() == 3:
+                weights = [0.0] * cell.GetNumberOfPoints()
+                closestPointOutput = [0.0, 0.0, 0.0]
+                pcoords_ignored = [0.0, 0.0, 0.0]
+                dist2_ignored = vtk.reference(0.0)
+                cell.EvaluatePosition(closestPoint, closestPointOutput, subId, pcoords_ignored, dist2_ignored, weights)
+                
+                cellPointIds = cell.GetPointIds()
+                uv0, uv1, uv2 = warpedUVs.GetTuple2(cellPointIds.GetId(0)), warpedUVs.GetTuple2(cellPointIds.GetId(1)), warpedUVs.GetTuple2(cellPointIds.GetId(2))
+                
+                u_new = weights[0] * uv0[0] + weights[1] * uv1[0] + weights[2] * uv2[0]
+                v_new = weights[0] * uv0[1] + weights[1] * uv1[1] + weights[2] * uv2[1]
+                newUVs.SetTuple2(i, u_new, v_new)
+            else:
+                newUVs.SetTuple2(i, 0.0, 0.0) # Set a default UV if something goes wrong
+
+    # --- END INTEGRATED RESAMPLING AND UV TRANSFER ---
+
+    # Assemble the new mesh with the new points and (if available) new UVs
     correspondingMesh = vtk.vtkPolyData()
     correspondingMesh.SetPoints(correspondingPoints)
-    correspondingMesh.SetPolys(meanWarpedBase.GetPolys())
+    correspondingMesh.SetPolys(meanWarpedBase.GetPolys()) # Use ATLAS connectivity
+    if warpedUVs:
+        correspondingMesh.GetPointData().SetTCoords(newUVs)
 
     # Apply inverse warping
     inverseTransform = vtk.vtkThinPlateSplineTransform()
