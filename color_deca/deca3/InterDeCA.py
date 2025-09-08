@@ -155,6 +155,53 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.setToolTip("Select directory containing landmarks")
     DeCAWidgetLayout.addRow("Landmark directory: ", self.landmarkDirectoryDC)
 
+    # --- Textures directory (subject PNGs) ---
+    self.textureDirectoryDC = ctk.ctkPathLineEdit()
+    self.textureDirectoryDC.filters = ctk.ctkPathLineEdit.Dirs
+    self.textureDirectoryDC.setToolTip("Directory with subject PNG textures (file name must match subject ID).")
+    DeCAWidgetLayout.addRow("Textures directory (png): ", self.textureDirectoryDC)
+
+    # --- Blender integration ---
+    self.blenderGroup = ctk.ctkCollapsibleButton()
+    self.blenderGroup.text = "Blender (cleanup, UV, bake)"
+    DeCAWidgetLayout.addRow(self.blenderGroup)
+    blForm = qt.QFormLayout(self.blenderGroup)
+
+    self.blenderExeEdit = ctk.ctkPathLineEdit()
+    self.blenderExeEdit.filters = ctk.ctkPathLineEdit().Files
+    self.blenderExeEdit.setToolTip("Path to Blender executable (blender, blender.exe).")
+    blForm.addRow("Blender executable:", self.blenderExeEdit)
+
+    self.blMergeDistSpin = qt.QDoubleSpinBox()
+    self.blMergeDistSpin.setDecimals(6); self.blMergeDistSpin.setRange(0.0, 1e3); self.blMergeDistSpin.setValue(0.0001)
+    self.blMergeDistSpin.setToolTip("Merge by Distance threshold in model units (used on atlas & resampled before bake).")
+    blForm.addRow("Merge by distance:", self.blMergeDistSpin)
+
+    self.blSmartAngleSpin = qt.QDoubleSpinBox()
+    self.blSmartAngleSpin.setRange(1.0, 179.0); self.blSmartAngleSpin.setValue(66.0)
+    self.blSmartAngleSpin.setToolTip("Smart UV Project angle limit (degrees).")
+    blForm.addRow("Smart UV angle (deg):", self.blSmartAngleSpin)
+
+    self.blIslandMarginSpin = qt.QDoubleSpinBox()
+    self.blIslandMarginSpin.setDecimals(4); self.blIslandMarginSpin.setRange(0.0, 0.05); self.blIslandMarginSpin.setValue(0.002)
+    self.blIslandMarginSpin.setToolTip("Smart UV island margin (UV units).")
+    blForm.addRow("Island margin (UV):", self.blIslandMarginSpin)
+
+    self.bakeSizeSpin = qt.QSpinBox()
+    self.bakeSizeSpin.setRange(128, 8192); self.bakeSizeSpin.setSingleStep(128); self.bakeSizeSpin.setValue(2048)
+    self.bakeSizeSpin.setToolTip("Baked texture size (square).")
+    blForm.addRow("Bake size (px):", self.bakeSizeSpin)
+
+    self.bakeExtrusionSpin = qt.QDoubleSpinBox()
+    self.bakeExtrusionSpin.setDecimals(6); self.bakeExtrusionSpin.setRange(0.0, 10.0); self.bakeExtrusionSpin.setValue(0.001)
+    self.bakeExtrusionSpin.setToolTip("Selection→Active bake cage extrusion distance (Blender units).")
+    blForm.addRow("Bake extrusion:", self.bakeExtrusionSpin)
+
+    self.bakeMarginPxSpin = qt.QSpinBox()
+    self.bakeMarginPxSpin.setRange(0, 64); self.bakeMarginPxSpin.setValue(2)
+    self.bakeMarginPxSpin.setToolTip("Bake dilation margin (pixels).")
+    blForm.addRow("Bake margin (px):", self.bakeMarginPxSpin)
+
     #
     # Select DeCA output directory
     #
@@ -206,6 +253,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.outputDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.applyButtonDC.connect('clicked(bool)', self.onDCApplyButton)
+    self.textureDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
+    self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)
+
 
     ################################### DeCAL Tab ###################################
     # ... (The DeCAL Tab code remains unchanged) ...
@@ -424,15 +474,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.subjectIDBox.enabled = False
     self.heatmapFrameLayout.addRow("Subject ID: ", self.subjectIDBox)
 
-    #
-    # --- Frame for Interpolation Visualization ---
-    #
+    # --- Frame for Interpolation Visualization (bring back) ---
     self.interpolationFrame = qt.QFrame()
     self.interpolationFrameLayout = qt.QFormLayout(self.interpolationFrame)
-    self.interpolationFrame.setVisible(False)  # Hidden by default
+    self.interpolationFrame.setVisible(False)  # hidden by default
     visualizeWidgetLayout.addRow(self.interpolationFrame)
 
-    # Select Atlas Model (This remains the same)
+    # Atlas model (target of interpolation)
     self.atlasModelSelect = slicer.qMRMLNodeComboBox()
     self.atlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
     self.atlasModelSelect.setToolTip("Select the atlas or mean shape model")
@@ -444,19 +492,18 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.atlasModelSelect.setMRMLScene(slicer.mrmlScene)
     self.interpolationFrameLayout.addRow("Atlas Model: ", self.atlasModelSelect)
 
-    # UPDATED: Select Resampled Model Directory
+    # Directory & file selector for a resampled subject
     self.visOriginalModelDirSelector = ctk.ctkPathLineEdit()
     self.visOriginalModelDirSelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.visOriginalModelDirSelector.setToolTip("Select the directory of resampled models (the 'resampledModels' folder from your DeCA output)")
-    self.interpolationFrameLayout.addRow("Resampled Model Directory:", self.visOriginalModelDirSelector) # <-- Label changed
+    self.visOriginalModelDirSelector.setToolTip("Select the directory of resampled models")
+    self.interpolationFrameLayout.addRow("Resampled Model Directory:", self.visOriginalModelDirSelector)
 
-    # UPDATED: Select Resampled Model from a file
     self.visOriginalModelFileSelector = qt.QComboBox()
     self.visOriginalModelFileSelector.setToolTip("Select a resampled subject model from the directory above")
     self.visOriginalModelFileSelector.enabled = False
-    self.interpolationFrameLayout.addRow("Resampled Subject Model:", self.visOriginalModelFileSelector) # <-- Label changed
+    self.interpolationFrameLayout.addRow("Resampled Subject Model:", self.visOriginalModelFileSelector)
 
-    # Interpolation Slider (This is mostly the same)
+    # Interpolation slider
     self.interpolationSlider = ctk.ctkSliderWidget()
     self.interpolationSlider.singleStep = 0.01
     self.interpolationSlider.minimum = 0.0
@@ -465,6 +512,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.interpolationSlider.setToolTip("Interpolate between original model (0.0) and atlas model (1.0)")
     self.interpolationSlider.enabled = False
     self.interpolationFrameLayout.addRow("Interpolation (Original to Atlas):", self.interpolationSlider)
+
+
+    self.previewTextureCombo = qt.QComboBox()
+    self.previewTextureCombo.setToolTip("Preview a baked atlas-space PNG on the atlas model.")
+    visualizeWidgetLayout.addRow("Preview baked texture:", self.previewTextureCombo)
+    self.previewTextureCombo.connect("currentIndexChanged(int)", self.onPreviewTextureSelected)
+
+    self.lastBakedTexturesPath = None
+    self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
 
     # Connections
     self.meshSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onVisualizeMeshSelect)
@@ -750,26 +806,42 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   def generateNewAtlas(self, removeScale, log):
     logic = InterDeCALogic()
-    closestToMeanLandmarkPath = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
-    tempBaseLMs = slicer.util.loadMarkups(os.path.join(self.folderNames['originalLMs'],closestToMeanLandmarkPath))
-    subjectID = Path(closestToMeanLandmarkPath)
-    while subjectID.suffix in {'.fcsv', '.mrk', '.json'}:
-      subjectID = subjectID.with_suffix('')
+
+    # getClosestToMeanPath now returns a SUBJECT BASENAME (no extension)
+    subjectID = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
     log.appendPlainText(f"Closest sample to mean: {subjectID}")
+
+    # Resolve the actual landmark/model files by subject ID (handles any extension)
+    tempBaseLMs = logic.getLandmarkFileByID(self.folderNames['originalLMs'], subjectID)
+    if tempBaseLMs is None:
+      log.appendPlainText(f"Can't find landmarks for '{subjectID}' in {self.folderNames['originalLMs']}")
+      return None, None
+
     tempBaseModel = logic.getModelFileByID(self.folderNames['originalModels'], subjectID)
+    if tempBaseModel is None:
+      log.appendPlainText(f"Can't find model for '{subjectID}' in {self.folderNames['originalModels']}")
+      return None, None
+
     log.appendPlainText(f"Rigid Alignment to: {subjectID}")
     try:
-      logic.runAlign(tempBaseModel, tempBaseLMs, self.folderNames['originalModels'], self.folderNames['originalLMs'], self.folderNames['tempAlignedModels'], self.folderNames['tempAlignedLMs'], removeScale)
+      logic.runAlign(tempBaseModel, tempBaseLMs,
+                    self.folderNames['originalModels'], self.folderNames['originalLMs'],
+                    self.folderNames['tempAlignedModels'], self.folderNames['tempAlignedLMs'],
+                    removeScale)
     except ValueError as errorText:
-      self.logInfoDCL.appendPlainText(str(errorText))
-      return
-    self.logInfoDCL.appendPlainText(f"Generating the average template")
-    atlasModel, atlasLMs = logic.runMean(self.folderNames['tempAlignedLMs'], self.folderNames['tempAlignedModels'])
+      log.appendPlainText(str(errorText))
+      return None, None
+
+    log.appendPlainText("Generating the average template")
+    atlasModel, atlasLMs = logic.runMean(self.folderNames['tempAlignedLMs'],
+                                        self.folderNames['tempAlignedModels'])
+
     slicer.mrmlScene.RemoveNode(tempBaseModel)
     slicer.mrmlScene.RemoveNode(tempBaseLMs)
     shutil.rmtree(self.folderNames['tempAlignedModels'])
     shutil.rmtree(self.folderNames['tempAlignedLMs'])
     return atlasModel, atlasLMs
+
 
   def onGetPointNumberButton(self):
     logic = InterDeCALogic()
@@ -778,85 +850,152 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.DCLApplyButton.enabled = True
 
   def onTabChanged(self, index):
-    """
-    Called when the user switches tabs. Used to prepopulate
-    the Visualize tab with the most recent DeCA output.
-    """
-    # Check if the newly selected tab is "Visualize Results"
     if self.tabsWidget.tabText(index) == "Visualize Results":
-      # Check if we have a stored path from a recent DeCA run
-      if self.lastDeCAAlignedModelsPath and os.path.isdir(self.lastDeCAAlignedModelsPath):
-        # If the field is empty, prepopulate it.
-        if not self.visOriginalModelDirSelector.currentPath:
-          self.visOriginalModelDirSelector.setCurrentPath(self.lastDeCAAlignedModelsPath)
+      self._hideMarkupsForVisualization(remove=False) 
+      self.updateBakedPreviewList()
+      self._ensureModelsAreVisible()
+
+  def updateBakedPreviewList(self):
+    self.previewTextureCombo.blockSignals(True)
+    self.previewTextureCombo.clear()
+    d = self.lastBakedTexturesPath
+    if d and os.path.isdir(d):
+      items = [os.path.splitext(f)[0] for f in sorted(os.listdir(d)) if f.lower().endswith('.png')]
+      for it in items: self.previewTextureCombo.addItem(it)
+    self.previewTextureCombo.blockSignals(False)
+
+  def onPreviewTextureSelected(self, idx):
+    if idx < 0: return
+    if not hasattr(self, 'atlasModel') or self.atlasModel is None:
+      slicer.util.errorDisplay("Atlas model is not in the scene.")
+      return
+    sid = self.previewTextureCombo.currentText
+    png = os.path.join(self.lastBakedTexturesPath or "", sid + ".png")
+    if not os.path.isfile(png): return
+    InterDeCALogic().applyTextureToModel(self.atlasModel, png)
 
   def onDCApplyButton(self):
     logic = InterDeCALogic()
-    #set up output directory
-    symmetryOption = self.analysisTypeSymmetry.checked
-    writeErrorOption = self.writeErrorCheckBox.checked
-    loadAtlasOption = self.loadAtlasOptionDC.checked
+    symmetryOption    = self.analysisTypeSymmetry.checked
+    writeErrorOption  = self.writeErrorCheckBox.checked
+    loadAtlasOption   = self.loadAtlasOptionDC.checked
     removeScaleOption = self.removeScaleCheckBoxDC.checked
-    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
-    
-    
-    # NEW: Store the path to the aligned models directory for later use
-    self.lastDeCAAlignedModelsPath = self.folderNames['resampledModels']
 
-    if self.folderNames == {}:
+    # Folders
+    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
+    if not self.folderNames:
       self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
       return
-    self.folderNames['originalLMs'] = self.landmarkDirectoryDC.currentPath
+    self.folderNames['originalLMs']  = self.landmarkDirectoryDC.currentPath
     self.folderNames['originalModels'] = self.meshDirectoryDC.currentPath
-    #generate or load atlas
+    self.lastDeCAAlignedModelsPath = self.folderNames['resampledModels']  # for Visualize tab
+
+    # ---- 1) Load or compute atlas (Slicer) ----
     if loadAtlasOption:
       try:
-        atlasModelPath = self.DCBaseModelSelector.currentPath
-        self.atlasModel = slicer.util.loadModel(atlasModelPath)
-      except:
-        self.logInfoDC.appendPlainText(f"Can't load model from: {atlasModelPath}")
+        self.atlasModel = slicer.util.loadModel(self.DCBaseModelSelector.currentPath)
+      except Exception:
+        self.logInfoDC.appendPlainText(f"Can't load model from: {self.DCBaseModelSelector.currentPath}")
         return
       try:
-        atlasLMPath = self.DCBaseLMSelector.currentPath
-        self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
-      except:
-        print("Can't load from: ", atlasLMPath)
-        self.logInfoDC.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
+        self.atlasLMs = slicer.util.loadMarkups(self.DCBaseLMSelector.currentPath)
+      except Exception:
+        self.logInfoDC.appendPlainText(f"Can't load landmarks from: {self.DCBaseLMSelector.currentPath}")
         return
     else:
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
-    # save atlas model and landmarks to output file
-    atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
-    self.logInfoDC.appendPlainText(f"Saving atlas model to {atlasModelPath}")
-    slicer.util.saveNode(self.atlasModel, atlasModelPath)
-    atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
-    self.logInfoDC.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
-    slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-    # rigid alignment to atlas
+
+    # Save an intermediate atlas file (RAS) so Blender can read it
+    atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
+    logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
+
+    # ---- 2) Blender cleanup + Smart UV ----
+    blender_exe    = self.blenderExeEdit.currentPath
+    merge_dist     = float(self.blMergeDistSpin.value)
+    smart_angle    = float(self.blSmartAngleSpin.value)
+    island_margin  = float(self.blIslandMarginSpin.value)
+    if not (os.path.isfile(blender_exe) or os.access(blender_exe, os.X_OK)):
+      self.logInfoDC.appendPlainText("Blender path not set or invalid; cannot run cleanup/UV/bake.")
+      return
+    atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
     try:
-      logic.runAlign(self.atlasModel, self.atlasLMs, self.folderNames['originalModels'], self.folderNames['originalLMs'], self.folderNames['alignedModels'], self.folderNames['alignedLMs'], removeScaleOption)
+      logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
+                                  merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
+      self.logInfoDC.appendPlainText(f"Atlas cleaned & UV’d in Blender → {atlas_uv_obj}")
+    except Exception as e:
+      self.logInfoDC.appendPlainText(f"Blender atlas UV step failed: {e}")
+      return
+
+    # Reload UV’d atlas back into Slicer (replace old atlas node)
+    try:
+      slicer.mrmlScene.RemoveNode(self.atlasModel)
+    except Exception:
+      pass
+    self.atlasModel = logic._load_model_with_cs(atlas_uv_obj, 'RAS')
+
+    median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
+    if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
+      self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
+
+    # Save atlas landmarks & a copy of the atlas (PLY) for provenance
+    atlasLMPath   = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+    atlasPlyPath  = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
+
+    # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
+    try:
+      self.logInfoDC.appendPlainText("Rigid alignment to atlas")
+      logic.runAlign(self.atlasModel, self.atlasLMs,
+                     self.folderNames['originalModels'], self.folderNames['originalLMs'],
+                     self.folderNames['alignedModels'], self.folderNames['alignedLMs'],
+                     removeScaleOption)
     except ValueError as errorText:
       self.logInfoDC.appendPlainText(str(errorText))
       return
-    # run DeCA shape analysis
-    if self.analysisTypeShape.checked:
-      self.logInfoDC.appendPlainText(f"Calculating point correspondences to atlas")
-      logic.runDCAlign(atlasModelPath, atlasLMPath, self.folderNames['alignedModels'], 
-                       self.folderNames['alignedLMs'], self.folderNames['output'], 
-                       self.writeErrorCheckBox.checked)
-    # run DeCA symmetry analysis
+
+    # ---- 4) DeCA resampling (Slicer). Also create OBJ copies that reuse atlas UV (for Blender bake) ----
+    try:
+      self.logInfoDC.appendPlainText("Calculating point correspondences to atlas")
+      logic.runDCAlign(
+        atlas_uv_obj, atlasLMPath,
+        self.folderNames['alignedModels'],
+        self.folderNames['alignedLMs'],
+        self.folderNames['output'],
+        writeErrorOption,
+        atlas_uv_template_obj=atlas_uv_obj  # NEW: used to stamp the same UVs onto resampled OBJ copies
+      )
+    except Exception as e:
+      self.logInfoDC.appendPlainText(f"DeCA resampling failed: {e}")
+      return
+
+    # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
+    self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
+    os.makedirs(self.lastBakedTexturesPath, exist_ok=True)
+
+    texturesDir = self.textureDirectoryDC.currentPath
+    if os.path.isdir(texturesDir):
+      try:
+        made = logic.blender_bake_all(
+          blender_exe=blender_exe,
+          alignedDir=self.folderNames['alignedModels'],
+          resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
+          texturesDir=texturesDir,
+          outDir=self.lastBakedTexturesPath,
+          bake_size=int(self.bakeSizeSpin.value),
+          bake_extrusion=float(self.bakeExtrusionSpin.value),
+          bake_margin_px=int(self.bakeMarginPxSpin.value),
+          merge_dist=merge_dist
+        )
+        self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {self.lastBakedTexturesPath}")
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Blender baking failed: {e}")
     else:
-      # generate mirrored landmarks and models
-      axis = [-1,1,1] #set symmetry to x-axis
-      self.logInfoDC.appendPlainText(f"Generating mirrored models and landmarks")
-      logic.runMirroring(self.folderNames['alignedModels'], self.folderNames['alignedLMs'], self.folderNames['mirrorModels'],
-      self.folderNames['mirrorLMs'], axis, self.landmarkIndexText.text)
-      self.logInfoDCL.appendPlainText(f"Calculating point correspondences to atlas")
-      logic.runDCAlignSymmetric(atlasModelPath, atlasLMPath, self.folderNames['alignedModels'],
-      self.folderNames['alignedLMs'], self.folderNames['mirrorModels'], self.folderNames['mirrorLMs'], self.folderNames['output'],
-      self.writeErrorCheckBox.checked)
-    slicer.mrmlScene.RemoveNode(self.atlasModel)
-    slicer.mrmlScene.RemoveNode(self.atlasLMs)
+      self.logInfoDC.appendPlainText("No textures directory set → skipping bake.")
+
+    # ---- 6) Fill Visualize dropdown ----
+    self.updateBakedPreviewList()
+
 
   def onDCLApplyButton(self):
     logic = InterDeCALogic()
@@ -884,6 +1023,35 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     atlasNode = self.pointSelection.currentNode()
     lmDirectorySubset = logic.runSubsetLandmarks(atlasNode, self.DCLLandmarkDirectory.currentPath, lmDirectorySubset)
 
+  def _hideMarkupsForVisualization(self, remove=False):
+    """
+    Hide (or optionally delete) all markups so the 3D view is clean in Visualize.
+    Works for fiducials, curves, lines, etc.  Non-destructive by default.
+    """
+    try:
+      markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
+      if not markups:  # fallback for older Slicer builds
+        markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsFiducialNode'))
+    except Exception:
+      markups = []
+
+    for n in markups:
+      try:
+        dn = n.GetDisplayNode()
+        if dn:
+          dn.SetVisibility(False)
+        if remove:
+          slicer.mrmlScene.RemoveNode(n)
+      except Exception:
+        pass
+
+  def _ensureModelsAreVisible(self):
+    for m in slicer.util.getNodesByClass('vtkMRMLModelNode'):
+      try:
+        dn = m.GetDisplayNode()
+        if dn: dn.SetVisibility(True)
+      except Exception:
+        pass
 #
 # DeCALogic
 #
@@ -919,9 +1087,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     spacingPercentage = spacingTolerance/100
     loadOption=False
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath, loadOption).GetPoints()
-    modelExt=['ply','stl','vtp', 'vtk']
-    self.modelNames, models = self.importMeshes(meshDirectory, modelExt)
     landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
+    self.modelNames, models = self.importMeshes(meshDirectory, ['ply','stl','vtp','vtk','obj'], restrict_to=landmarkNames)
     self.outputDirectory = outputDirectory
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseNode.GetPolyData(), baseLandmarks)
     # get downsampled template with index array
@@ -1072,32 +1239,50 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           slicer.mrmlScene.RemoveNode(rigidTransformNode)
           slicer.mrmlScene.RemoveNode(mirrorLMNode)
 
-  def runDCAlign(self, baseMeshPath, baseLMPath, alignedMeshDir, landmarkDirectory, outputDirectory, optionErrorOutput):
-    """ Main function for dense correspondence. UV transfer is now integrated into denseSurfaceCorrespondencePair. """
+  def runDCAlign(self, baseMeshPath, baseLMPath, alignedMeshDir, landmarkDirectory, outputDirectory, optionErrorOutput,
+                atlas_uv_template_obj=None):
     if optionErrorOutput:
       self.errorCheckPath = os.path.join(outputDirectory, "errorChecking")
       if not os.path.exists(self.errorCheckPath):
         os.mkdir(self.errorCheckPath)
-    baseNode = slicer.util.loadModel(baseMeshPath)
+
+    baseNode = self._load_model_with_cs(baseMeshPath, 'RAS')
     baseMesh = baseNode.GetPolyData()
-    baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
-    modelExt=['ply','stl','vtp']
-    self.modelNames, models = self.importMeshes(alignedMeshDir, modelExt) 
-    landmarkNames,landmarks = self.importLandmarks(landmarkDirectory)
+    baseLandmarks = self.fiducialNodeToPolyData(baseLMPath).GetPoints()
+
+    # --- IMPORTANT: load landmarks first, then meshes for exactly those subjects ---
+    landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
+    self.modelNames, models = self.importMeshes(alignedMeshDir, ['ply','stl','vtp','obj'], restrict_to=landmarkNames)
+
+    # sanity check
+    if len(self.modelNames) != len(landmarkNames):
+      missing_mesh = [n for n in landmarkNames if n not in self.modelNames]
+      extra_mesh   = [n for n in self.modelNames if n not in landmarkNames]
+      raise ValueError(f"Mismatch between meshes and landmarks.\n"
+                      f"Missing mesh for: {missing_mesh}\nExtra mesh: {extra_mesh}")
+
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks)
 
+    #  Save resampled models (VTK/PLY) and OBJ copies that reuse atlas UV (for Blender bake)
     resampledModelPath = os.path.join(outputDirectory, "resampledModels")
     if os.path.exists(resampledModelPath):
-      print(f"Saving {denseCorrespondenceGroup.GetNumberOfBlocks()} resampled models to: {resampledModelPath}")
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
-      
+      outOBJdir = os.path.join(outputDirectory, "resampledOBJ_withUV")
+      os.makedirs(outOBJdir, exist_ok=True)
+
       for i in range(denseCorrespondenceGroup.GetNumberOfBlocks()):
         resampledMesh = denseCorrespondenceGroup.GetBlock(i)
         subjectName = self.modelNames[i].replace('_align', '')
+
+        # Save VTK/PLY for Slicer
         outputFileName = os.path.join(resampledModelPath, f"{subjectName}_resampled.ply")
-        
         tempModelNode.SetAndObservePolyData(resampledMesh)
-        slicer.util.saveNode(tempModelNode, outputFileName)
+        self._save_model_with_cs(tempModelNode, outputFileName, 'RAS')
+
+        # Also write an OBJ that reuses atlas UV (for Blender bake)
+        if atlas_uv_template_obj and os.path.isfile(atlas_uv_template_obj):
+          out_obj = os.path.join(outOBJdir, f"{subjectName}_resampled.obj")
+          self.write_obj_with_uv_from_template(resampledMesh, atlas_uv_template_obj, out_obj)
 
       slicer.mrmlScene.RemoveNode(tempModelNode)
 
@@ -1114,7 +1299,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     baseNode = slicer.util.loadModel(baseMeshPath)
     baseMesh = baseNode.GetPolyData()
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
-    modelExt=['ply','stl','vtp']
+    modelExt=['ply','stl','vtp', 'obj']
     self.modelNames, models = self.importMeshes(meshDir, modelExt)
     landmarkNames, landmarks = self.importLandmarks(landmarkDir)
     modelMirrorNames, mirrorModels = self.importMeshes(mirrorMeshDir, modelExt)
@@ -1128,9 +1313,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     slicer.util.saveNode(baseNode, outputModelPath)
 
   def runMean(self, landmarkDirectory, meshDirectory):
-    modelExt=['ply','stl','vtp','vtk']
-    self.modelNames, models = self.importMeshes(meshDirectory, modelExt)
     landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
+    self.modelNames, models = self.importMeshes(meshDirectory, ['ply','stl','vtp','vtk','obj'], restrict_to=landmarkNames)
     [denseCorrespondenceGroup, closestToMeanIndex] = self.denseCorrespondence(landmarks, models)
     print("Sample closest to mean: ", closestToMeanIndex)
     # compute mean model
@@ -1161,7 +1345,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       fileNameBase = Path(fileName).stem
       if str(subjectID) == str(fileNameBase):
         filePath = os.path.join(directory, fileName)
-        currentNode = slicer.util.loadModel(filePath)
+        currentNode = self._load_model_with_cs(filePath, 'RAS')
         return currentNode
 
   def runAlign(self, baseMeshNode, baseLMNode, meshDirectory, lmDirectory, ouputMeshDirectory, outputLMDirectory, removeScaleOption, slmDirectory=False, outputSLMDirectory=False):
@@ -1201,22 +1385,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           else:
             transform.SetModeToSimilarity()
 
-          # --- BEGIN FIX: Detect and correct reflection ---
-          transform.Update() # Ensure the matrix is computed
-          matrix = transform.GetMatrix()
-          determinant = matrix.Determinant()
-          if determinant < 0:
-            print(f"WARNING: Reflection detected in alignment for {subjectID} (determinant={determinant:.4f}). Applying correction.")
-            # Create a reflection matrix to flip the X-axis
-            reflectionMatrix = vtk.vtkMatrix4x4()
-            reflectionMatrix.SetElement(0, 0, -1)
-            # Post-multiply the original transform by the reflection to cancel it out
-            correctedMatrix = vtk.vtkMatrix4x4()
-            vtk.vtkMatrix4x4.Multiply4x4(matrix, reflectionMatrix, correctedMatrix)
-            # Apply the corrected matrix to the transform
-            transform.SetMatrix(correctedMatrix)
-          # --- END FIX ---
-
           transformNode=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTransformNode","Alignment")
           transformNode.SetAndObserveTransformToParent(transform)
           # apply transform to the current surface mesh and landmarks
@@ -1227,7 +1395,18 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           # save output files
           outputMeshName = subjectID + '_align.ply'
           outputMeshPath = os.path.join(ouputMeshDirectory, outputMeshName)
-          slicer.util.saveNode(currentMeshNode, outputMeshPath)
+          self._save_model_with_cs(currentMeshNode, outputMeshPath, 'RAS')
+
+          # NEW: also write an OBJ copy so Blender can use the subject UVs
+          try:
+            tc = currentMeshNode.GetPolyData().GetPointData().GetTCoords()
+            has_uv = bool(tc) and tc.GetNumberOfTuples() > 0
+            if has_uv or os.path.splitext(meshFilePath)[1].lower() == '.obj':
+              outputOBJPath = os.path.join(ouputMeshDirectory, subjectID + '_align.obj')
+              self._save_model_with_cs(currentMeshNode, outputOBJPath, 'RAS')
+          except Exception as e:
+            logging.warning(f"Could not save aligned OBJ for {subjectID}: {e}")
+
           outputLMName = subjectID + '_align.mrk.json'
           outputLMPath = os.path.join(outputLMDirectory, outputLMName)
           slicer.util.saveNode(currentLMNode, outputLMPath)
@@ -1299,32 +1478,58 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     return polydataPoints
 
   def importLandmarks(self, topDir):
-    fiducialGroup = vtk.vtkMultiBlockDataGroupFilter()
-    fileNameList = []
-    for file in sorted(os.listdir(topDir)):
-      if file.endswith(".fcsv") or file.endswith(".json"):
-        fileNameList.append(file)
-        inputFilePath = os.path.join(topDir, file)
-        # may want to replace with vtk reader
-        polydataPoints = self.fiducialNodeToPolyData(inputFilePath)
-        fiducialGroup.AddInputData(polydataPoints)
-    fiducialGroup.Update()
-    return fileNameList, fiducialGroup.GetOutput()
+    # one landmark file per subject, returned in deterministic (sorted) order
+    prefer = ['.mrk.json', '.json', '.fcsv']  # priority
+    pick = {}  # base -> (rank, fullpath)
 
-  def importMeshes(self, topDir, extensions):
-      modelGroup = vtk.vtkMultiBlockDataGroupFilter()
-      fileNameList = []
-      for file in sorted(os.listdir(topDir)):
-        if file.endswith(tuple(extensions)):
-          base, ext = os.path.splitext(file)
-          fileNameList.append(base)
-          inputFilePath = os.path.join(topDir, file)
-          # may want to replace with vtk reader
-          modelNode = slicer.util.loadModel(inputFilePath)
-          modelGroup.AddInputData(modelNode.GetPolyData())
-          slicer.mrmlScene.RemoveNode(modelNode)
-      modelGroup.Update()
-      return fileNameList, modelGroup.GetOutput()
+    for f in os.listdir(topDir):
+      fl = f.lower()
+      if fl.endswith(tuple(prefer)):
+        p = Path(f)
+        base = p
+        # strip .mrk.json / .json / .fcsv
+        while base.suffix.lower() in ('.mrk', '.json', '.fcsv'):
+          base = base.with_suffix('')
+        base = base.name  # e.g. 'Subject01_align'
+        rank = 0 if fl.endswith('.mrk.json') else (1 if fl.endswith('.json') else 2)
+        if base not in pick or rank < pick[base][0]:
+          pick[base] = (rank, os.path.join(topDir, f))
+
+    names = sorted(pick.keys())
+    group = vtk.vtkMultiBlockDataGroupFilter()
+    for name in names:
+      polydataPoints = self.fiducialNodeToPolyData(pick[name][1])
+      group.AddInputData(polydataPoints)
+    group.Update()
+    return names, group.GetOutput()
+
+
+  def importMeshes(self, topDir, extensions, restrict_to=None):
+    # choose exactly one mesh per subject, preferring OBJ over PLY/STL/VTP/VTK
+    priority = {'.obj':0, '.ply':1, '.stl':2, '.vtp':3, '.vtk':4}
+    pick = {}  # base -> (rank, fullpath)
+
+    for f in os.listdir(topDir):
+      ext = os.path.splitext(f)[1].lower()
+      if ext in priority:
+        base = os.path.splitext(f)[0]  # e.g. 'Subject01_align'
+        if (restrict_to is None) or (base in restrict_to):
+          if base not in pick or priority[ext] < pick[base][0]:
+            pick[base] = (priority[ext], os.path.join(topDir, f))
+
+    if restrict_to is not None:
+      names = [b for b in restrict_to if b in pick]  # keep same order as landmarks
+    else:
+      names = sorted(pick.keys())
+
+    modelGroup = vtk.vtkMultiBlockDataGroupFilter()
+    for b in names:
+      inputFilePath = pick[b][1]
+      modelNode = self._load_model_with_cs(inputFilePath, 'RAS')
+      modelGroup.AddInputData(modelNode.GetPolyData())
+      slicer.mrmlScene.RemoveNode(modelNode)
+    modelGroup.Update()
+    return names, modelGroup.GetOutput()
 
   def procrustesImposition(self, originalLandmarks, sizeOption):
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
@@ -1621,3 +1826,297 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
+
+  # ---------- Coordinate system safe save ----------
+  def _save_model_with_cs(self, modelNode, filePath, coordinateSystem='RAS'):
+    storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
+    storage.SetFileName(filePath)
+    cs = (coordinateSystem or 'RAS').upper()
+    try:
+      if cs == 'RAS': storage.SetCoordinateSystemToRAS()
+      else:           storage.SetCoordinateSystemToLPS()
+    except AttributeError:
+      storage.SetCoordinateSystem(0 if cs == 'RAS' else 1)  # older API
+    modelNode.SetAndObserveStorageNodeID(storage.GetID())
+    ok = storage.WriteData(modelNode)
+    slicer.mrmlScene.RemoveNode(storage)
+    if not ok:
+      raise RuntimeError(f"Failed to write model: {filePath}")
+
+  # ---------- Blender: atlas cleanup + Smart UV ----------
+  def blender_prepare_atlas(self, blender_exe, in_obj, out_obj,
+                            merge_dist=0.0005, smart_angle=66.0, island_margin=0.002):
+    import tempfile, textwrap, subprocess, sys, os
+    tmp = tempfile.mkdtemp(prefix="InterDeCA_blUV_")
+    script = os.path.join(tmp, "prep_uv.py")
+    py = textwrap.dedent(f"""
+    import bpy, sys
+    argv = sys.argv
+    argv = argv[argv.index("--")+1:] if "--" in argv else []
+    in_path  = argv[0]
+    out_path = argv[1]
+    merge_d  = float(argv[2])
+    ang      = float(argv[3])
+    island_m = float(argv[4])
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+
+    # Import
+    try:
+        bpy.ops.wm.obj_import(filepath=in_path, forward_axis='Y', up_axis='Z')
+    except AttributeError:
+        bpy.ops.import_scene.obj(filepath=in_path, use_split_objects=False, use_split_groups=False, axis_forward='Y', axis_up='Z')
+
+    obj = [o for o in bpy.context.selected_objects if o.type=='MESH'][0]
+    bpy.context.view_layer.objects.active = obj
+
+    # Edit mode ops
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    # Merge by distance (robust across Blender versions)
+    try:
+        bpy.ops.mesh.remove_doubles(threshold=merge_d)
+    except Exception:
+        try:
+            bpy.ops.mesh.merge_by_distance(distance=merge_d)
+        except Exception:
+            bpy.ops.mesh.merge(type='DISTANCE', distance=merge_d)
+
+    # Smart UV Project
+    bpy.ops.uv.smart_project(angle_limit=ang, island_margin=island_m, correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Export
+    bpy.ops.wm.obj_export(
+        filepath=out_path,
+        export_selected_objects=True,
+        export_triangulated_mesh=True,
+        forward_axis='Y', up_axis='Z',
+        export_materials=False,
+    )
+    """)
+    with open(script, "w", encoding="utf-8") as f: f.write(py)
+    args = [blender_exe, "--background", "--python", script, "--",
+            in_obj, out_obj, str(merge_dist), str(smart_angle), str(island_margin)]
+    subprocess.run(args, check=True)
+
+  # ---------- Copy atlas UVs onto resampled meshes (write OBJ) ----------
+  def _parse_obj_vt_and_faces(self, obj_path):
+    vt = []
+    faces = []   # list of tokens strings 'v/vt[/vn]' per tri (preserve exactly)
+    with open(obj_path, "r", encoding="utf-8", errors="ignore") as f:
+      for line in f:
+        if line.startswith('vt '):
+          _, u, v, *rest = line.strip().split()
+          vt.append((float(u), float(v)))
+        elif line.startswith('f '):
+          parts = line.strip().split()[1:]
+          if len(parts) == 3:
+            faces.append(parts)
+          else:
+            # ensure triangulated export upstream
+            pass
+    if not vt or not faces:
+      raise RuntimeError("Atlas OBJ missing vt or triangulated f lines.")
+    return vt, faces
+
+  def write_obj_with_uv_from_template(self, polydata, atlas_obj_path, out_obj_path):
+    # Load atlas OBJ through VTK so we get the same VTK point order/TCoords
+    atlas_node = self._load_model_with_cs(atlas_obj_path, 'RAS')
+    atlas_pd = atlas_node.GetPolyData()
+
+    # Basic checks
+    if not atlas_pd or not atlas_pd.GetPointData() or not atlas_pd.GetPointData().GetTCoords():
+      slicer.mrmlScene.RemoveNode(atlas_node)
+      raise RuntimeError("Atlas OBJ has no per-vertex texture coordinates (TCoords).")
+
+    if polydata.GetNumberOfPoints() != atlas_pd.GetNumberOfPoints():
+      slicer.mrmlScene.RemoveNode(atlas_node)
+      raise RuntimeError(
+        f"Point-count mismatch between resampled ({polydata.GetNumberOfPoints()}) "
+        f"and atlas ({atlas_pd.GetNumberOfPoints()})."
+      )
+
+    # Copy UVs (TCoords) from atlas to the resampled mesh (match by vertex index)
+    tc_copy = vtk.vtkFloatArray()
+    tc_copy.DeepCopy(atlas_pd.GetPointData().GetTCoords())
+    tc_copy.SetName("TCoords")  # ensure standard name
+    polydata.GetPointData().SetTCoords(tc_copy)
+
+    # Write OBJ using VTK’s connectivity (avoids index mismatch)
+    w = vtk.vtkOBJWriter()
+    w.SetFileName(out_obj_path)
+    w.SetInputData(polydata)
+    w.Update()
+    w.Write()
+
+    slicer.mrmlScene.RemoveNode(atlas_node)
+
+  # ---------- Blender bake for all subjects ----------
+  def blender_bake_all(self, blender_exe, alignedDir, resampledUVDir, texturesDir, outDir,
+                       bake_size=2048, bake_extrusion=0.005, bake_margin_px=2, merge_dist=0.0005):
+    import subprocess, tempfile, textwrap, os
+
+    def norm_id(name): return re.sub(r'(_align|_resampled)$', '', os.path.splitext(name)[0], flags=re.IGNORECASE)
+    pr = {'.obj':0, '.ply':1, '.stl':2, '.vtp':3, '.vtk':4}
+    best = {}
+    for f in os.listdir(alignedDir):
+      ext = os.path.splitext(f)[1].lower()
+      if ext in pr:
+        sid = norm_id(f)
+        if sid not in best or pr[ext] < best[sid][0]:
+          best[sid] = (pr[ext], os.path.join(alignedDir, f))
+    aligned = {sid: path for sid, (_, path) in best.items()}
+    targets = {norm_id(f): os.path.join(resampledUVDir, f)
+               for f in os.listdir(resampledUVDir) if f.lower().endswith('.obj')}
+    textures = {os.path.splitext(f)[0].lower(): os.path.join(texturesDir, f)
+                for f in os.listdir(texturesDir) if f.lower().endswith('.png')}
+
+    def find_tex(sid):
+      # exact, case-insensitive, or startswith
+      k = sid.lower()
+      if k in textures: return textures[k]
+      for key in textures:
+        if key.startswith(k): return textures[key]
+      return None
+
+    baked = {}
+    os.makedirs(outDir, exist_ok=True)
+
+    # blender script (runs once per subject for simplicity)
+    py = textwrap.dedent("""
+    import bpy, sys, os
+    argv = sys.argv
+    argv = argv[argv.index("--")+1:] if "--" in argv else []
+    src_path, tgt_path, png_in, png_out, sz, extru, margin, merge_d = argv
+    sz = int(sz); extru = float(extru); margin = int(margin); merge_d = float(merge_d)
+
+    bpy.ops.wm.read_homefile(use_empty=True)
+    # Import target (resampled with UV)
+    try: bpy.ops.wm.obj_import(filepath=tgt_path, forward_axis='Y', up_axis='Z')
+    except AttributeError: bpy.ops.import_scene.obj(filepath=tgt_path, use_split_objects=False, use_split_groups=False, axis_forward='Y', axis_up='Z')
+    tgt = [o for o in bpy.context.selected_objects if o.type=='MESH'][0]
+
+    imp_ok = False
+    try:
+        bpy.ops.wm.obj_import(filepath=src_path, forward_axis='Y', up_axis='Z'); imp_ok=True
+    except Exception: pass
+    if not imp_ok:
+        raise RuntimeError("Cannot import aligned mesh: " + src_path)
+    src = [o for o in bpy.context.selected_objects if o.type=='MESH'][-1]
+
+    # Clean target just in case Slicer wrote disjoint faces
+    bpy.context.view_layer.objects.active = tgt
+    bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT')
+    try: bpy.ops.mesh.remove_doubles(threshold=merge_d)
+    except Exception:
+        try: bpy.ops.mesh.merge_by_distance(distance=merge_d)
+        except Exception: bpy.ops.mesh.merge(type='DISTANCE', distance=merge_d)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Materials: clear & rebuild
+    tgt.data.materials.clear(); src.data.materials.clear()
+    m_src = bpy.data.materials.new("MatSrc"); m_src.use_nodes=True
+    nt = m_src.node_tree; nodes = nt.nodes
+    img_node = nodes.new('ShaderNodeTexImage'); img_node.image = bpy.data.images.load(png_in)
+    bsdf = next(n for n in nodes if n.type=='BSDF_PRINCIPLED')
+    nt.links.new(img_node.outputs['Color'], bsdf.inputs['Base Color'])
+    src.data.materials.append(m_src)
+
+    m_tgt = bpy.data.materials.new("MatTgt"); m_tgt.use_nodes=True
+    nt2 = m_tgt.node_tree; nodes2 = nt2.nodes
+    imgT = bpy.data.images.new("BakeTarget", width=sz, height=sz, alpha=False)
+    img_node_t = nodes2.new('ShaderNodeTexImage'); img_node_t.image = imgT
+    tgt.data.materials.append(m_tgt)
+
+    # Select order: src (selected), tgt (active)
+    bpy.ops.object.select_all(action='DESELECT')
+    src.select_set(True); tgt.select_set(True)
+    bpy.context.view_layer.objects.active = tgt
+
+    # Must ensure the target image node is selected/active
+    for n in nodes2: n.select = False
+    nodes2.active = img_node_t; img_node_t.select = True
+
+    # Scene bake settings
+    scn = bpy.context.scene
+    scn.render.engine = 'CYCLES'
+    scn.cycles.device = 'CPU'
+    b = scn.render.bake
+    b.use_selected_to_active = True
+    b.cage_extrusion = extru
+    b.margin = margin
+    b.use_pass_direct = False
+    b.use_pass_indirect = False
+    b.use_pass_color = True
+
+    # Bake (Diffuse Color)
+    bpy.ops.object.bake(type='DIFFUSE')
+
+    # Save image
+    imgT.filepath_raw = png_out
+    imgT.file_format = 'PNG'
+    imgT.save()
+    """)
+    # write script once
+    tmp_script = tempfile.NamedTemporaryFile(delete=False, suffix=".py"); tmp_script.write(py.encode("utf-8")); tmp_script.close()
+
+    for sid, src_path in sorted(aligned.items()):
+      tgt_path = targets.get(sid)
+      tex_in   = find_tex(sid)
+      if not (tgt_path and tex_in):  # skip without texture or target
+        continue
+      out_png = os.path.join(outDir, f"{sid}.png")
+      args = [blender_exe, "--background", "--python", tmp_script.name, "--",
+              src_path, tgt_path, tex_in, out_png,
+              str(bake_size), str(bake_extrusion), str(bake_margin_px), str(merge_dist)]
+      subprocess.run(args, check=True)
+      baked[sid] = out_png
+
+    return baked
+
+  def applyTextureToModel(self, modelNode, pngPath):
+    modelNode.CreateDefaultDisplayNodes()
+    dn = modelNode.GetDisplayNode()
+    dn.SetBackfaceCulling(0); dn.SetFrontfaceCulling(0)
+    dn.SetScalarVisibility(False)
+    try: dn.SetInterpolateTexture(1)
+    except Exception: pass
+
+    reader = vtk.vtkPNGReader()
+    reader.SetFileName(pngPath)
+    reader.Update()
+
+    # No flipping – Blender/Slicer UVs now match
+    dn.SetTextureImageDataConnection(reader.GetOutputPort())
+
+  def _median_landmark_to_surface_dist(self, modelNode, lmNode):
+    locator = vtk.vtkStaticCellLocator()
+    locator.SetDataSet(modelNode.GetPolyData())
+    locator.BuildLocator()
+    dists = []
+    for i in range(lmNode.GetNumberOfControlPoints()):
+        p = [0.0,0.0,0.0]
+        lmNode.GetNthControlPointPosition(i, p)
+        cp = [0.0,0.0,0.0]
+        cid = vtk.mutable(0); sid = vtk.mutable(0); d2 = vtk.mutable(0.0)
+        locator.FindClosestPoint(p, cp, cid, sid, d2)
+        dists.append(d2.get()**0.5)
+    return np.median(dists) if dists else float('inf')
+  
+  def _load_model_with_cs(self, filePath, coordinateSystem='RAS'):
+    storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
+    cs = (coordinateSystem or 'RAS').upper()
+    try:
+      if cs == 'RAS': storage.SetCoordinateSystemToRAS()
+      else:           storage.SetCoordinateSystemToLPS()
+    except AttributeError:
+      storage.SetCoordinateSystem(0 if cs == 'RAS' else 1)
+    modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
+    storage.SetFileName(filePath)
+    ok = storage.ReadData(modelNode)
+    slicer.mrmlScene.RemoveNode(storage)
+    if not ok:
+      slicer.mrmlScene.RemoveNode(modelNode)
+      raise RuntimeError(f"Failed to read model: {filePath}")
+    return modelNode
