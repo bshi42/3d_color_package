@@ -13,6 +13,8 @@ import csv
 import vtk.util.numpy_support as vtk_np
 from pathlib import Path
 import shutil
+import imageio # slicer.util.pip_install('imageio')
+import glob
 
 #
 # DeCA
@@ -987,6 +989,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           bake_margin_px=int(self.bakeMarginPxSpin.value),
           merge_dist=merge_dist
         )
+        logic._calculate_average_texture(self.lastBakedTexturesPath)
         self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {self.lastBakedTexturesPath}")
       except Exception as e:
         self.logInfoDC.appendPlainText(f"Blender baking failed: {e}")
@@ -2074,6 +2077,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       baked[sid] = out_png
 
     return baked
+  
+  def _calculate_average_texture(self, outTexturesDir):
+    atlas_texture = os.path.join(outTexturesDir, "average_texture.png")
+    if os.path.exists(atlas_texture):
+      return
+    pngs = glob.glob(os.path.join(outTexturesDir, "*.png"))
+    images = [imageio.imread(png) for png in pngs]
+    average = np.mean(images, axis=0).astype(np.uint8)
+    imageio.imwrite(atlas_texture, average)
+    
+
 
   def applyTextureToModel(self, modelNode, pngPath):
     modelNode.CreateDefaultDisplayNodes()
