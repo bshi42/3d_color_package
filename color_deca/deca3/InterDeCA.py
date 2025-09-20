@@ -16,6 +16,21 @@ import shutil
 import imageio # slicer.util.pip_install('imageio')
 import glob
 
+# Import functions from the deca module to avoid duplication
+import sys
+import os
+
+try:
+    from deca.deca import decaLogic
+    print('Successfully imported DeCA module!')
+    print(f'decaLogic class: {decaLogic}')
+except ImportError as e:
+    # Handle case where deca module is not available
+    print(f'Could not import DeCA module: {e}')
+    decaLogic = None
+    
+print(f'Final decaLogic value: {decaLogic}')
+
 #
 # DeCA
 #
@@ -809,9 +824,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   def generateNewAtlas(self, removeScale, log):
     logic = InterDeCALogic()
 
-    # getClosestToMeanPath now returns a SUBJECT BASENAME (no extension)
-    subjectID = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
-    log.appendPlainText(f"Closest sample to mean: {subjectID}")
+    # getClosestToMeanPath returns a filename, we need to extract the base subject ID
+    try:
+      closestFileName = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
+      if closestFileName is None:
+        log.appendPlainText("Error: Could not determine closest sample to mean")
+        return None, None
+      
+      # Extract the base subject ID by removing landmark file extensions
+      subjectID = closestFileName
+      # Strip common landmark file extensions (.fcsv, .mrk, .json)
+      fileNameBase = Path(subjectID)
+      while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
+        fileNameBase = fileNameBase.with_suffix('')
+      subjectID = str(fileNameBase)
+      
+      log.appendPlainText(f"Closest sample to mean: {closestFileName}")
+      log.appendPlainText(f"Using subject ID: {subjectID}")
+    except Exception as e:
+      log.appendPlainText(f"Error finding closest sample to mean: {e}")
+      return None, None
 
     # Resolve the actual landmark/model files by subject ID (handles any extension)
     tempBaseLMs = logic.getLandmarkFileByID(self.folderNames['originalLMs'], subjectID)
@@ -906,6 +938,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         return
     else:
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
+
+    # Check if atlas generation was successful
+    if self.atlasModel is None or self.atlasLMs is None:
+      self.logInfoDC.appendPlainText("Failed to generate atlas. Please check the data and try again.")
+      return
 
     # Save an intermediate atlas file (RAS) so Blender can read it
     atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
@@ -1127,7 +1164,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print("No index found")
       return None
 
+  # Use downsampleModel from decaLogic to avoid duplication
   def downsampleModel(self, model, spacingPercentage):
+    if decaLogic:
+      return decaLogic().downsampleModel(model, spacingPercentage)
+    # Fallback implementation if decaLogic is not available
     points=model.GetPolyData()
     cleanFilter=vtk.vtkCleanPolyData()
     cleanFilter.SetToleranceIsAbsolute(False)
@@ -1136,8 +1177,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     cleanFilter.Update()
     return cleanFilter.GetOutput()
 
+  # Use addIndexArray from decaLogic to avoid duplication
   def addIndexArray(self, mesh, arrayName):
-    # Array of original index values
+    if decaLogic:
+      return decaLogic().addIndexArray(mesh, arrayName)
+    # Fallback implementation if decaLogic is not available
     indexArray = vtk.vtkIntArray()
     indexArray.SetNumberOfComponents(1)
     indexArray.SetName(arrayName)
@@ -1145,7 +1189,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       indexArray.InsertNextValue(i)
     mesh.GetPolyData().GetPointData().AddArray(indexArray)
 
+  # Use computeNormals from decaLogic to avoid duplication
   def computeNormals(self, inputModel):
+    if decaLogic:
+      return decaLogic().computeNormals(inputModel)
+    # Fallback implementation if decaLogic is not available
     normals = vtk.vtkPolyDataNormals()
     normals.SetInputData(inputModel.GetPolyData())
     normals.SetAutoOrientNormals(True)
@@ -1330,7 +1378,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLandmarkNode.GetDisplayNode().SetPointLabelsVisibility(False)
     return averageModelNode, averageLandmarkNode
 
+  # Use getLandmarkFileByID from decaLogic to avoid duplication
   def getLandmarkFileByID(self, directory, subjectID):
+    if decaLogic:
+      try:
+        return decaLogic().getLandmarkFileByID(directory, subjectID)
+      except Exception as e:
+        print(f"Error using decaLogic.getLandmarkFileByID: {e}")
+        # Fall back to local implementation
+    # Fallback implementation if decaLogic is not available
     fileList = os.listdir(directory)
     for fileName in fileList:
       fileNameBase = Path(fileName)
@@ -1339,8 +1395,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if subjectID == str(fileNameBase):
         # if file with this subject id exists, load into scene
         filePath = os.path.join(directory, fileName)
-        currentNode = slicer.util.loadMarkups(filePath)
-        return currentNode
+        try:
+          currentNode = slicer.util.loadMarkups(filePath)
+          return currentNode
+        except Exception as e:
+          print(f"Error loading landmarks from {filePath}: {e}")
+          return None
+    print(f"No landmarks found for subject ID '{subjectID}' in {directory}")
+    return None
 
   def getModelFileByID(self, directory, subjectID):
     fileList = os.listdir(directory)
@@ -1348,8 +1410,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       fileNameBase = Path(fileName).stem
       if str(subjectID) == str(fileNameBase):
         filePath = os.path.join(directory, fileName)
-        currentNode = self._load_model_with_cs(filePath, 'RAS')
-        return currentNode
+        try:
+          currentNode = self._load_model_with_cs(filePath, 'RAS')
+          return currentNode
+        except Exception as e:
+          print(f"Error loading model from {filePath}: {e}")
+          return None
+    print(f"No model found for subject ID '{subjectID}' in {directory}")
+    return None
 
   def runAlign(self, baseMeshNode, baseLMNode, meshDirectory, lmDirectory, ouputMeshDirectory, outputLMDirectory, removeScaleOption, slmDirectory=False, outputSLMDirectory=False):
     semilandmarkOption = bool(slmDirectory and outputSLMDirectory)
@@ -1431,7 +1499,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           except:
             print(f"could not find nodes to remove for {subjectID}")
 
+  # Use distanceMatrix from decaLogic to avoid duplication
   def distanceMatrix(self, a):
+    if decaLogic:
+      return decaLogic().distanceMatrix(a)
+    # Fallback implementation if decaLogic is not available
     """
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
@@ -1443,13 +1515,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     dz=fnx(a[:,2])
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
+  # Use numpyToFiducialNode from decaLogic to avoid duplication
   def numpyToFiducialNode(self, numpyArray, nodeName):
+    if decaLogic:
+      return decaLogic().numpyToFiducialNode(numpyArray, nodeName)
+    # Fallback implementation if decaLogic is not available
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
     for index in range(len(numpyArray)):
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
     return fiducialNode
 
+  # Use computeAverageLM from decaLogic to avoid duplication
   def computeAverageLM(self, fiducialGroup):
+    if decaLogic:
+      return decaLogic().computeAverageLM(fiducialGroup)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -1462,7 +1542,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
     return averageLMNode
 
+  # Use fiducialNodeToPolyData from decaLogic to avoid duplication
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
+    if decaLogic:
+      return decaLogic().fiducialNodeToPolyData(nodeLocation, loadOption)
+    # Fallback implementation if decaLogic is not available
     point = [0,0,0]
     polydataPoints = vtk.vtkPolyData()
     points = vtk.vtkPoints()
@@ -1534,7 +1618,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     modelGroup.Update()
     return names, modelGroup.GetOutput()
 
+  # Use procrustesImposition from decaLogic to avoid duplication
   def procrustesImposition(self, originalLandmarks, sizeOption):
+    if decaLogic:
+      return decaLogic().procrustesImposition(originalLandmarks, sizeOption)
+    # Fallback implementation if decaLogic is not available
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
     if(sizeOption):
       procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
@@ -1544,7 +1632,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanShape = procrustesFilter.GetMeanPoints()
     return [meanShape, procrustesFilter.GetOutput()]
 
+  # Use getClosestToMeanIndex from decaLogic to avoid duplication
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
+    if decaLogic:
+      return decaLogic().getClosestToMeanIndex(meanShape, alignedPoints)
+    # Fallback implementation if decaLogic is not available
     import operator
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     procrustesDistances = []
@@ -1564,8 +1656,19 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except:
       return 0
 
+  # Use getClosestToMeanPath from decaLogic to avoid duplication
   def getClosestToMeanPath(self, landmarkDirectory):
+    if decaLogic:
+      try:
+        return decaLogic().getClosestToMeanPath(landmarkDirectory)
+      except Exception as e:
+        print(f"Error using decaLogic.getClosestToMeanPath: {e}")
+        # Fall back to local implementation
+    # Fallback implementation if decaLogic is not available
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
+    if not lmNames:
+      print(f"No landmarks found in {landmarkDirectory}")
+      return None
     meanShape, alignedLandmarks = self.procrustesImposition(landmarks, False)
     closestToMeanIndex = self.getClosestToMeanIndex(meanShape, alignedLandmarks)
     return lmNames[closestToMeanIndex]
@@ -1730,7 +1833,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     return inverseTransformFilter.GetOutput()
 
+  # Use convertPointsToVTK from decaLogic to avoid duplication
   def convertPointsToVTK(self, points):
+    if decaLogic:
+      return decaLogic().convertPointsToVTK(points)
+    # Fallback implementation if decaLogic is not available
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
     points_vtk = vtk.vtkPoints()
     points_vtk.SetData(array_vtk)
@@ -1738,7 +1845,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     polydata_vtk.SetPoints(points_vtk)
     return polydata_vtk
 
+  # Use computeAverageModelFromGroup from decaLogic to avoid duplication
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
+    if decaLogic:
+      return decaLogic().computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -1758,7 +1869,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageModel.SetPolys(baseMesh.GetPolys())
     return averageModel
 
+  # Use addMagnitudeFeature from decaLogic to avoid duplication
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
+    if decaLogic:
+      return decaLogic().addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -1793,7 +1908,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
+  # Use addMagnitudeFeatureSymmetry from decaLogic to avoid duplication
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
+    if decaLogic:
+      return decaLogic().addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -1832,6 +1951,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   # ---------- Coordinate system safe save ----------
   def _save_model_with_cs(self, modelNode, filePath, coordinateSystem='RAS'):
+    if modelNode is None:
+      raise ValueError(f"Model node is None, cannot save to {filePath}")
+    
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
     storage.SetFileName(filePath)
     cs = (coordinateSystem or 'RAS').upper()
