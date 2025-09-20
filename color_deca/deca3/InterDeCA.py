@@ -550,6 +550,24 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
 
+    # Auto-detect Blender executable on startup
+    self.autoDetectBlender()
+
+  def autoDetectBlender(self):
+    """Automatically detect and set Blender executable path if not already set."""
+    try:
+      # Only auto-detect if the field is empty
+      if not self.blenderExeEdit.currentPath:
+        logic = InterDeCALogic()
+        blender_path = logic.findBlenderExecutable()
+        if blender_path:
+          self.blenderExeEdit.setCurrentPath(blender_path)
+          print(f"Auto-detected Blender at: {blender_path}")
+        else:
+          print("Blender not found during auto-detection. Will attempt installation when needed.")
+    except Exception as e:
+      print(f"Error during Blender auto-detection: {e}")
+
   ################################### GUI SUpport Functions
   def setUpDeCADir(self, outDir, symmetryOption=False, errorDirectoryOption=False, DeCALOption=False, loadAtlasOption = False):
     dateTimeStamp = datetime.now().strftime('%Y_%m-%d_%H_%M_%S')
@@ -953,9 +971,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     merge_dist     = float(self.blMergeDistSpin.value)
     smart_angle    = float(self.blSmartAngleSpin.value)
     island_margin  = float(self.blIslandMarginSpin.value)
-    if not (os.path.isfile(blender_exe) or os.access(blender_exe, os.X_OK)):
-      self.logInfoDC.appendPlainText("Blender path not set or invalid; cannot run cleanup/UV/bake.")
-      return
+    
+    # Auto-detect/install Blender if path is not set or invalid
+    if not (blender_exe and os.path.isfile(blender_exe) and os.access(blender_exe, os.X_OK)):
+      self.logInfoDC.appendPlainText("Blender path not set or invalid. Attempting automatic detection/installation...")
+      blender_exe = logic.getBlenderExecutable(lambda msg: self.logInfoDC.appendPlainText(msg))
+      
+      if blender_exe:
+        # Update the UI field with the found/installed path
+        self.blenderExeEdit.setCurrentPath(blender_exe)
+        self.logInfoDC.appendPlainText(f"Using Blender at: {blender_exe}")
+      else:
+        self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
+        return
     atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
     try:
       logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
@@ -2256,3 +2284,303 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       slicer.mrmlScene.RemoveNode(modelNode)
       raise RuntimeError(f"Failed to read model: {filePath}")
     return modelNode
+
+  def findBlenderExecutable(self):
+    """
+    Automatically find Blender executable on the system.
+    Returns the path to Blender executable if found, None otherwise.
+    """
+    import platform
+    import subprocess
+    import shutil
+    
+    system = platform.system().lower()
+    
+    # First, try to find Blender in PATH
+    blender_names = ['blender', 'blender.exe'] if system == 'windows' else ['blender']
+    
+    for name in blender_names:
+      path = shutil.which(name)
+      if path and os.path.isfile(path):
+        print(f"Found Blender in PATH: {path}")
+        return path
+    
+    # Try common installation locations based on OS
+    common_paths = []
+    
+    if system == 'windows':
+      # Windows common locations
+      program_files = [
+        os.environ.get('PROGRAMFILES', 'C:\\Program Files'),
+        os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+      ]
+      for pf in program_files:
+        # Check various Blender versions
+        blender_dirs = glob.glob(os.path.join(pf, 'Blender Foundation', 'Blender*'))
+        for blender_dir in blender_dirs:
+          common_paths.append(os.path.join(blender_dir, 'blender.exe'))
+    
+    elif system == 'darwin':  # macOS
+      common_paths = [
+        '/Applications/Blender.app/Contents/MacOS/Blender',
+        '/opt/homebrew/bin/blender',
+        '/usr/local/bin/blender'
+      ]
+      # Check for various Blender versions in Applications
+      blender_apps = glob.glob('/Applications/Blender*.app/Contents/MacOS/Blender')
+      common_paths.extend(blender_apps)
+    
+    else:  # Linux and other Unix-like systems
+      common_paths = [
+        '/usr/bin/blender',
+        '/usr/local/bin/blender',
+        '/opt/blender/blender',
+        '/snap/bin/blender',
+        os.path.expanduser('~/blender/blender'),
+        os.path.expanduser('~/.local/bin/blender')
+      ]
+      # Check for snap installations
+      snap_paths = glob.glob('/snap/blender/*/blender')
+      common_paths.extend(snap_paths)
+    
+    # Test each common path
+    for path in common_paths:
+      if os.path.isfile(path) and os.access(path, os.X_OK):
+        print(f"Found Blender at: {path}")
+        return path
+    
+    print("Blender executable not found in common locations")
+    return None
+
+  def installBlender(self, log_callback=None):
+    """
+    Automatically download and install Blender.
+    Returns the path to the installed Blender executable if successful, None otherwise.
+    """
+    import platform
+    import subprocess
+    import tempfile
+    import zipfile
+    import tarfile
+    import urllib.request
+    import urllib.parse
+    import ssl
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    system = platform.system().lower()
+    architecture = platform.machine().lower()
+    
+    # Use current stable version URLs from blender.org
+    blender_version = "4.5.3"
+    
+    if system == 'windows':
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-windows-x64.zip"
+        blender_exe = "blender.exe"
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-windows-arm64.zip"
+        blender_exe = "blender.exe"
+      else:
+        log("Unsupported Windows architecture")
+        return None
+    
+    elif system == 'darwin':  # macOS
+      log("macOS installation not supported in automatic mode. Please install Blender manually from:")
+      log("https://www.blender.org/download/")
+      return None
+    
+    elif system == 'linux':
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        blender_exe = "blender"
+      else:
+        log("Unsupported Linux architecture")
+        return None
+    
+    else:
+      log(f"Unsupported operating system: {system}")
+      return None
+    
+    # Try multiple download URLs in order of preference
+    download_urls = [
+      f"https://www.blender.org/download/release/Blender4.5/{filename}",
+      f"https://download.blender.org/release/Blender4.5/{filename}",
+      f"https://mirror.clarkson.edu/blender/release/Blender4.5/{filename}",
+      f"https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/{filename}"
+    ]
+    
+    # Create installation directory
+    install_dir = os.path.join(os.path.expanduser('~'), '.slicer-blender')
+    os.makedirs(install_dir, exist_ok=True)
+    
+    # Check if already installed
+    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-x64")
+    if system == 'windows' and 'arm' in architecture:
+      expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-arm64")
+    
+    expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    if os.path.isfile(expected_blender_path):
+      log(f"Blender already installed at: {expected_blender_path}")
+      return expected_blender_path
+    
+    log(f"Downloading Blender {blender_version}...")
+    
+    # Try each download URL until one works
+    temp_path = None
+    for download_url in download_urls:
+      try:
+        log(f"Trying URL: {download_url}")
+        
+        # Create request with proper headers
+        request = urllib.request.Request(download_url)
+        request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        
+        # Download with SSL context to handle certificate issues
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
+          with urllib.request.urlopen(request, context=ssl_context) as response:
+            # Check if we got a valid response
+            content_type = response.headers.get('content-type', '').lower()
+            content_length = response.headers.get('content-length', '0')
+            
+            log(f"Content-Type: {content_type}")
+            log(f"Content-Length: {content_length}")
+            
+            # Check if response looks like an error page
+            if 'text/html' in content_type:
+              log("Got HTML response (likely error page), trying next URL...")
+              continue
+              
+            # Download in chunks to show progress for large files
+            total_size = int(content_length) if content_length.isdigit() else 0
+            downloaded = 0
+            chunk_size = 8192
+            
+            while True:
+              chunk = response.read(chunk_size)
+              if not chunk:
+                break
+              tmp_file.write(chunk)
+              downloaded += len(chunk)
+              
+              if total_size > 0:
+                progress = (downloaded / total_size) * 100
+                if downloaded % (chunk_size * 100) == 0:  # Log every 100 chunks
+                  log(f"Download progress: {progress:.1f}%")
+          
+          temp_path = tmp_file.name
+          log(f"Downloaded {downloaded} bytes to {temp_path}")
+          break  # Success, exit the URL loop
+          
+      except Exception as e:
+        log(f"Failed to download from {download_url}: {e}")
+        if temp_path and os.path.exists(temp_path):
+          os.unlink(temp_path)
+          temp_path = None
+        continue
+    
+    if not temp_path:
+      log("Failed to download from any mirror")
+      return None
+    
+    try:
+      log("Download completed. Extracting...")
+      
+      # Verify file size before extraction
+      file_size = os.path.getsize(temp_path)
+      log(f"Downloaded file size: {file_size} bytes")
+      
+      if file_size < 1000000:  # Less than 1MB is suspicious
+        log("Downloaded file is too small, likely an error page")
+        with open(temp_path, 'r', encoding='utf-8', errors='ignore') as f:
+          content = f.read(500)  # Read first 500 chars
+          log(f"File content preview: {content}")
+        os.unlink(temp_path)
+        return None
+      
+      # Extract based on file type
+      if filename.endswith('.zip'):
+        try:
+          with zipfile.ZipFile(temp_path, 'r') as zip_ref:
+            zip_ref.extractall(install_dir)
+        except zipfile.BadZipFile:
+          log("Invalid zip file downloaded")
+          os.unlink(temp_path)
+          return None
+      elif filename.endswith('.tar.xz'):
+        try:
+          with tarfile.open(temp_path, 'r:xz') as tar_ref:
+            tar_ref.extractall(install_dir)
+        except tarfile.TarError:
+          log("Invalid tar.xz file downloaded")
+          os.unlink(temp_path)
+          return None
+      
+      # Clean up temporary file
+      os.unlink(temp_path)
+      
+      # Find the extracted Blender executable
+      blender_path = expected_blender_path
+      if not os.path.isfile(blender_path):
+        # Try to find it in any subdirectory
+        log("Searching for blender executable in extracted files...")
+        for root, dirs, files in os.walk(install_dir):
+          if blender_exe in files:
+            blender_path = os.path.join(root, blender_exe)
+            log(f"Found blender at: {blender_path}")
+            break
+      
+      if os.path.isfile(blender_path):
+        # Make executable on Unix-like systems
+        if system != 'windows':
+          os.chmod(blender_path, 0o755)
+        
+        log(f"Blender installed successfully at: {blender_path}")
+        return blender_path
+      else:
+        log("Failed to find Blender executable after extraction")
+        log(f"Expected at: {expected_blender_path}")
+        log("Extracted files:")
+        for root, dirs, files in os.walk(install_dir):
+          for file in files[:10]:  # Limit output
+            log(f"  {os.path.join(root, file)}")
+        return None
+    
+    except Exception as e:
+      log(f"Failed to extract/install Blender: {e}")
+      if temp_path and os.path.exists(temp_path):
+        os.unlink(temp_path)
+      return None
+
+  def getBlenderExecutable(self, log_callback=None):
+    """
+    Get Blender executable path by trying auto-detection first, then auto-installation.
+    Returns the path to Blender executable if found/installed, None otherwise.
+    """
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    # First try to find existing installation
+    blender_path = self.findBlenderExecutable()
+    if blender_path:
+      return blender_path
+    
+    # If not found, try to install automatically
+    log("Blender not found. Attempting automatic installation...")
+    blender_path = self.installBlender(log_callback)
+    if blender_path:
+      return blender_path
+    
+    log("Failed to automatically install Blender. Please install manually.")
+    return None
