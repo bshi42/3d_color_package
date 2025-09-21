@@ -25,6 +25,21 @@ from scipy.spatial.distance import pdist
 import plotly.graph_objects as go # slicer.util.pip_install('plotly')
 import plotly.express as px
 
+# Import functions from the deca module to avoid duplication
+import sys
+import os
+
+try:
+    from deca.deca import decaLogic
+    print('Successfully imported DeCA module!')
+    print(f'decaLogic class: {decaLogic}')
+except ImportError as e:
+    # Handle case where deca module is not available
+    print(f'Could not import DeCA module: {e}')
+    decaLogic = None
+    
+print(f'Final decaLogic value: {decaLogic}')
+
 #
 # DeCA
 #
@@ -729,6 +744,24 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.runClusteringButton.connect('clicked(bool)', self.onRunColorClustering)
     self.generateDendrogramButton.connect('clicked(bool)', self.onGenerateDendrogram)
     
+
+    # Auto-detect Blender executable on startup
+    self.autoDetectBlender()
+
+  def autoDetectBlender(self):
+    """Automatically detect and set Blender executable path if not already set."""
+    try:
+      # Only auto-detect if the field is empty
+      if not self.blenderExeEdit.currentPath:
+        logic = InterDeCALogic()
+        blender_path = logic.findBlenderExecutable()
+        if blender_path:
+          self.blenderExeEdit.setCurrentPath(blender_path)
+          print(f"Auto-detected Blender at: {blender_path}")
+        else:
+          print("Blender not found during auto-detection. Will attempt installation when needed.")
+    except Exception as e:
+      print(f"Error during Blender auto-detection: {e}")
 
   ################################### GUI Support Functions
   
@@ -1455,9 +1488,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Generate a new atlas model and landmark set from data"""
     logic = InterDeCALogic()
 
-    # getClosestToMeanPath now returns a SUBJECT BASENAME (no extension)
-    subjectID = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
-    log.appendPlainText(f"Closest sample to mean: {subjectID}")
+    # getClosestToMeanPath returns a filename, we need to extract the base subject ID
+    try:
+      closestFileName = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
+      if closestFileName is None:
+        log.appendPlainText("Error: Could not determine closest sample to mean")
+        return None, None
+      
+      # Extract the base subject ID by removing landmark file extensions
+      subjectID = closestFileName
+      # Strip common landmark file extensions (.fcsv, .mrk, .json)
+      fileNameBase = Path(subjectID)
+      while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
+        fileNameBase = fileNameBase.with_suffix('')
+      subjectID = str(fileNameBase)
+      
+      log.appendPlainText(f"Closest sample to mean: {closestFileName}")
+      log.appendPlainText(f"Using subject ID: {subjectID}")
+    except Exception as e:
+      log.appendPlainText(f"Error finding closest sample to mean: {e}")
+      return None, None
 
     # Resolve the actual landmark/model files by subject ID (handles any extension)
     tempBaseLMs = logic.getLandmarkFileByID(self.folderNames['originalLMs'], subjectID)
@@ -1555,6 +1605,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.updateProgressDC(10, "Generating new atlas from data...")
         self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
 
+      # Check if atlas generation was successful
+      if self.atlasModel is None or self.atlasLMs is None:
+        self.logInfoDC.appendPlainText("Failed to generate atlas. Please check the data and try again.")
+        return
+
       # Save an intermediate atlas file (RAS) so Blender can read it
       self.updateProgressDC(20, "Saving atlas for Blender processing...")
       atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
@@ -1566,11 +1621,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       merge_dist     = float(self.blMergeDistSpin.value)
       smart_angle    = float(self.blSmartAngleSpin.value)
       island_margin  = float(self.blIslandMarginSpin.value)
-      if not (os.path.isfile(blender_exe) or os.access(blender_exe, os.X_OK)):
-        self.logInfoDC.appendPlainText("Blender path not set or invalid; cannot run cleanup/UV/bake.")
-        self.resetProgressDC()
-        self.applyButtonDC.enabled = True
-        return
+      
+      # Auto-detect/install Blender if path is not set or invalid
+      if not (blender_exe and os.path.isfile(blender_exe) and os.access(blender_exe, os.X_OK)):
+        self.logInfoDC.appendPlainText("Blender path not set or invalid. Attempting automatic detection/installation...")
+        blender_exe = logic.getBlenderExecutable(lambda msg: self.logInfoDC.appendPlainText(msg))
+        
+        if blender_exe:
+          # Update the UI field with the found/installed path
+          self.blenderExeEdit.setCurrentPath(blender_exe)
+          self.logInfoDC.appendPlainText(f"Using Blender at: {blender_exe}")
+        else:
+          self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
+          self.resetProgressDC()
+          self.applyButtonDC.enabled = True
+          return
       atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
       try:
         logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
@@ -1718,8 +1783,95 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     Uses ScriptedLoadableModuleLogic base class, available at:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
     """
+  def runSubsetLandmarks(self, baseNode, lmDirectory, lmDirectorySubset):
+    deletionIndex = []
+    for i in range(baseNode.GetNumberOfControlPoints()):
+      if not baseNode.GetNthControlPointSelected(i):
+        deletionIndex.append(i)
+    for lmFileName in os.listdir(lmDirectory):
+      if(not lmFileName.startswith(".")):
+        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))
+        for index in reversed(deletionIndex):
+          currentLMNode.RemoveNthControlPoint(index)
+      slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))
+      slicer.mrmlScene.RemoveNode(currentLMNode)
 
+  def runCheckPoints(self, atlasNode, spacingTolerance):
+    spacingPercentage = spacingTolerance/100
+    templateModel = self.downsampleModel(atlasNode, spacingPercentage)
+    return templateModel, templateModel.GetNumberOfPoints()
+
+  def runDeCAL(self, baseNode, baseLMPath, meshDirectory, landmarkDirectory, outputDirectory, spacingTolerance):
+    spacingPercentage = spacingTolerance/100
+    loadOption=False
+    baseLandmarks=self.fiducialNodeToPolyData(baseLMPath, loadOption).GetPoints()
+    landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
+    self.modelNames, models = self.importMeshes(meshDirectory, ['ply','stl','vtp','vtk','obj'], restrict_to=landmarkNames)
+    self.outputDirectory = outputDirectory
+    denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseNode.GetPolyData(), baseLandmarks)
+    # get downsampled template with index array
+    indexArrayName = "indexArray"
+    self.addIndexArray(baseNode, indexArrayName)
+    templateModel = self.downsampleModel(baseNode, spacingPercentage)
+    templateIndex = templateModel.GetPointData().GetArray(indexArrayName)
+    # saving point correspondences
+    if(templateIndex):
+      sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+      print("sample number:", sampleNumber)
+      for i in range(sampleNumber):
+        alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+        alignedPointNode= slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',"alignedPoints")
+        for j in range(templateIndex.GetNumberOfValues()):
+          baseIndex = templateIndex.GetValue(j)
+          alignedPoint = alignedMesh.GetPoint(baseIndex)
+          alignedPointNode.AddControlPoint(alignedPoint, str(j))
+        outputLMPath = os.path.join(outputDirectory, self.modelNames[i]+".mrk.json")
+        slicer.util.saveNode(alignedPointNode, outputLMPath)
+        slicer.mrmlScene.RemoveNode(alignedPointNode)
+      # save base node correspondences
+      basePointNode= slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',"atlasLandmarks")
+      for j in range(templateIndex.GetNumberOfValues()):
+        baseIndex = templateIndex.GetValue(j)
+        basePoint = baseNode.GetPolyData().GetPoint(baseIndex)
+        basePointNode.AddControlPoint(basePoint, str(j))
+      baseLMPath = os.path.join(outputDirectory, "atlas.mrk.json")
+      slicer.util.saveNode(basePointNode, baseLMPath)
+      #slicer.mrmlScene.RemoveNode(basePointNode)
+      return basePointNode
+    else:
+      print("No index found")
+      return None
+
+  # Use downsampleModel from decaLogic to avoid duplication
+  def downsampleModel(self, model, spacingPercentage):
+    if decaLogic:
+      return decaLogic().downsampleModel(model, spacingPercentage)
+    # Fallback implementation if decaLogic is not available
+    points=model.GetPolyData()
+    cleanFilter=vtk.vtkCleanPolyData()
+    cleanFilter.SetToleranceIsAbsolute(False)
+    cleanFilter.SetTolerance(spacingPercentage)
+    cleanFilter.SetInputData(points)
+    cleanFilter.Update()
+    return cleanFilter.GetOutput()
+
+  # Use addIndexArray from decaLogic to avoid duplication
+  def addIndexArray(self, mesh, arrayName):
+    if decaLogic:
+      return decaLogic().addIndexArray(mesh, arrayName)
+    # Fallback implementation if decaLogic is not available
+    indexArray = vtk.vtkIntArray()
+    indexArray.SetNumberOfComponents(1)
+    indexArray.SetName(arrayName)
+    for i in range(mesh.GetPolyData().GetNumberOfPoints()):
+      indexArray.InsertNextValue(i)
+    mesh.GetPolyData().GetPointData().AddArray(indexArray)
+
+  # Use computeNormals from decaLogic to avoid duplication
   def computeNormals(self, inputModel):
+    if decaLogic:
+      return decaLogic().computeNormals(inputModel)
+    # Fallback implementation if decaLogic is not available
     normals = vtk.vtkPolyDataNormals()
     normals.SetInputData(inputModel.GetPolyData())
     normals.SetAutoOrientNormals(True)
@@ -1904,7 +2056,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLandmarkNode.GetDisplayNode().SetPointLabelsVisibility(False)
     return averageModelNode, averageLandmarkNode
 
+  # Use getLandmarkFileByID from decaLogic to avoid duplication
   def getLandmarkFileByID(self, directory, subjectID):
+    if decaLogic:
+      try:
+        return decaLogic().getLandmarkFileByID(directory, subjectID)
+      except Exception as e:
+        print(f"Error using decaLogic.getLandmarkFileByID: {e}")
+        # Fall back to local implementation
+    # Fallback implementation if decaLogic is not available
     fileList = os.listdir(directory)
     for fileName in fileList:
       fileNameBase = Path(fileName)
@@ -1913,8 +2073,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if subjectID == str(fileNameBase):
         # if file with this subject id exists, load into scene
         filePath = os.path.join(directory, fileName)
-        currentNode = slicer.util.loadMarkups(filePath)
-        return currentNode
+        try:
+          currentNode = slicer.util.loadMarkups(filePath)
+          return currentNode
+        except Exception as e:
+          print(f"Error loading landmarks from {filePath}: {e}")
+          return None
+    print(f"No landmarks found for subject ID '{subjectID}' in {directory}")
+    return None
 
   def getModelFileByID(self, directory, subjectID):
     fileList = os.listdir(directory)
@@ -1922,8 +2088,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       fileNameBase = Path(fileName).stem
       if str(subjectID) == str(fileNameBase):
         filePath = os.path.join(directory, fileName)
-        currentNode = self._load_model_with_cs(filePath, 'RAS')
-        return currentNode
+        try:
+          currentNode = self._load_model_with_cs(filePath, 'RAS')
+          return currentNode
+        except Exception as e:
+          print(f"Error loading model from {filePath}: {e}")
+          return None
+    print(f"No model found for subject ID '{subjectID}' in {directory}")
+    return None
 
   def runAlign(self, baseMeshNode, baseLMNode, meshDirectory, lmDirectory, ouputMeshDirectory, outputLMDirectory, removeScaleOption, slmDirectory=False, outputSLMDirectory=False):
     semilandmarkOption = bool(slmDirectory and outputSLMDirectory)
@@ -2005,7 +2177,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           except:
             print(f"could not find nodes to remove for {subjectID}")
 
+  # Use distanceMatrix from decaLogic to avoid duplication
   def distanceMatrix(self, a):
+    if decaLogic:
+      return decaLogic().distanceMatrix(a)
+    # Fallback implementation if decaLogic is not available
     """
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
@@ -2017,13 +2193,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     dz=fnx(a[:,2])
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
+  # Use numpyToFiducialNode from decaLogic to avoid duplication
   def numpyToFiducialNode(self, numpyArray, nodeName):
+    if decaLogic:
+      return decaLogic().numpyToFiducialNode(numpyArray, nodeName)
+    # Fallback implementation if decaLogic is not available
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
     for index in range(len(numpyArray)):
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
     return fiducialNode
 
+  # Use computeAverageLM from decaLogic to avoid duplication
   def computeAverageLM(self, fiducialGroup):
+    if decaLogic:
+      return decaLogic().computeAverageLM(fiducialGroup)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -2036,7 +2220,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
     return averageLMNode
 
+  # Use fiducialNodeToPolyData from decaLogic to avoid duplication
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
+    if decaLogic:
+      return decaLogic().fiducialNodeToPolyData(nodeLocation, loadOption)
+    # Fallback implementation if decaLogic is not available
     point = [0,0,0]
     polydataPoints = vtk.vtkPolyData()
     points = vtk.vtkPoints()
@@ -2108,7 +2296,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     modelGroup.Update()
     return names, modelGroup.GetOutput()
 
+  # Use procrustesImposition from decaLogic to avoid duplication
   def procrustesImposition(self, originalLandmarks, sizeOption):
+    if decaLogic:
+      return decaLogic().procrustesImposition(originalLandmarks, sizeOption)
+    # Fallback implementation if decaLogic is not available
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
     if(sizeOption):
       procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
@@ -2118,7 +2310,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanShape = procrustesFilter.GetMeanPoints()
     return [meanShape, procrustesFilter.GetOutput()]
 
+  # Use getClosestToMeanIndex from decaLogic to avoid duplication
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
+    if decaLogic:
+      return decaLogic().getClosestToMeanIndex(meanShape, alignedPoints)
+    # Fallback implementation if decaLogic is not available
     import operator
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     procrustesDistances = []
@@ -2138,8 +2334,19 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except:
       return 0
 
+  # Use getClosestToMeanPath from decaLogic to avoid duplication
   def getClosestToMeanPath(self, landmarkDirectory):
+    if decaLogic:
+      try:
+        return decaLogic().getClosestToMeanPath(landmarkDirectory)
+      except Exception as e:
+        print(f"Error using decaLogic.getClosestToMeanPath: {e}")
+        # Fall back to local implementation
+    # Fallback implementation if decaLogic is not available
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
+    if not lmNames:
+      print(f"No landmarks found in {landmarkDirectory}")
+      return None
     meanShape, alignedLandmarks = self.procrustesImposition(landmarks, False)
     closestToMeanIndex = self.getClosestToMeanIndex(meanShape, alignedLandmarks)
     return lmNames[closestToMeanIndex]
@@ -2304,7 +2511,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     return inverseTransformFilter.GetOutput()
 
+  # Use convertPointsToVTK from decaLogic to avoid duplication
   def convertPointsToVTK(self, points):
+    if decaLogic:
+      return decaLogic().convertPointsToVTK(points)
+    # Fallback implementation if decaLogic is not available
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
     points_vtk = vtk.vtkPoints()
     points_vtk.SetData(array_vtk)
@@ -2312,7 +2523,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     polydata_vtk.SetPoints(points_vtk)
     return polydata_vtk
 
+  # Use computeAverageModelFromGroup from decaLogic to avoid duplication
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
+    if decaLogic:
+      return decaLogic().computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -2332,7 +2547,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageModel.SetPolys(baseMesh.GetPolys())
     return averageModel
 
+  # Use addMagnitudeFeature from decaLogic to avoid duplication
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
+    if decaLogic:
+      return decaLogic().addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -2367,7 +2586,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
+  # Use addMagnitudeFeatureSymmetry from decaLogic to avoid duplication
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
+    if decaLogic:
+      return decaLogic().addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
+    # Fallback implementation if decaLogic is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -2406,6 +2629,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   # ---------- Coordinate system safe save ----------
   def _save_model_with_cs(self, modelNode, filePath, coordinateSystem='RAS'):
+    if modelNode is None:
+      raise ValueError(f"Model node is None, cannot save to {filePath}")
+    
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
     storage.SetFileName(filePath)
     cs = (coordinateSystem or 'RAS').upper()
@@ -3261,3 +3487,304 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except Exception as e:
       print(f"Error in generateColorDendrogram: {str(e)}")
       return None
+
+
+  def findBlenderExecutable(self):
+    """
+    Automatically find Blender executable on the system.
+    Returns the path to Blender executable if found, None otherwise.
+    """
+    import platform
+    import subprocess
+    import shutil
+    
+    system = platform.system().lower()
+    
+    # First, try to find Blender in PATH
+    blender_names = ['blender', 'blender.exe'] if system == 'windows' else ['blender']
+    
+    for name in blender_names:
+      path = shutil.which(name)
+      if path and os.path.isfile(path):
+        print(f"Found Blender in PATH: {path}")
+        return path
+    
+    # Try common installation locations based on OS
+    common_paths = []
+    
+    if system == 'windows':
+      # Windows common locations
+      program_files = [
+        os.environ.get('PROGRAMFILES', 'C:\\Program Files'),
+        os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+      ]
+      for pf in program_files:
+        # Check various Blender versions
+        blender_dirs = glob.glob(os.path.join(pf, 'Blender Foundation', 'Blender*'))
+        for blender_dir in blender_dirs:
+          common_paths.append(os.path.join(blender_dir, 'blender.exe'))
+    
+    elif system == 'darwin':  # macOS
+      common_paths = [
+        '/Applications/Blender.app/Contents/MacOS/Blender',
+        '/opt/homebrew/bin/blender',
+        '/usr/local/bin/blender'
+      ]
+      # Check for various Blender versions in Applications
+      blender_apps = glob.glob('/Applications/Blender*.app/Contents/MacOS/Blender')
+      common_paths.extend(blender_apps)
+    
+    else:  # Linux and other Unix-like systems
+      common_paths = [
+        '/usr/bin/blender',
+        '/usr/local/bin/blender',
+        '/opt/blender/blender',
+        '/snap/bin/blender',
+        os.path.expanduser('~/blender/blender'),
+        os.path.expanduser('~/.local/bin/blender')
+      ]
+      # Check for snap installations
+      snap_paths = glob.glob('/snap/blender/*/blender')
+      common_paths.extend(snap_paths)
+    
+    # Test each common path
+    for path in common_paths:
+      if os.path.isfile(path) and os.access(path, os.X_OK):
+        print(f"Found Blender at: {path}")
+        return path
+    
+    print("Blender executable not found in common locations")
+    return None
+
+  def installBlender(self, log_callback=None):
+    """
+    Automatically download and install Blender.
+    Returns the path to the installed Blender executable if successful, None otherwise.
+    """
+    import platform
+    import subprocess
+    import tempfile
+    import zipfile
+    import tarfile
+    import urllib.request
+    import urllib.parse
+    import ssl
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    system = platform.system().lower()
+    architecture = platform.machine().lower()
+    
+    # Use current stable version URLs from blender.org
+    blender_version = "4.5.3"
+    
+    if system == 'windows':
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-windows-x64.zip"
+        blender_exe = "blender.exe"
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-windows-arm64.zip"
+        blender_exe = "blender.exe"
+      else:
+        log("Unsupported Windows architecture")
+        return None
+    
+    elif system == 'darwin':  # macOS
+      log("macOS installation not supported in automatic mode. Please install Blender manually from:")
+      log("https://www.blender.org/download/")
+      return None
+    
+    elif system == 'linux':
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        blender_exe = "blender"
+      else:
+        log("Unsupported Linux architecture")
+        return None
+    
+    else:
+      log(f"Unsupported operating system: {system}")
+      return None
+    
+    # Try multiple download URLs in order of preference
+    download_urls = [
+      f"https://www.blender.org/download/release/Blender4.5/{filename}",
+      f"https://download.blender.org/release/Blender4.5/{filename}",
+      f"https://mirror.clarkson.edu/blender/release/Blender4.5/{filename}",
+      f"https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/{filename}"
+    ]
+    
+    # Create installation directory
+    install_dir = os.path.join(os.path.expanduser('~'), '.slicer-blender')
+    os.makedirs(install_dir, exist_ok=True)
+    
+    # Check if already installed
+    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-x64")
+    if system == 'windows' and 'arm' in architecture:
+      expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-arm64")
+    
+    expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    if os.path.isfile(expected_blender_path):
+      log(f"Blender already installed at: {expected_blender_path}")
+      return expected_blender_path
+    
+    log(f"Downloading Blender {blender_version}...")
+    
+    # Try each download URL until one works
+    temp_path = None
+    for download_url in download_urls:
+      try:
+        log(f"Trying URL: {download_url}")
+        
+        # Create request with proper headers
+        request = urllib.request.Request(download_url)
+        request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        
+        # Download with SSL context to handle certificate issues
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
+          with urllib.request.urlopen(request, context=ssl_context) as response:
+            # Check if we got a valid response
+            content_type = response.headers.get('content-type', '').lower()
+            content_length = response.headers.get('content-length', '0')
+            
+            log(f"Content-Type: {content_type}")
+            log(f"Content-Length: {content_length}")
+            
+            # Check if response looks like an error page
+            if 'text/html' in content_type:
+              log("Got HTML response (likely error page), trying next URL...")
+              continue
+              
+            # Download in chunks to show progress for large files
+            total_size = int(content_length) if content_length.isdigit() else 0
+            downloaded = 0
+            chunk_size = 8192
+            
+            while True:
+              chunk = response.read(chunk_size)
+              if not chunk:
+                break
+              tmp_file.write(chunk)
+              downloaded += len(chunk)
+              
+              if total_size > 0:
+                progress = (downloaded / total_size) * 100
+                if downloaded % (chunk_size * 100) == 0:  # Log every 100 chunks
+                  log(f"Download progress: {progress:.1f}%")
+          
+          temp_path = tmp_file.name
+          log(f"Downloaded {downloaded} bytes to {temp_path}")
+          break  # Success, exit the URL loop
+          
+      except Exception as e:
+        log(f"Failed to download from {download_url}: {e}")
+        if temp_path and os.path.exists(temp_path):
+          os.unlink(temp_path)
+          temp_path = None
+        continue
+    
+    if not temp_path:
+      log("Failed to download from any mirror")
+      return None
+    
+    try:
+      log("Download completed. Extracting...")
+      
+      # Verify file size before extraction
+      file_size = os.path.getsize(temp_path)
+      log(f"Downloaded file size: {file_size} bytes")
+      
+      if file_size < 1000000:  # Less than 1MB is suspicious
+        log("Downloaded file is too small, likely an error page")
+        with open(temp_path, 'r', encoding='utf-8', errors='ignore') as f:
+          content = f.read(500)  # Read first 500 chars
+          log(f"File content preview: {content}")
+        os.unlink(temp_path)
+        return None
+      
+      # Extract based on file type
+      if filename.endswith('.zip'):
+        try:
+          with zipfile.ZipFile(temp_path, 'r') as zip_ref:
+            zip_ref.extractall(install_dir)
+        except zipfile.BadZipFile:
+          log("Invalid zip file downloaded")
+          os.unlink(temp_path)
+          return None
+      elif filename.endswith('.tar.xz'):
+        try:
+          with tarfile.open(temp_path, 'r:xz') as tar_ref:
+            tar_ref.extractall(install_dir)
+        except tarfile.TarError:
+          log("Invalid tar.xz file downloaded")
+          os.unlink(temp_path)
+          return None
+      
+      # Clean up temporary file
+      os.unlink(temp_path)
+      
+      # Find the extracted Blender executable
+      blender_path = expected_blender_path
+      if not os.path.isfile(blender_path):
+        # Try to find it in any subdirectory
+        log("Searching for blender executable in extracted files...")
+        for root, dirs, files in os.walk(install_dir):
+          if blender_exe in files:
+            blender_path = os.path.join(root, blender_exe)
+            log(f"Found blender at: {blender_path}")
+            break
+      
+      if os.path.isfile(blender_path):
+        # Make executable on Unix-like systems
+        if system != 'windows':
+          os.chmod(blender_path, 0o755)
+        
+        log(f"Blender installed successfully at: {blender_path}")
+        return blender_path
+      else:
+        log("Failed to find Blender executable after extraction")
+        log(f"Expected at: {expected_blender_path}")
+        log("Extracted files:")
+        for root, dirs, files in os.walk(install_dir):
+          for file in files[:10]:  # Limit output
+            log(f"  {os.path.join(root, file)}")
+        return None
+    
+    except Exception as e:
+      log(f"Failed to extract/install Blender: {e}")
+      if temp_path and os.path.exists(temp_path):
+        os.unlink(temp_path)
+      return None
+
+  def getBlenderExecutable(self, log_callback=None):
+    """
+    Get Blender executable path by trying auto-detection first, then auto-installation.
+    Returns the path to Blender executable if found/installed, None otherwise.
+    """
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    # First try to find existing installation
+    blender_path = self.findBlenderExecutable()
+    if blender_path:
+      return blender_path
+    
+    # If not found, try to install automatically
+    log("Blender not found. Attempting automatic installation...")
+    blender_path = self.installBlender(log_callback)
+    if blender_path:
+      return blender_path
+    
+    log("Failed to automatically install Blender. Please install manually.")
+    return None
