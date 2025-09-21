@@ -81,6 +81,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Progress tracking
     self.progressBar = None
+    
+    # Initialize persistent data storage
+    self.settings = qt.QSettings()
+    self.settings.beginGroup("InterDeCA")
     self.progressLabel = None
     self.cancelButton = None
     self.currentOperation = None
@@ -187,7 +191,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Add validation status label for models
     self.meshValidationLabelDC = qt.QLabel()
-    self.meshValidationLabelDC.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+    self.meshValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
     self.meshValidationLabelDC.setText("No directory selected")
     
     meshDirWidget = qt.QWidget()
@@ -204,7 +208,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Add validation status label for landmarks
     self.landmarkValidationLabelDC = qt.QLabel()
-    self.landmarkValidationLabelDC.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+    self.landmarkValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
     self.landmarkValidationLabelDC.setText("No directory selected")
     
     landmarkDirWidget = qt.QWidget()
@@ -221,7 +225,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Add validation status label for textures
     self.textureValidationLabelDC = qt.QLabel()
-    self.textureValidationLabelDC.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+    self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
     self.textureValidationLabelDC.setText("No directory selected")
     
     textureDirWidget = qt.QWidget()
@@ -323,7 +327,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     progressLayout.addWidget(self.progressBarDC)
     
     self.progressLabelDC = qt.QLabel("Ready")
-    self.progressLabelDC.setStyleSheet("QLabel { color: blue; }")
+    # Use theme-aware color that works in both light and dark modes
+    # This will automatically adapt to the current Slicer theme
+    self.progressLabelDC.setStyleSheet("""
+      QLabel { 
+        color: palette(link); 
+        font-weight: bold; 
+      }
+    """)
     progressLayout.addWidget(self.progressLabelDC)
     
     self.cancelButtonDC = qt.QPushButton("Cancel Operation")
@@ -489,6 +500,165 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
     #
+    # Landmark Lock/Unlock Controls
+    #
+    landmarkControlWidget = qt.QWidget()
+    landmarkControlLayout = qt.QHBoxLayout(landmarkControlWidget)
+    landmarkControlLayout.setContentsMargins(0, 0, 0, 0)
+    
+    self.landmarkLockButton = qt.QPushButton("🔒 Lock Landmarks")
+    self.landmarkLockButton.setToolTip("Lock/unlock all landmarks to prevent accidental movement")
+    self.landmarkLockButton.setStyleSheet("""
+      QPushButton {
+        background-color: #ff6b6b;
+        color: white;
+        font-weight: bold;
+        border: none;
+        border-radius: 5px;
+        padding: 6px 12px;
+        min-height: 25px;
+      }
+      QPushButton:hover {
+        background-color: #ff5252;
+      }
+      QPushButton:pressed {
+        background-color: #e53935;
+      }
+    """)
+    self.landmarkLockButton.connect('clicked(bool)', self.onToggleLandmarkLock)
+    landmarkControlLayout.addWidget(self.landmarkLockButton)
+    
+    self.landmarkLockStatusLabel = qt.QLabel("Landmarks: Unlocked")
+    self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
+    landmarkControlLayout.addWidget(self.landmarkLockStatusLabel)
+    
+    visualizeWidgetLayout.addRow("Landmark Control:", landmarkControlWidget)
+    
+    # Add spacing before the visualization button
+    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+
+    #
+    # Texture Analysis Section
+    #
+    self.textureAnalysisCollapsible = ctk.ctkCollapsibleButton()
+    self.textureAnalysisCollapsible.text = "Texture Analysis"
+    self.textureAnalysisCollapsible.collapsed = True
+    visualizeWidgetLayout.addRow(self.textureAnalysisCollapsible)
+    
+    textureAnalysisLayout = qt.QFormLayout(self.textureAnalysisCollapsible)
+    
+    # Model selector for texture analysis
+    self.textureAnalysisModelSelector = slicer.qMRMLNodeComboBox()
+    self.textureAnalysisModelSelector.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.textureAnalysisModelSelector.setToolTip("Select model for texture analysis")
+    self.textureAnalysisModelSelector.setCurrentNode(None)
+    textureAnalysisLayout.addRow("Model:", self.textureAnalysisModelSelector)
+    
+    # Texture analysis type
+    self.textureAnalysisTypeCombo = qt.QComboBox()
+    self.textureAnalysisTypeCombo.addItems([
+      "Surface Roughness Analysis",
+      "Texture Pattern Recognition", 
+      "Regional Texture Comparison",
+      "Texture Histogram Analysis"
+    ])
+    self.textureAnalysisTypeCombo.setToolTip("Select type of texture analysis to perform")
+    textureAnalysisLayout.addRow("Analysis Type:", self.textureAnalysisTypeCombo)
+    
+    # Analysis parameters
+    self.textureAnalysisParamsWidget = qt.QWidget()
+    self.textureAnalysisParamsLayout = qt.QFormLayout(self.textureAnalysisParamsWidget)
+    
+    # Roughness analysis parameters
+    self.roughnessKernelSizeSpin = qt.QSpinBox()
+    self.roughnessKernelSizeSpin.setRange(3, 21)
+    self.roughnessKernelSizeSpin.setValue(5)
+    self.roughnessKernelSizeSpin.setToolTip("Kernel size for roughness calculation (odd numbers only)")
+    self.roughnessKernelSizeSpin.setSingleStep(2)
+    self.textureAnalysisParamsLayout.addRow("Kernel Size:", self.roughnessKernelSizeSpin)
+    
+    # Pattern recognition parameters
+    self.patternScaleSpin = qt.QDoubleSpinBox()
+    self.patternScaleSpin.setRange(0.1, 10.0)
+    self.patternScaleSpin.setValue(1.0)
+    self.patternScaleSpin.setDecimals(1)
+    self.patternScaleSpin.setToolTip("Scale factor for pattern detection")
+    self.textureAnalysisParamsLayout.addRow("Pattern Scale:", self.patternScaleSpin)
+    
+    # Regional comparison parameters
+    self.regionCountSpin = qt.QSpinBox()
+    self.regionCountSpin.setRange(2, 20)
+    self.regionCountSpin.setValue(4)
+    self.regionCountSpin.setToolTip("Number of regions to compare")
+    self.textureAnalysisParamsLayout.addRow("Region Count:", self.regionCountSpin)
+    
+    # Histogram parameters
+    self.histogramBinsSpin = qt.QSpinBox()
+    self.histogramBinsSpin.setRange(10, 256)
+    self.histogramBinsSpin.setValue(64)
+    self.histogramBinsSpin.setToolTip("Number of bins for histogram analysis")
+    self.textureAnalysisParamsLayout.addRow("Histogram Bins:", self.histogramBinsSpin)
+    
+    textureAnalysisLayout.addRow("Parameters:", self.textureAnalysisParamsWidget)
+    
+    # Analysis buttons
+    self.runTextureAnalysisButton = qt.QPushButton("Run Texture Analysis")
+    self.runTextureAnalysisButton.setStyleSheet("""
+      QPushButton {
+        background-color: #9C27B0;
+        color: white;
+        font-weight: bold;
+        border: none;
+        border-radius: 5px;
+        padding: 8px 16px;
+        min-height: 30px;
+      }
+      QPushButton:hover {
+        background-color: #8E24AA;
+      }
+      QPushButton:pressed {
+        background-color: #7B1FA2;
+      }
+    """)
+    textureAnalysisLayout.addRow(self.runTextureAnalysisButton)
+    
+    # Results display
+    self.textureAnalysisResultsText = qt.QTextEdit()
+    self.textureAnalysisResultsText.setMaximumHeight(150)
+    self.textureAnalysisResultsText.setReadOnly(True)
+    self.textureAnalysisResultsText.setToolTip("Texture analysis results will be displayed here")
+    textureAnalysisLayout.addRow("Results:", self.textureAnalysisResultsText)
+    
+    # Export results button
+    self.exportTextureResultsButton = qt.QPushButton("Export Results")
+    self.exportTextureResultsButton.setEnabled(False)
+    self.exportTextureResultsButton.setStyleSheet("""
+      QPushButton {
+        background-color: #607D8B;
+        color: white;
+        font-weight: bold;
+        border: none;
+        border-radius: 5px;
+        padding: 6px 12px;
+        min-height: 25px;
+      }
+      QPushButton:hover {
+        background-color: #546E7A;
+      }
+      QPushButton:pressed {
+        background-color: #455A64;
+      }
+      QPushButton:disabled {
+        background-color: #BDBDBD;
+        color: #757575;
+      }
+    """)
+    textureAnalysisLayout.addRow(self.exportTextureResultsButton)
+
+    # Add spacing before the visualization button
+    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+
+    #
     # Start Visualization Button (at bottom)
     #
     self.startVisualizationButton = qt.QPushButton("Start Visualization")
@@ -526,6 +696,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
     self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
+    
+    # Texture analysis connections
+    self.runTextureAnalysisButton.connect('clicked(bool)', self.onRunTextureAnalysis)
+    self.exportTextureResultsButton.connect('clicked(bool)', self.onExportTextureResults)
+    self.textureAnalysisTypeCombo.connect('currentIndexChanged(int)', self.onTextureAnalysisTypeChanged)
 
     ################################### Color Analysis Tab ###################################
     
@@ -573,7 +748,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Status label for loaded models
     self.loadedModelsStatusLabel = qt.QLabel("No DeCA models loaded")
-    self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: #666; font-style: italic; }")
+    self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
     loadDecaModelsLayout.addRow("Status:", self.loadedModelsStatusLabel)
     
     # Model selector for color extraction
@@ -747,6 +922,120 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Auto-detect Blender executable on startup
     self.autoDetectBlender()
+    
+    # Load persistent data after UI is set up
+    self.loadPersistentData()
+
+  def savePersistentData(self):
+    """Save important data to persistent storage"""
+    try:
+      # Save directory paths
+      if hasattr(self, 'meshDirectoryDC') and self.meshDirectoryDC.currentPath:
+        self.settings.setValue("meshDirectory", self.meshDirectoryDC.currentPath)
+      if hasattr(self, 'landmarkDirectoryDC') and self.landmarkDirectoryDC.currentPath:
+        self.settings.setValue("landmarkDirectory", self.landmarkDirectoryDC.currentPath)
+      if hasattr(self, 'textureDirectoryDC') and self.textureDirectoryDC.currentPath:
+        self.settings.setValue("textureDirectory", self.textureDirectoryDC.currentPath)
+      if hasattr(self, 'outputDirectoryDC') and self.outputDirectoryDC.currentPath:
+        self.settings.setValue("outputDirectory", self.outputDirectoryDC.currentPath)
+      if hasattr(self, 'blenderExeEdit') and self.blenderExeEdit.currentPath:
+        self.settings.setValue("blenderExecutable", self.blenderExeEdit.currentPath)
+      
+      # Save atlas model reference (by name, since node objects can't be serialized)
+      if hasattr(self, 'atlasModel') and self.atlasModel:
+        self.settings.setValue("atlasModelName", self.atlasModel.GetName())
+      
+      # Save other important settings
+      if hasattr(self, 'bakeSizeSpin'):
+        self.settings.setValue("bakeSize", self.bakeSizeSpin.value)
+      if hasattr(self, 'bakeExtrusionSpin'):
+        self.settings.setValue("bakeExtrusion", self.bakeExtrusionSpin.value)
+      if hasattr(self, 'bakeMarginPxSpin'):
+        self.settings.setValue("bakeMarginPx", self.bakeMarginPxSpin.value)
+      
+      # Save landmark lock state
+      if hasattr(self, 'landmarkLockButton'):
+        # Check if landmarks are currently locked
+        markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
+        if markups and hasattr(self, '_areLandmarksLocked'):
+          is_locked = self._areLandmarksLocked(markups[0])
+          self.settings.setValue("landmarksLocked", is_locked)
+        
+      self.settings.sync()
+    except Exception as e:
+      print(f"Warning: Could not save persistent data: {e}")
+
+  def loadPersistentData(self):
+    """Load persistent data from storage"""
+    try:
+      # Load directory paths
+      if hasattr(self, 'meshDirectoryDC'):
+        mesh_dir = self.settings.value("meshDirectory", "")
+        if mesh_dir and os.path.exists(mesh_dir):
+          self.meshDirectoryDC.setCurrentPath(mesh_dir)
+          
+      if hasattr(self, 'landmarkDirectoryDC'):
+        lm_dir = self.settings.value("landmarkDirectory", "")
+        if lm_dir and os.path.exists(lm_dir):
+          self.landmarkDirectoryDC.setCurrentPath(lm_dir)
+          
+      if hasattr(self, 'textureDirectoryDC'):
+        tex_dir = self.settings.value("textureDirectory", "")
+        if tex_dir and os.path.exists(tex_dir):
+          self.textureDirectoryDC.setCurrentPath(tex_dir)
+          
+      if hasattr(self, 'outputDirectoryDC'):
+        out_dir = self.settings.value("outputDirectory", "")
+        if out_dir and os.path.exists(out_dir):
+          self.outputDirectoryDC.setCurrentPath(out_dir)
+          
+      if hasattr(self, 'blenderExeEdit'):
+        blender_exe = self.settings.value("blenderExecutable", "")
+        if blender_exe and os.path.exists(blender_exe):
+          self.blenderExeEdit.setCurrentPath(blender_exe)
+      
+      # Try to restore atlas model by name
+      atlas_name = self.settings.value("atlasModelName", "")
+      if atlas_name:
+        try:
+          atlas_node = slicer.util.getNode(atlas_name)
+          if atlas_node and atlas_node.IsA("vtkMRMLModelNode"):
+            self.atlasModel = atlas_node
+            print(f"Restored atlas model: {atlas_name}")
+        except Exception:
+          pass  # Atlas model not found, that's okay
+      
+      # Load other settings
+      if hasattr(self, 'bakeSizeSpin'):
+        bake_size = self.settings.value("bakeSize", 2048)
+        self.bakeSizeSpin.setValue(int(bake_size))
+      if hasattr(self, 'bakeExtrusionSpin'):
+        bake_extrusion = self.settings.value("bakeExtrusion", 0.005)
+        self.bakeExtrusionSpin.setValue(float(bake_extrusion))
+      if hasattr(self, 'bakeMarginPxSpin'):
+        bake_margin = self.settings.value("bakeMarginPx", 2)
+        self.bakeMarginPxSpin.setValue(int(bake_margin))
+      
+      # Load landmark lock state
+      if hasattr(self, 'landmarkLockButton'):
+        landmarks_locked = self.settings.value("landmarksLocked", False)
+        if landmarks_locked:
+          # Apply the saved lock state
+          markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
+          if markups and hasattr(self, '_setLandmarkLockState'):
+            for markup in markups:
+              self._setLandmarkLockState(markup, True)
+            self._updateLandmarkLockUI(True)
+        
+    except Exception as e:
+      print(f"Warning: Could not load persistent data: {e}")
+
+  def cleanup(self):
+    """Called when module is about to be unloaded - save persistent data"""
+    try:
+      self.savePersistentData()
+    except Exception as e:
+      print(f"Warning: Could not save persistent data during cleanup: {e}")
 
   def autoDetectBlender(self):
     """Automatically detect and set Blender executable path if not already set."""
@@ -769,7 +1058,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Validate directory contents and update status label"""
     if not directory or not os.path.isdir(directory):
       label.setText("No directory selected")
-      label.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+      label.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
       return False, 0
     
     try:
@@ -784,21 +1073,22 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       count = len(matching_files)
       if count == 0:
         label.setText("No files found")
-        label.setStyleSheet("QLabel { color: red; }")
+        label.setStyleSheet("QLabel { color: palette(negative); }")
         return False, 0
       else:
         label.setText(f"{count} found")
-        label.setStyleSheet("QLabel { color: green; }")
+        label.setStyleSheet("QLabel { color: palette(positive); }")
         return True, count
     except Exception as e:
       label.setText(f"Error reading directory")
-      label.setStyleSheet("QLabel { color: red; }")
+      label.setStyleSheet("QLabel { color: palette(negative); }")
       return False, 0
   
   def onMeshDirectoryChangedDC(self, directory):
     """Validate mesh directory when changed"""
     model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']
     self.validateDirectory(directory, model_extensions, self.meshValidationLabelDC, "models")
+    self.savePersistentData()  # Save when directory changes
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
@@ -808,6 +1098,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Validate landmark directory when changed"""
     landmark_extensions = ['.fcsv', '.json', '.mrk.json']
     self.validateDirectory(directory, landmark_extensions, self.landmarkValidationLabelDC, "landmarks")
+    self.savePersistentData()  # Save when directory changes
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
@@ -822,6 +1113,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if valid and count > 0:
       self.validateTextureMatching()
     
+    self.savePersistentData()  # Save when directory changes
     self.onParameterSelectDC()
   
   def validateTextureMatching(self):
@@ -870,12 +1162,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         total_subjects = len(subject_basenames)
         self.textureValidationLabelDC.setText(f"{len(texture_files)} found ({match_count}/{total_subjects} matched)")
         if match_count == total_subjects:
-          self.textureValidationLabelDC.setStyleSheet("QLabel { color: green; }")
+          self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(positive); }")
         else:
-          self.textureValidationLabelDC.setStyleSheet("QLabel { color: orange; }")
+          self.textureValidationLabelDC.setStyleSheet("QLabel { color: #ff8c00; }")  # Orange color that works in both themes
       else:
         self.textureValidationLabelDC.setText(f"{len(texture_files)} found (no matches)")
-        self.textureValidationLabelDC.setStyleSheet("QLabel { color: red; }")
+        self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(negative); }")
   
   def updateProgressDC(self, value, text="", showCancel=False):
     """Update progress bar and label"""
@@ -913,7 +1205,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Hide markups for clean visualization
       self._hideMarkupsForVisualization(remove=False)
       
-      # Ensure models are visible
+      # Hide unwanted models (planes, reference objects, etc.)
+      self._hideUnwantedModels()
+      
+      # Ensure only relevant DeCA models are visible
       self._ensureModelsAreVisible()
       
       # Update the button text to indicate visualization is active
@@ -1015,20 +1310,43 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   def onSubjectIDSelect(self):
     # This function is part of the original Heatmap mode and is unchanged
     try:
+      if self.resultNode is None:
+        print("Error: No result node selected")
+        return
+        
       subjectID = self.subjectIDBox.currentText
-      self.resultNode.GetDisplayNode().SetActiveScalarName(subjectID)
-      self.resultNode.GetDisplayNode().SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
+      displayNode = self.resultNode.GetDisplayNode()
+      if displayNode is None:
+        print("Error: Selected model has no display node")
+        return
+        
+      displayNode.SetActiveScalarName(subjectID)
+      displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
       print(subjectID)
-    except:
-      print("Error: No array found")
+    except Exception as e:
+      print(f"Error: {str(e)}")
 
   def onVisualizeMeshSelect(self):
     # This function is part of the original Heatmap mode and is unchanged
     if bool(self.meshSelect.currentNode()):
       self.resultNode = self.meshSelect.currentNode()
-      self.resultNode.GetDisplayNode().SetVisibility(True)
-      self.resultNode.GetDisplayNode().SetScalarVisibility(True)
-      resultData = self.resultNode.GetPolyData().GetPointData()
+      
+      # Check if the node has a display node before accessing it
+      displayNode = self.resultNode.GetDisplayNode()
+      if displayNode is not None:
+        displayNode.SetVisibility(True)
+        displayNode.SetScalarVisibility(True)
+      else:
+        print("Warning: Selected model has no display node")
+        return
+      
+      # Check if the node has polydata before accessing it
+      polyData = self.resultNode.GetPolyData()
+      if polyData is None:
+        print("Warning: Selected model has no polydata")
+        return
+        
+      resultData = polyData.GetPointData()
       self.subjectIDBox.enabled = True
       self.subjectIDBox.clear() # Clear previous items
       arrayNumber = resultData.GetNumberOfArrays()
@@ -1195,6 +1513,583 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       }
     """)
 
+  def onToggleLandmarkLock(self):
+    """Toggle landmark lock state"""
+    try:
+      # Get all landmark/markup nodes
+      markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
+      if not markups:  # fallback for older Slicer builds
+        markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsFiducialNode'))
+      
+      if not markups:
+        slicer.util.infoDisplay("No landmarks found in the scene.")
+        return
+      
+      # Check current lock state (assume all landmarks have same lock state)
+      current_locked = self._areLandmarksLocked(markups[0])
+      new_locked = not current_locked
+      
+      # Apply lock state to all landmarks
+      for markup in markups:
+        self._setLandmarkLockState(markup, new_locked)
+      
+      # Update UI
+      self._updateLandmarkLockUI(new_locked)
+      
+      status = "Locked" if new_locked else "Unlocked"
+      print(f"Landmarks {status.lower()}")
+      
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error toggling landmark lock: {str(e)}")
+
+  def _areLandmarksLocked(self, markup_node):
+    """Check if landmarks are currently locked"""
+    try:
+      # Check if the markup node has locked property
+      if hasattr(markup_node, 'GetLocked'):
+        return markup_node.GetLocked()
+      
+      # Alternative: check display node properties
+      display_node = markup_node.GetDisplayNode()
+      if display_node and hasattr(display_node, 'GetLocked'):
+        return display_node.GetLocked()
+      
+      # Default to unlocked if we can't determine
+      return False
+    except Exception:
+      return False
+
+  def _setLandmarkLockState(self, markup_node, locked):
+    """Set the lock state for a landmark node"""
+    try:
+      # Try to set locked property on the markup node
+      if hasattr(markup_node, 'SetLocked'):
+        markup_node.SetLocked(locked)
+      
+      # Also try to set on display node
+      display_node = markup_node.GetDisplayNode()
+      if display_node and hasattr(display_node, 'SetLocked'):
+        display_node.SetLocked(locked)
+      
+      # Alternative: disable interaction by setting visibility and interaction
+      if display_node:
+        if locked:
+          # When locked, make landmarks visible but non-interactive
+          display_node.SetVisibility(True)
+          if hasattr(display_node, 'SetInteractive'):
+            display_node.SetInteractive(False)
+          # Change color to indicate locked state
+          if hasattr(display_node, 'SetSelectedColor'):
+            display_node.SetSelectedColor(1.0, 0.0, 0.0)  # Red for locked
+        else:
+          # When unlocked, restore normal interaction
+          display_node.SetVisibility(True)
+          if hasattr(display_node, 'SetInteractive'):
+            display_node.SetInteractive(True)
+          # Restore normal color
+          if hasattr(display_node, 'SetSelectedColor'):
+            display_node.SetSelectedColor(0.0, 1.0, 0.0)  # Green for unlocked
+      
+    except Exception as e:
+      print(f"Warning: Could not set lock state for landmark: {e}")
+
+  def _updateLandmarkLockUI(self, locked):
+    """Update the UI to reflect the current lock state"""
+    try:
+      if locked:
+        self.landmarkLockButton.setText("🔓 Unlock Landmarks")
+        self.landmarkLockButton.setStyleSheet("""
+          QPushButton {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            padding: 6px 12px;
+            min-height: 25px;
+          }
+          QPushButton:hover {
+            background-color: #45a049;
+          }
+          QPushButton:pressed {
+            background-color: #3d8b40;
+          }
+        """)
+        self.landmarkLockStatusLabel.setText("Landmarks: Locked")
+        self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(negative); font-weight: bold; }")
+      else:
+        self.landmarkLockButton.setText("🔒 Lock Landmarks")
+        self.landmarkLockButton.setStyleSheet("""
+          QPushButton {
+            background-color: #ff6b6b;
+            color: white;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            padding: 6px 12px;
+            min-height: 25px;
+          }
+          QPushButton:hover {
+            background-color: #ff5252;
+          }
+          QPushButton:pressed {
+            background-color: #e53935;
+          }
+        """)
+        self.landmarkLockStatusLabel.setText("Landmarks: Unlocked")
+        self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(positive); font-weight: bold; }")
+    except Exception as e:
+      print(f"Warning: Could not update landmark lock UI: {e}")
+
+  ################################### Texture Analysis Methods ###################################
+
+  def onTextureAnalysisTypeChanged(self, index):
+    """Update parameter visibility based on analysis type"""
+    try:
+      # Show/hide relevant parameters based on analysis type
+      analysis_type = self.textureAnalysisTypeCombo.currentText
+      
+      # Reset all parameter visibility
+      self.roughnessKernelSizeSpin.setVisible(False)
+      self.patternScaleSpin.setVisible(False)
+      self.regionCountSpin.setVisible(False)
+      self.histogramBinsSpin.setVisible(False)
+      
+      # Show relevant parameters
+      if "Roughness" in analysis_type:
+        self.roughnessKernelSizeSpin.setVisible(True)
+      elif "Pattern" in analysis_type:
+        self.patternScaleSpin.setVisible(True)
+      elif "Regional" in analysis_type:
+        self.regionCountSpin.setVisible(True)
+      elif "Histogram" in analysis_type:
+        self.histogramBinsSpin.setVisible(True)
+        
+    except Exception as e:
+      print(f"Warning: Could not update texture analysis parameters: {e}")
+
+  def onRunTextureAnalysis(self):
+    """Run the selected texture analysis"""
+    try:
+      model_node = self.textureAnalysisModelSelector.currentNode()
+      if not model_node:
+        slicer.util.errorDisplay("Please select a model for texture analysis.")
+        return
+      
+      analysis_type = self.textureAnalysisTypeCombo.currentText
+      self.textureAnalysisResultsText.clear()
+      self.textureAnalysisResultsText.append(f"Running {analysis_type}...")
+      
+      # Get model data
+      poly_data = model_node.GetPolyData()
+      if not poly_data:
+        slicer.util.errorDisplay("Selected model has no geometry data.")
+        return
+      
+      # Run the appropriate analysis
+      if "Roughness" in analysis_type:
+        results = self._analyzeSurfaceRoughness(poly_data)
+      elif "Pattern" in analysis_type:
+        results = self._analyzeTexturePatterns(poly_data)
+      elif "Regional" in analysis_type:
+        results = self._analyzeRegionalTexture(poly_data)
+      elif "Histogram" in analysis_type:
+        results = self._analyzeTextureHistogram(poly_data)
+      else:
+        slicer.util.errorDisplay("Unknown analysis type selected.")
+        return
+      
+      # Display results
+      self._displayTextureAnalysisResults(results, analysis_type)
+      self.exportTextureResultsButton.setEnabled(True)
+      
+    except Exception as e:
+      error_msg = f"Error running texture analysis: {str(e)}"
+      slicer.util.errorDisplay(error_msg)
+      self.textureAnalysisResultsText.append(f"ERROR: {error_msg}")
+
+  def _analyzeSurfaceRoughness(self, poly_data):
+    """Analyze surface roughness using local variance"""
+    try:
+      import numpy as np
+      from scipy import ndimage
+      
+      # Get points and normals
+      points = slicer.util.arrayFromModelPoints(poly_data)
+      normals = slicer.util.arrayFromModelPointNormals(poly_data)
+      
+      if points is None or normals is None:
+        return {"error": "Could not extract point data from model"}
+      
+      # Calculate local surface roughness using normal variance
+      kernel_size = self.roughnessKernelSizeSpin.value
+      
+      # For each point, calculate local normal variance
+      roughness_values = []
+      for i in range(len(points)):
+        # Find nearby points (simplified - in practice would use spatial indexing)
+        distances = np.linalg.norm(points - points[i], axis=1)
+        nearby_indices = np.where(distances < kernel_size * 0.1)[0]  # Scale factor
+        
+        if len(nearby_indices) > 1:
+          nearby_normals = normals[nearby_indices]
+          # Calculate variance of normal directions
+          normal_variance = np.var(np.linalg.norm(nearby_normals, axis=1))
+          roughness_values.append(normal_variance)
+        else:
+          roughness_values.append(0.0)
+      
+      roughness_values = np.array(roughness_values)
+      
+      # Calculate statistics
+      mean_roughness = np.mean(roughness_values)
+      std_roughness = np.std(roughness_values)
+      min_roughness = np.min(roughness_values)
+      max_roughness = np.max(roughness_values)
+      
+      # Create roughness map on model
+      self._applyTextureToModel(poly_data, roughness_values, "Surface Roughness")
+      
+      return {
+        "type": "Surface Roughness Analysis",
+        "mean": mean_roughness,
+        "std": std_roughness,
+        "min": min_roughness,
+        "max": max_roughness,
+        "values": roughness_values,
+        "kernel_size": kernel_size
+      }
+      
+    except Exception as e:
+      return {"error": f"Surface roughness analysis failed: {str(e)}"}
+
+  def _analyzeTexturePatterns(self, poly_data):
+    """Analyze texture patterns using frequency domain analysis"""
+    try:
+      import numpy as np
+      from scipy import fft
+      
+      # Get texture coordinates if available
+      texture_coords = poly_data.GetPointData().GetTCoords()
+      if texture_coords is None:
+        return {"error": "Model has no texture coordinates for pattern analysis"}
+      
+      # Convert to numpy array
+      tex_array = slicer.util.arrayFromVTKMatrix(texture_coords)
+      
+      # Analyze patterns in texture space
+      scale = self.patternScaleSpin.value
+      
+      # Simple pattern detection using FFT
+      pattern_strength = []
+      for i in range(len(tex_array)):
+        # Sample local texture region (simplified)
+        local_tex = tex_array[max(0, i-10):min(len(tex_array), i+10)]
+        if len(local_tex) > 5:
+          # Calculate FFT magnitude as pattern indicator
+          fft_result = np.abs(fft.fft(local_tex[:, 0]))  # Use U coordinate
+          pattern_strength.append(np.mean(fft_result[1:len(fft_result)//2]))  # Exclude DC component
+        else:
+          pattern_strength.append(0.0)
+      
+      pattern_strength = np.array(pattern_strength) * scale
+      
+      # Calculate pattern statistics
+      mean_pattern = np.mean(pattern_strength)
+      std_pattern = np.std(pattern_strength)
+      
+      # Detect repeating patterns
+      pattern_regions = np.where(pattern_strength > mean_pattern + std_pattern)[0]
+      
+      return {
+        "type": "Texture Pattern Recognition",
+        "mean_pattern_strength": mean_pattern,
+        "std_pattern_strength": std_pattern,
+        "pattern_regions_count": len(pattern_regions),
+        "pattern_regions": pattern_regions,
+        "scale_factor": scale
+      }
+      
+    except Exception as e:
+      return {"error": f"Pattern recognition analysis failed: {str(e)}"}
+
+  def _analyzeRegionalTexture(self, poly_data):
+    """Compare texture properties between different anatomical regions"""
+    try:
+      import numpy as np
+      from sklearn.cluster import KMeans
+      
+      # Get points and normals
+      points = slicer.util.arrayFromModelPoints(poly_data)
+      normals = slicer.util.arrayFromModelPointNormals(poly_data)
+      
+      if points is None or normals is None:
+        return {"error": "Could not extract point data from model"}
+      
+      # Combine position and normal information for clustering
+      features = np.column_stack([points, normals])
+      
+      # Cluster points into regions
+      n_regions = self.regionCountSpin.value
+      kmeans = KMeans(n_clusters=n_regions, random_state=42)
+      region_labels = kmeans.fit_predict(features)
+      
+      # Analyze texture properties for each region
+      region_stats = {}
+      for region_id in range(n_regions):
+        region_mask = region_labels == region_id
+        region_points = points[region_mask]
+        region_normals = normals[region_mask]
+        
+        if len(region_points) > 0:
+          # Calculate region statistics
+          region_center = np.mean(region_points, axis=0)
+          region_size = len(region_points)
+          normal_variance = np.var(np.linalg.norm(region_normals, axis=1))
+          
+          region_stats[region_id] = {
+            "center": region_center,
+            "size": region_size,
+            "normal_variance": normal_variance,
+            "points": region_points
+          }
+      
+      # Create regional comparison visualization
+      self._visualizeRegionalTexture(poly_data, region_labels, region_stats)
+      
+      return {
+        "type": "Regional Texture Comparison",
+        "n_regions": n_regions,
+        "region_stats": region_stats,
+        "region_labels": region_labels
+      }
+      
+    except Exception as e:
+      return {"error": f"Regional texture analysis failed: {str(e)}"}
+
+  def _analyzeTextureHistogram(self, poly_data):
+    """Analyze texture value distributions using histograms"""
+    try:
+      import numpy as np
+      import matplotlib.pyplot as plt
+      
+      # Get texture coordinates
+      texture_coords = poly_data.GetPointData().GetTCoords()
+      if texture_coords is None:
+        return {"error": "Model has no texture coordinates for histogram analysis"}
+      
+      # Convert to numpy array
+      tex_array = slicer.util.arrayFromVTKMatrix(texture_coords)
+      
+      # Calculate texture intensity (simplified - would use actual texture data)
+      # For now, use texture coordinate values as proxy
+      u_values = tex_array[:, 0]
+      v_values = tex_array[:, 1]
+      
+      # Create histograms
+      n_bins = self.histogramBinsSpin.value
+      
+      u_hist, u_bins = np.histogram(u_values, bins=n_bins, range=(0, 1))
+      v_hist, v_bins = np.histogram(v_values, bins=n_bins, range=(0, 1))
+      
+      # Calculate histogram statistics
+      u_mean = np.mean(u_values)
+      u_std = np.std(u_values)
+      v_mean = np.mean(v_values)
+      v_std = np.std(v_values)
+      
+      # Detect peaks in histograms
+      u_peaks = self._findHistogramPeaks(u_hist)
+      v_peaks = self._findHistogramPeaks(v_hist)
+      
+      # Create histogram visualization
+      self._createHistogramVisualization(u_hist, u_bins, v_hist, v_bins)
+      
+      return {
+        "type": "Texture Histogram Analysis",
+        "u_stats": {"mean": u_mean, "std": u_std, "peaks": u_peaks},
+        "v_stats": {"mean": v_mean, "std": v_std, "peaks": v_peaks},
+        "u_histogram": u_hist,
+        "v_histogram": v_hist,
+        "u_bins": u_bins,
+        "v_bins": v_bins,
+        "n_bins": n_bins
+      }
+      
+    except Exception as e:
+      return {"error": f"Histogram analysis failed: {str(e)}"}
+
+  def _findHistogramPeaks(self, histogram, min_height=0.1):
+    """Find peaks in histogram data"""
+    try:
+      from scipy.signal import find_peaks
+      peaks, properties = find_peaks(histogram, height=min_height * np.max(histogram))
+      return peaks.tolist()
+    except Exception:
+      # Fallback: simple peak detection
+      peaks = []
+      for i in range(1, len(histogram) - 1):
+        if histogram[i] > histogram[i-1] and histogram[i] > histogram[i+1]:
+          if histogram[i] > min_height * np.max(histogram):
+            peaks.append(i)
+      return peaks
+
+  def _applyTextureToModel(self, poly_data, values, name):
+    """Apply texture values to model for visualization"""
+    try:
+      # Create a new model node with the texture values
+      model_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+      model_node.SetAndObservePolyData(poly_data)
+      model_node.SetName(f"{name}_Model")
+      
+      # Add texture values as point data
+      texture_array = vtk.util.numpy_support.numpy_to_vtk(values)
+      texture_array.SetName(name)
+      poly_data.GetPointData().AddArray(texture_array)
+      
+      # Set as active scalar
+      poly_data.GetPointData().SetActiveScalars(name)
+      
+      # Create display node
+      display_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
+      display_node.SetAndObserveColorNodeID("vtkMRMLColorTableNodeFilePlasma.txt")
+      display_node.SetScalarVisibility(True)
+      model_node.SetAndObserveDisplayNodeID(display_node.GetID())
+      
+      return model_node
+      
+    except Exception as e:
+      print(f"Warning: Could not apply texture to model: {e}")
+
+  def _visualizeRegionalTexture(self, poly_data, region_labels, region_stats):
+    """Create visualization for regional texture analysis"""
+    try:
+      # Create model with regional coloring
+      model_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+      model_node.SetAndObservePolyData(poly_data)
+      model_node.SetName("Regional_Texture_Analysis")
+      
+      # Add region labels as point data
+      region_array = vtk.util.numpy_support.numpy_to_vtk(region_labels)
+      region_array.SetName("Region_Labels")
+      poly_data.GetPointData().AddArray(region_array)
+      poly_data.GetPointData().SetActiveScalars("Region_Labels")
+      
+      # Create display node
+      display_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
+      display_node.SetAndObserveColorNodeID("vtkMRMLColorTableNodeFileRainbow.txt")
+      display_node.SetScalarVisibility(True)
+      model_node.SetAndObserveDisplayNodeID(display_node.GetID())
+      
+      return model_node
+      
+    except Exception as e:
+      print(f"Warning: Could not create regional visualization: {e}")
+
+  def _createHistogramVisualization(self, u_hist, u_bins, v_hist, v_bins):
+    """Create histogram visualization plots"""
+    try:
+      import matplotlib.pyplot as plt
+      
+      # Create figure with subplots
+      fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+      
+      # U coordinate histogram
+      ax1.bar(u_bins[:-1], u_hist, width=np.diff(u_bins), alpha=0.7, color='blue')
+      ax1.set_title('U Coordinate Histogram')
+      ax1.set_xlabel('U Value')
+      ax1.set_ylabel('Frequency')
+      ax1.grid(True, alpha=0.3)
+      
+      # V coordinate histogram
+      ax2.bar(v_bins[:-1], v_hist, width=np.diff(v_bins), alpha=0.7, color='red')
+      ax2.set_title('V Coordinate Histogram')
+      ax2.set_xlabel('V Value')
+      ax2.set_ylabel('Frequency')
+      ax2.grid(True, alpha=0.3)
+      
+      plt.tight_layout()
+      plt.show()
+      
+    except Exception as e:
+      print(f"Warning: Could not create histogram visualization: {e}")
+
+  def _displayTextureAnalysisResults(self, results, analysis_type):
+    """Display texture analysis results in the text widget"""
+    try:
+      self.textureAnalysisResultsText.clear()
+      self.textureAnalysisResultsText.append(f"=== {analysis_type} Results ===\n")
+      
+      if "error" in results:
+        self.textureAnalysisResultsText.append(f"ERROR: {results['error']}")
+        return
+      
+      # Display results based on analysis type
+      if "Roughness" in analysis_type:
+        self.textureAnalysisResultsText.append(f"Mean Roughness: {results['mean']:.4f}")
+        self.textureAnalysisResultsText.append(f"Std Deviation: {results['std']:.4f}")
+        self.textureAnalysisResultsText.append(f"Min Roughness: {results['min']:.4f}")
+        self.textureAnalysisResultsText.append(f"Max Roughness: {results['max']:.4f}")
+        self.textureAnalysisResultsText.append(f"Kernel Size: {results['kernel_size']}")
+        
+      elif "Pattern" in analysis_type:
+        self.textureAnalysisResultsText.append(f"Mean Pattern Strength: {results['mean_pattern_strength']:.4f}")
+        self.textureAnalysisResultsText.append(f"Std Pattern Strength: {results['std_pattern_strength']:.4f}")
+        self.textureAnalysisResultsText.append(f"Pattern Regions Found: {results['pattern_regions_count']}")
+        self.textureAnalysisResultsText.append(f"Scale Factor: {results['scale_factor']}")
+        
+      elif "Regional" in analysis_type:
+        self.textureAnalysisResultsText.append(f"Number of Regions: {results['n_regions']}")
+        for region_id, stats in results['region_stats'].items():
+          self.textureAnalysisResultsText.append(f"\nRegion {region_id}:")
+          self.textureAnalysisResultsText.append(f"  Size: {stats['size']} points")
+          self.textureAnalysisResultsText.append(f"  Center: ({stats['center'][0]:.3f}, {stats['center'][1]:.3f}, {stats['center'][2]:.3f})")
+          self.textureAnalysisResultsText.append(f"  Normal Variance: {stats['normal_variance']:.4f}")
+          
+      elif "Histogram" in analysis_type:
+        u_stats = results['u_stats']
+        v_stats = results['v_stats']
+        self.textureAnalysisResultsText.append(f"U Coordinate Statistics:")
+        self.textureAnalysisResultsText.append(f"  Mean: {u_stats['mean']:.4f}")
+        self.textureAnalysisResultsText.append(f"  Std: {u_stats['std']:.4f}")
+        self.textureAnalysisResultsText.append(f"  Peaks: {u_stats['peaks']}")
+        self.textureAnalysisResultsText.append(f"\nV Coordinate Statistics:")
+        self.textureAnalysisResultsText.append(f"  Mean: {v_stats['mean']:.4f}")
+        self.textureAnalysisResultsText.append(f"  Std: {v_stats['std']:.4f}")
+        self.textureAnalysisResultsText.append(f"  Peaks: {v_stats['peaks']}")
+        self.textureAnalysisResultsText.append(f"\nHistogram Bins: {results['n_bins']}")
+      
+      self.textureAnalysisResultsText.append(f"\nAnalysis completed successfully!")
+      
+    except Exception as e:
+      self.textureAnalysisResultsText.append(f"Error displaying results: {str(e)}")
+
+  def onExportTextureResults(self):
+    """Export texture analysis results to file"""
+    try:
+      if not self.textureAnalysisResultsText.toPlainText().strip():
+        slicer.util.warningDisplay("No results to export.")
+        return
+      
+      # Get output directory
+      output_dir = self.outputDirectoryDC.currentPath if hasattr(self, 'outputDirectoryDC') else ""
+      if not output_dir:
+        output_dir = slicer.app.temporaryPath
+      
+      # Create filename
+      analysis_type = self.textureAnalysisTypeCombo.currentText.replace(" ", "_")
+      filename = f"texture_analysis_{analysis_type}_{slicer.util.getDate()}.txt"
+      filepath = os.path.join(output_dir, filename)
+      
+      # Write results to file
+      with open(filepath, 'w') as f:
+        f.write(self.textureAnalysisResultsText.toPlainText())
+      
+      slicer.util.infoDisplay(f"Results exported to: {filepath}")
+      
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error exporting results: {str(e)}")
+
   ################################### Color Analysis Methods ###################################
 
     
@@ -1328,7 +2223,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Update status
       status_text = f"Loaded: {', '.join(loaded_models)}"
       self.loadedModelsStatusLabel.setText(status_text)
-      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: #4CAF50; font-weight: bold; }")
+      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(positive); font-weight: bold; }")
       
       # Update color extraction model selector to include loaded models
       self.colorExtractionModelSelector.setCurrentNode(atlas_model)
@@ -1343,7 +2238,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       error_msg = f"Error loading DeCA models: {str(e)}"
       print(error_msg)
       self.loadedModelsStatusLabel.setText("Failed to load models")
-      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: #F44336; font-weight: bold; }")
+      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(negative); font-weight: bold; }")
       slicer.util.errorDisplay(error_msg)
     
   def onBeforeAfterComparison(self):
@@ -1763,11 +2658,53 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       except Exception:
         pass
 
-  def _ensureModelsAreVisible(self):
+  def _hideUnwantedModels(self):
+    """Hide models that are likely not DeCA-related (planes, reference objects, etc.)"""
     for m in slicer.util.getNodesByClass('vtkMRMLModelNode'):
       try:
-        dn = m.GetDisplayNode()
-        if dn: dn.SetVisibility(True)
+        node_name = m.GetName().lower()
+        # Hide models that are likely reference objects, planes, or debugging aids
+        unwanted_keywords = ['plane', 'axis', 'reference', 'coordinate', 'grid', 'debug', 'temp', 'tmp']
+        if any(keyword in node_name for keyword in unwanted_keywords):
+          dn = m.GetDisplayNode()
+          if dn: 
+            dn.SetVisibility(False)
+      except Exception:
+        pass
+
+  def _ensureModelsAreVisible(self):
+    """Make only relevant DeCA models visible, not all models in the scene"""
+    # Only show models that are likely to be DeCA-related
+    relevant_models = []
+    
+    # Check for atlas models
+    if hasattr(self, 'atlasModel') and self.atlasModel:
+      relevant_models.append(self.atlasModel)
+    
+    # Check for loaded DeCA models from the model selector
+    if hasattr(self, 'meshSelect') and self.meshSelect.currentNode():
+      relevant_models.append(self.meshSelect.currentNode())
+    
+    # Check for models in the color extraction selector
+    if hasattr(self, 'colorExtractionModelSelector') and self.colorExtractionModelSelector.currentNode():
+      relevant_models.append(self.colorExtractionModelSelector.currentNode())
+    
+    # Check for models that might be DeCA results (look for common naming patterns)
+    for m in slicer.util.getNodesByClass('vtkMRMLModelNode'):
+      try:
+        node_name = m.GetName().lower()
+        # Look for DeCA-related naming patterns
+        if any(keyword in node_name for keyword in ['deca', 'atlas', 'aligned', 'resampled', 'correspondence']):
+          relevant_models.append(m)
+      except Exception:
+        pass
+    
+    # Make only relevant models visible
+    for model in relevant_models:
+      try:
+        dn = model.GetDisplayNode()
+        if dn: 
+          dn.SetVisibility(True)
       except Exception:
         pass
 #
