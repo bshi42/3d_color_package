@@ -1397,6 +1397,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
                            os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
     self.runColorsEDAButton.enabled = atlasSelected and texturesSelected
 
+  def _ensureMainPlotViewNode(self):
+    """Get the main plot view node for displaying charts"""
+    try:
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      if plotWidget:
+        return plotWidget.mrmlPlotViewNode()
+      return None
+    except Exception:
+      return None
+
   def _refreshCurrentHistogram(self):
     """Re-render the histogram/scatter view using current UI options."""
     if not hasattr(self, '_lastColorData') or not hasattr(self, '_lastColorSpace'):
@@ -1455,6 +1466,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           self._refreshHistogramChannelOptions(colorSpace)
           # Default to first channel
           self.histChannelSelector.setCurrentIndex(0)
+
+          # Store the 2D plot chart node for view switching
+          if 'chartNode' in result and result['chartNode']:
+            self._last2DPlotChartNode = result['chartNode']
 
           # Show appropriate view based on radio button selection
           if self.view2DRadio.isChecked():
@@ -1578,9 +1593,27 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace'):
         if self.viewChannelRadio.isChecked():
           # Switch to channel histogram view
-          # self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, self.histChannelSelector.currentIndex)
           self._refreshCurrentHistogram()
-        # If 2D view is selected, the 2D plot should already be visible from the analysis
+        elif self.view2DRadio.isChecked():
+          # Switch to 2D dimensionality reduction view
+          if hasattr(self, '_last2DPlotChartNode') and self._last2DPlotChartNode:
+            plotViewNode = self._ensureMainPlotViewNode()
+            if plotViewNode:
+              plotViewNode.SetPlotChartNodeID(self._last2DPlotChartNode.GetID())
+              try:
+                self.colorsEDALogInfo.appendPlainText("Switched to 2D dimensionality reduction view")
+              except Exception:
+                pass
+            else:
+              try:
+                self.colorsEDALogInfo.appendPlainText("Warning: Could not access plot view")
+              except Exception:
+                pass
+          else:
+            try:
+              self.colorsEDALogInfo.appendPlainText("Warning: No 2D plot available. Run analysis first.")
+            except Exception:
+              pass
     except Exception as e:
       msg = f"Failed to switch view mode: {e}"
       print(msg)
@@ -3456,13 +3489,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         progressCallback(90)
 
       # Plot results in 2D viewer
-      success = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo)
+      plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo)
 
       if progressCallback:
         progressCallback(100)
 
       # Return result details for downstream UI updates (e.g., histograms)
-      return {"success": bool(success), "colorData": colorData, "colorSpace": colorSpace}
+      if plotResult and isinstance(plotResult, dict):
+        return {
+          "success": True,
+          "colorData": colorData,
+          "colorSpace": colorSpace,
+          "chartNode": plotResult.get("chartNode")
+        }
+      else:
+        return {"success": bool(plotResult), "colorData": colorData, "colorSpace": colorSpace}
 
     except Exception as e:
       if logCallback:
@@ -3889,8 +3930,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotViewNode = plotWidget.mrmlPlotViewNode()
       plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
 
-      return True
+      # Return both success status and chart node for UI to store
+      return {"success": True, "chartNode": plotChartNode}
 
     except Exception as e:
       print(f"Error plotting results: {e}")
-      return False
+      return {"success": False, "chartNode": None}
