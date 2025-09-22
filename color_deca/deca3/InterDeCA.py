@@ -15,6 +15,117 @@ from pathlib import Path
 import shutil
 import imageio # slicer.util.pip_install('imageio')
 import glob
+
+class ColorTheme:
+    """Centralized color theme management for InterDeCA"""
+    
+    @staticmethod
+    def getTheme():
+        """Get color theme based on Slicer's current theme"""
+        # Check if Slicer is in dark mode
+        palette = qt.QApplication.palette()
+        isDarkMode = palette.color(qt.QPalette.Window).lightness() < 128
+        
+        if isDarkMode:
+            return ColorTheme.getDarkTheme()
+        else:
+            return ColorTheme.getLightTheme()
+    
+    @staticmethod
+    def getLightTheme():
+        return {
+            'primary': '#4CAF50',
+            'primary_hover': '#45A049',
+            'primary_pressed': '#3D8B40',
+            'secondary': '#87CEEB',
+            'secondary_hover': '#6BB6E8',
+            'secondary_pressed': '#4FA8D8',
+            'accent': '#9C27B0',
+            'accent_hover': '#8E24AA',
+            'accent_pressed': '#7B1FA2',
+            'danger': '#FF6B6B',
+            'danger_hover': '#FF5252',
+            'danger_pressed': '#E53935',
+            'neutral': '#607D8B',
+            'neutral_hover': '#546E7A',
+            'neutral_pressed': '#455A64',
+            'text_primary': '#2C3E50',
+            'text_secondary': 'palette(disabled-text)',
+            'text_on_primary': 'white',
+            'disabled_bg': '#CCCCCC',
+            'disabled_text': '#666666'
+        }
+    
+    @staticmethod
+    def getDarkTheme():
+        return {
+            'primary': '#66BB6A',
+            'primary_hover': '#5CB85C',
+            'primary_pressed': '#4CAF50',
+            'secondary': '#64B5F6',
+            'secondary_hover': '#42A5F5',
+            'secondary_pressed': '#2196F3',
+            'accent': '#BA68C8',
+            'accent_hover': '#AB47BC',
+            'accent_pressed': '#9C27B0',
+            'danger': '#EF5350',
+            'danger_hover': '#E53935',
+            'danger_pressed': '#D32F2F',
+            'neutral': '#78909C',
+            'neutral_hover': '#607D8B',
+            'neutral_pressed': '#546E7A',
+            'text_primary': '#FFFFFF',
+            'text_secondary': 'palette(disabled-text)',
+            'text_on_primary': 'white',
+            'disabled_bg': '#424242',
+            'disabled_text': '#9E9E9E'
+        }
+    
+    @staticmethod
+    def getButtonStyle(color_type='primary', disabled_style=True):
+        """Generate button stylesheet with theme colors"""
+        theme = ColorTheme.getTheme()
+        
+        style = f"""
+        QPushButton {{
+            background-color: {theme[color_type]};
+            color: {theme['text_on_primary']};
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            min-height: 20px;
+        }}
+        QPushButton:hover {{
+            background-color: {theme[color_type + '_hover']};
+        }}
+        QPushButton:pressed {{
+            background-color: {theme[color_type + '_pressed']};
+        }}"""
+        
+        if disabled_style:
+            style += f"""
+        QPushButton:disabled {{
+            background-color: {theme['disabled_bg']};
+            color: {theme['disabled_text']};
+        }}"""
+        
+        return style
+    
+    @staticmethod
+    def getLabelStyle(style_type='secondary'):
+        """Generate label stylesheet with theme colors"""
+        theme = ColorTheme.getTheme()
+        return f"QLabel {{ color: {theme['text_secondary']}; font-style: italic; }}"
+    
+    @staticmethod
+    def getProgressLabelStyle():
+        """Get progress label style"""
+        return """
+        QLabel { 
+            color: palette(link); 
+            font-weight: bold; 
+        }"""
 from sklearn.cluster import KMeans # slicer.util.pip_install('scikit-learn')
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -191,7 +302,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Add validation status label for models
     self.meshValidationLabelDC = qt.QLabel()
-    self.meshValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
+    self.meshValidationLabelDC.setStyleSheet(ColorTheme.getLabelStyle())
     self.meshValidationLabelDC.setText("No directory selected")
     
     meshDirWidget = qt.QWidget()
@@ -206,17 +317,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.filters = ctk.ctkPathLineEdit.Dirs
     self.landmarkDirectoryDC.setToolTip("Select directory containing landmarks")
     
-    # Add validation status label for landmarks
-    self.landmarkValidationLabelDC = qt.QLabel()
-    self.landmarkValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
-    self.landmarkValidationLabelDC.setText("No directory selected")
-    
-    landmarkDirWidget = qt.QWidget()
-    landmarkDirLayout = qt.QHBoxLayout(landmarkDirWidget)
-    landmarkDirLayout.setContentsMargins(0, 0, 0, 0)
-    landmarkDirLayout.addWidget(self.landmarkDirectoryDC)
-    landmarkDirLayout.addWidget(self.landmarkValidationLabelDC)
-    inputDirLayout.addRow("Landmarks: ", landmarkDirWidget)
+    inputDirLayout.addRow("Landmarks: ", self.landmarkDirectoryDC)
 
     # Textures directory
     self.textureDirectoryDC = ctk.ctkPathLineEdit()
@@ -684,6 +785,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     self.lastBakedTexturesPath = None
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
+    
+    # Try to restore texture path from settings
+    self.restoreTexturePathFromSettings()
 
     # Connections
     self.meshSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onVisualizeMeshSelect)
@@ -2210,7 +2314,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         loaded_models.append(f"{texture_count} textures")
         
         # Store texture directory for later use
-        self.lastBakedTexturesPath = textures_dir
+        self.setTexturePathAndUpdate(textures_dir)
         
         # Try to apply texture to atlas if available
         if texture_count > 0:
@@ -2443,6 +2547,27 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       items = [os.path.splitext(f)[0] for f in sorted(os.listdir(d)) if f.lower().endswith('.png')]
       for it in items: self.previewTextureCombo.addItem(it)
     self.previewTextureCombo.blockSignals(False)
+  
+  def saveTexturePathToSettings(self):
+    """Save the current texture path to Slicer settings"""
+    if self.lastBakedTexturesPath:
+      settings = qt.QSettings()
+      settings.setValue("InterDeCA/lastBakedTexturesPath", self.lastBakedTexturesPath)
+  
+  def restoreTexturePathFromSettings(self):
+    """Restore texture path from Slicer settings"""
+    settings = qt.QSettings()
+    saved_path = settings.value("InterDeCA/lastBakedTexturesPath", "")
+    if saved_path and os.path.isdir(saved_path):
+      self.lastBakedTexturesPath = saved_path
+      self.updateBakedPreviewList()
+  
+  def setTexturePathAndUpdate(self, path):
+    """Set texture path and update both dropdown and settings"""
+    if path and os.path.isdir(path):
+      self.lastBakedTexturesPath = path
+      self.saveTexturePathToSettings()
+      self.updateBakedPreviewList()
 
   def onPreviewTextureSelected(self, idx):
     if idx < 0: return
@@ -2593,8 +2718,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
       self.updateProgressDC(80, "Setting up texture baking...")
-      self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
-      os.makedirs(self.lastBakedTexturesPath, exist_ok=True)
+      textures_output_dir = os.path.join(self.folderNames['output'], "atlasTextures")
+      os.makedirs(textures_output_dir, exist_ok=True)
+      self.setTexturePathAndUpdate(textures_output_dir)
 
       texturesDir = self.textureDirectoryDC.currentPath
       if os.path.isdir(texturesDir):
@@ -2605,15 +2731,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
             alignedDir=self.folderNames['alignedModels'],
             resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
             texturesDir=texturesDir,
-            outDir=self.lastBakedTexturesPath,
+            outDir=textures_output_dir,
             bake_size=int(self.bakeSizeSpin.value),
             bake_extrusion=float(self.bakeExtrusionSpin.value),
             bake_margin_px=int(self.bakeMarginPxSpin.value),
             merge_dist=merge_dist
           )
           self.updateProgressDC(95, "Calculating average texture...")
-          logic._calculate_average_texture(self.lastBakedTexturesPath)
-          self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {self.lastBakedTexturesPath}")
+          logic._calculate_average_texture(textures_output_dir)
+          self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {textures_output_dir}")
         except Exception as e:
           self.logInfoDC.appendPlainText(f"Blender baking failed: {e}")
       else:
