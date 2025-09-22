@@ -7,7 +7,7 @@ import logging
 
 import numpy as np
 import vtk.util.numpy_support as nps
-#from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans
 
 #
 # ModelColors
