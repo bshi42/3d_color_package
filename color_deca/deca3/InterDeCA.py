@@ -712,12 +712,18 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.colorByBinAvgCheck.setChecked(False)
     self.histLayout.addRow(self.colorByBinAvgCheck)
 
+    # HSV Filtering section
+    self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
+    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666;")
+    self.histLayout.addRow(self.hsvFilterLabel)
+
     # Saturation cutoff (percent)
     self.satCutoffSpin = qt.QDoubleSpinBox()
     self.satCutoffSpin.setRange(0.0, 100.0)
     self.satCutoffSpin.setSingleStep(5.0)
     self.satCutoffSpin.setSuffix(" %")
     self.satCutoffSpin.setValue(10.0)   # default from our earlier fix
+    self.satCutoffSpin.setToolTip("Minimum saturation threshold for HSV filtering")
     self.histLayout.addRow("Saturation cutoff:", self.satCutoffSpin)
 
     self.valueCutoffSpin = qt.QDoubleSpinBox()
@@ -725,6 +731,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.valueCutoffSpin.setSingleStep(5.0)
     self.valueCutoffSpin.setSuffix(" %")
     self.valueCutoffSpin.setValue(10.0)   # default from our earlier fix
+    self.valueCutoffSpin.setToolTip("Minimum value/brightness threshold for HSV filtering")
     self.histLayout.addRow("Value cutoff:", self.valueCutoffSpin)
 
     # Auto-refresh when options change
@@ -1446,6 +1453,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       else:
         dimRedAlgo = "UMAP"
 
+      # Get HSV cutoff parameters for dimensionality reduction
+      satCutoff = float(self.satCutoffSpin.value) if hasattr(self, 'satCutoffSpin') else 10.0
+      valueCutoff = float(self.valueCutoffSpin.value) if hasattr(self, 'valueCutoffSpin') else 10.0
+
       self.colorsEDALogInfo.appendPlainText(f"Starting color analysis...")
       self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
       self.colorsEDALogInfo.appendPlainText(f"Dimensionality reduction: {dimRedAlgo}")
@@ -1454,18 +1465,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       result = logic.runColorsEDA(
         atlasModel, texturesDir, colorSpace, dimRedAlgo,
         progressCallback=self.updateColorsEDAProgress,
-        logCallback=self.logColorsEDAMessage
+        logCallback=self.logColorsEDAMessage,
+        satCutoff=satCutoff,
+        valueCutoff=valueCutoff
       )
 
       if result and isinstance(result, dict) and result.get('success'):
         self.colorsEDALogInfo.appendPlainText("Analysis completed successfully!")
         # Save color data and enable histogram selector
         if 'colorData' in result:
-          self._lastColorData = result['colorData']
+          self._lastColorData = result['colorData']  # Full dataset
           self._lastColorSpace = colorSpace
           self._refreshHistogramChannelOptions(colorSpace)
           # Default to first channel
           self.histChannelSelector.setCurrentIndex(0)
+
+          # Store the cutoff values used for this analysis
+          if 'satCutoff' in result:
+            self._lastSatCutoff = result['satCutoff']
+          if 'valueCutoff' in result:
+            self._lastValueCutoff = result['valueCutoff']
 
           # Store the 2D plot chart node for view switching
           if 'chartNode' in result and result['chartNode']:
@@ -3362,7 +3381,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     log("Failed to automatically install Blender. Please install manually.")
     return None
-  def runColorsEDA(self, atlasModel, texturesDir, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None):
+  def runColorsEDA(self, atlasModel, texturesDir, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0):
     """
     Run color analysis with dimensionality reduction on face-averaged colors
 
@@ -3373,6 +3392,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         dimRedAlgo: "PCA", "ICA", or "UMAP"
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
+        satCutoff: Minimum saturation threshold for HSV filtering (0-100)
+        valueCutoff: Minimum value/brightness threshold for HSV filtering (0-100)
 
     Returns:
         bool: True if successful, False otherwise
@@ -3469,16 +3490,31 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       colorData = allFaceColors.reshape(-1, nChannels)
 
       if logCallback:
-        logCallback(f"Color data shape: {colorData.shape}")
+        logCallback(f"Full color data shape: {colorData.shape}")
 
       if progressCallback:
         progressCallback(80)
 
-      # Apply dimensionality reduction
+      # Apply dimensionality reduction with optional HSV filtering
       if logCallback:
         logCallback(f"Applying {dimRedAlgo} dimensionality reduction...")
 
-      reducedData = self._applyDimensionalityReduction(colorData, dimRedAlgo)
+      # Filter data for dimensionality reduction if in HSV mode
+      dimRedData = colorData
+      if colorSpace == "HSV":
+        # Extract saturation and value channels (indices 2 and 3)
+        sat = colorData[:, 2]  # 0..100
+        val = colorData[:, 3]  # 0..100
+
+        # Create mask for saturation and value cutoffs
+        mask = (sat >= satCutoff) & (val >= valueCutoff)
+        dimRedData = colorData[mask]
+
+        if logCallback:
+          logCallback(f"HSV filtering: {np.sum(mask)}/{len(mask)} samples passed cutoffs (sat>={satCutoff}, val>={valueCutoff})")
+          logCallback(f"Filtered data shape for dim reduction: {dimRedData.shape}")
+
+      reducedData = self._applyDimensionalityReduction(dimRedData, dimRedAlgo)
 
       if reducedData is None:
         if logCallback:
@@ -3489,21 +3525,36 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         progressCallback(90)
 
       # Plot results in 2D viewer
-      plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo)
+      # For HSV with filtering, we need to adjust the specimen information
+      if colorSpace == "HSV" and dimRedData.shape[0] != colorData.shape[0]:
+        # Calculate how many faces per specimen passed the filter
+        filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo)
+      else:
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo)
 
       if progressCallback:
         progressCallback(100)
 
       # Return result details for downstream UI updates (e.g., histograms)
+      # Always return the FULL color data for histogram use, not the filtered data
       if plotResult and isinstance(plotResult, dict):
         return {
           "success": True,
-          "colorData": colorData,
+          "colorData": colorData,  # Full dataset for histograms
           "colorSpace": colorSpace,
-          "chartNode": plotResult.get("chartNode")
+          "chartNode": plotResult.get("chartNode"),
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
         }
       else:
-        return {"success": bool(plotResult), "colorData": colorData, "colorSpace": colorSpace}
+        return {
+          "success": bool(plotResult),
+          "colorData": colorData,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
 
     except Exception as e:
       if logCallback:
