@@ -92,11 +92,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     visualizeTabLayout = qt.QFormLayout(visualizeTab)
     colorsEDATab = qt.QWidget()
     colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
+    recolorTab = qt.QWidget()
+    recolorTabLayout = qt.QFormLayout(recolorTab)
 
     tabsWidget.addTab(DeCATab, "DeCA")
     tabsWidget.addTab(DeCALTab, "DeCAL")
     tabsWidget.addTab(visualizeTab, "Visualize Results")
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
+    tabsWidget.addTab(recolorTab, "Recolor")
 
     self.layout.addWidget(tabsWidget)
 
@@ -747,6 +750,75 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Add vertical spacer so extra space goes below content
     colorsEDATabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
+
+    ################################### Recolor Tab ###################################
+    # Layout within the Recolor tab
+    recolorWidget = ctk.ctkCollapsibleButton()
+    recolorWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    recolorWidgetLayout = qt.QFormLayout(recolorWidget)
+    recolorWidgetLayout.setVerticalSpacing(4)
+    recolorWidgetLayout.setHorizontalSpacing(8)
+    recolorWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    recolorWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    recolorWidget.text = "Recolor Settings"
+    recolorTabLayout.addRow(recolorWidget)
+
+    # Atlas model selector for Recolor
+    self.recolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.recolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.recolorAtlasModelSelect.setToolTip("Select the atlas model for recoloring")
+    self.recolorAtlasModelSelect.selectNodeUponCreation = False
+    self.recolorAtlasModelSelect.noneEnabled = True
+    self.recolorAtlasModelSelect.addEnabled = False
+    self.recolorAtlasModelSelect.removeEnabled = False
+    self.recolorAtlasModelSelect.showHidden = False
+    self.recolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
+    recolorWidgetLayout.addRow("Atlas Model: ", self.recolorAtlasModelSelect)
+
+    # Textures directory selector
+    self.recolorTexturesDirectorySelector = ctk.ctkPathLineEdit()
+    self.recolorTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
+    self.recolorTexturesDirectorySelector.setToolTip("Select directory containing texture images")
+    recolorWidgetLayout.addRow("Textures Directory: ", self.recolorTexturesDirectorySelector)
+
+    # Texture selection dropdown
+    self.recolorTextureSelector = qt.QComboBox()
+    self.recolorTextureSelector.setToolTip("Select a texture to apply to the model")
+    self.recolorTextureSelector.enabled = False
+    recolorWidgetLayout.addRow("Select Texture: ", self.recolorTextureSelector)
+
+    # Average face color checkbox
+    self.averageFaceColorCheckbox = qt.QCheckBox()
+    self.averageFaceColorCheckbox.setChecked(False)
+    self.averageFaceColorCheckbox.setToolTip("If checked, each face will be colored with the average color from the texture instead of using the texture directly")
+    recolorWidgetLayout.addRow("Average Face Colors: ", self.averageFaceColorCheckbox)
+
+    # Apply texture button
+    self.applyRecolorButton = qt.QPushButton("Apply Texture")
+    self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
+    self.applyRecolorButton.enabled = False
+    recolorWidgetLayout.addRow(self.applyRecolorButton)
+
+    # Progress and log information for Recolor
+    self.recolorProgressBar = qt.QProgressBar()
+    self.recolorProgressBar.setVisible(False)
+    recolorWidgetLayout.addRow("Progress: ", self.recolorProgressBar)
+
+    self.recolorLogInfo = qt.QPlainTextEdit()
+    self.recolorLogInfo.setPlaceholderText("Recolor log information")
+    self.recolorLogInfo.setReadOnly(True)
+    self.recolorLogInfo.setMaximumHeight(150)
+    recolorWidgetLayout.addRow(self.recolorLogInfo)
+
+    # Connections for Recolor
+    self.recolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onRecolorParameterChanged)
+    self.recolorTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onRecolorTexturesDirectoryChanged)
+    self.recolorTextureSelector.connect("currentIndexChanged(int)", self.onRecolorParameterChanged)
+    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
+    self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
+
+    # Add vertical spacer so extra space goes below content
+    recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
 
   def autoDetectBlender(self):
     """Automatically detect and set Blender executable path if not already set."""
@@ -1672,6 +1744,125 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     chartNode = self._createDensityHistogramPlot(data, bins=50, value_range=rng, title=title, x_label=xlabel)
     plotViewNode.SetPlotChartNodeID(chartNode.GetID())
+
+  ################################### Recolor Functions ###################################
+
+  def onRecolorParameterChanged(self):
+    """Enable/disable the apply button based on parameter selection"""
+    atlasSelected = bool(self.recolorAtlasModelSelect.currentNode())
+    textureSelected = bool(self.recolorTextureSelector.currentText and
+                          self.recolorTextureSelector.currentIndex >= 0)
+    self.applyRecolorButton.enabled = atlasSelected and textureSelected
+
+  def onRecolorTexturesDirectoryChanged(self, directory):
+    """Update texture selector when directory changes"""
+    self.recolorTextureSelector.clear()
+    self.recolorTextureSelector.enabled = False
+
+    if not os.path.isdir(directory):
+      self.onRecolorParameterChanged()
+      return
+
+    # Find texture files in the directory
+    textureExtensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']
+    textureFiles = []
+
+    try:
+      for filename in sorted(os.listdir(directory)):
+        if any(filename.lower().endswith(ext) for ext in textureExtensions):
+          textureFiles.append(filename)
+    except Exception as e:
+      self.recolorLogInfo.appendPlainText(f"Error reading directory: {e}")
+      return
+
+    if textureFiles:
+      self.recolorTextureSelector.addItems(textureFiles)
+      self.recolorTextureSelector.enabled = True
+      self.recolorLogInfo.appendPlainText(f"Found {len(textureFiles)} texture files")
+    else:
+      self.recolorLogInfo.appendPlainText("No texture files found in directory")
+
+    self.onRecolorParameterChanged()
+
+  def onApplyRecolorButton(self):
+    """Apply the selected texture to the atlas model"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.recolorProgressBar.setVisible(True)
+      self.recolorProgressBar.setValue(0)
+
+      # Get parameters
+      atlasModel = self.recolorAtlasModelSelect.currentNode()
+      texturesDir = self.recolorTexturesDirectorySelector.currentPath
+      selectedTexture = self.recolorTextureSelector.currentText
+      useAverageFaceColors = self.averageFaceColorCheckbox.isChecked()
+
+      if not atlasModel:
+        self.recolorLogInfo.appendPlainText("Error: No atlas model selected")
+        return
+
+      if not selectedTexture:
+        self.recolorLogInfo.appendPlainText("Error: No texture selected")
+        return
+
+      texturePath = os.path.join(texturesDir, selectedTexture)
+      if not os.path.exists(texturePath):
+        self.recolorLogInfo.appendPlainText(f"Error: Texture file not found: {texturePath}")
+        return
+
+      self.recolorLogInfo.appendPlainText(f"Applying texture: {selectedTexture}")
+      self.recolorLogInfo.appendPlainText(f"Average face colors: {'Yes' if useAverageFaceColors else 'No'}")
+
+      logic = InterDeCALogic()
+
+      if useAverageFaceColors:
+        # Try the main face coloring method first
+        self.recolorLogInfo.appendPlainText("Trying face-based coloring method...")
+        success = logic.applyAverageFaceColorsFromTexture(
+          atlasModel, texturePath,
+          progressCallback=self.updateRecolorProgress,
+          logCallback=self.logRecolorMessage
+        )
+
+        # If that doesn't work, try the alternative point-based method
+        if not success:
+          self.recolorLogInfo.appendPlainText("Face-based method failed, trying point-based method...")
+          success = logic.applyAverageFaceColorsFromTextureAlternative(
+            atlasModel, texturePath,
+            progressCallback=self.updateRecolorProgress,
+            logCallback=self.logRecolorMessage
+          )
+      else:
+        # Apply texture directly
+        success = logic.applyTextureToModel(atlasModel, texturePath)
+        self.recolorLogInfo.appendPlainText("Texture applied successfully")
+        success = True
+
+      if success:
+        self.recolorLogInfo.appendPlainText("Recoloring completed successfully")
+      else:
+        self.recolorLogInfo.appendPlainText("Recoloring failed - check log for details")
+
+      self.recolorProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.recolorProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.recolorLogInfo.appendPlainText(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Recolor failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateRecolorProgress(self, value):
+    """Update progress bar for recolor operations"""
+    self.recolorProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logRecolorMessage(self, message):
+    """Log message to the Recolor log"""
+    self.recolorLogInfo.appendPlainText(message)
+    slicer.app.processEvents()
 
 
 #
@@ -3303,26 +3494,33 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       # Get face connectivity
       polys = polyData.GetPolys()
-      polys_np = vtk_np.vtk_to_numpy(polys.GetData())
-
-      # Reshape to get face indices (assuming triangular faces)
       nFaces = polys.GetNumberOfCells()
-      faces = polys_np.reshape(-1, 4)[:, 1:]  # Remove the first column (number of vertices per face)
 
       # Get texture image dimensions
       height, width = textureImage.shape[:2]
 
       faceColors = []
 
+      # Process each face individually using VTK's cell iterator
       for faceIdx in range(nFaces):
+        # Get the cell (face) points
+        cell = polyData.GetCell(faceIdx)
+        nPoints = cell.GetNumberOfPoints()
+
         # Get vertex indices for this face
-        vertexIndices = faces[faceIdx]
+        vertexIndices = []
+        for ptIdx in range(nPoints):
+          vertexIndices.append(cell.GetPointId(ptIdx))
 
         # Get texture coordinates for these vertices
         faceTexCoords = tcoords_np[vertexIndices]
 
         # Convert texture coordinates to pixel coordinates
-        pixelCoords = np.clip(faceTexCoords, 0, 1) * [width - 1, height - 1]
+        # Flip V coordinate (1 - v) to handle texture inversion
+        faceTexCoords_flipped = faceTexCoords.copy()
+        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
+
+        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
         pixelCoords = pixelCoords.astype(int)
 
         # Sample colors at these pixel locations
@@ -3350,6 +3548,248 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except Exception as e:
       print(f"Error calculating face colors: {e}")
       return None
+
+  def applyAverageFaceColorsFromTexture(self, modelNode, texturePath, progressCallback=None, logCallback=None):
+    """
+    Apply average face colors from a texture to a model
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture: {os.path.basename(texturePath)}")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if logCallback:
+        logCallback("Calculating face average colors...")
+
+      if progressCallback:
+        progressCallback(50)
+
+      # Calculate face average colors
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Calculated colors for {len(faceColors)} faces")
+        logCallback(f"Sample colors: {faceColors[:3] if len(faceColors) > 0 else 'None'}")
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Apply colors to faces as cell data
+      nFaces = polyData.GetNumberOfCells()
+      if len(faceColors) != nFaces:
+        if logCallback:
+          logCallback(f"Error: Color count mismatch. Expected {nFaces}, got {len(faceColors)}")
+        return False
+
+      if logCallback:
+        logCallback(f"Applying colors to {nFaces} faces")
+
+      # Create VTK color array for RGB colors
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("FaceColors")
+      colorArray.SetNumberOfTuples(nFaces)
+
+      if logCallback:
+        logCallback("Creating color array...")
+
+      for i, color in enumerate(faceColors):
+        # Ensure color values are in 0-255 range
+        color_255 = np.clip(color, 0, 255).astype(np.uint8)
+        colorArray.SetTuple3(i, int(color_255[0]), int(color_255[1]), int(color_255[2]))
+
+      if logCallback:
+        logCallback(f"Color array created with {colorArray.GetNumberOfTuples()} tuples")
+
+      # Add color array to cell data
+      polyData.GetCellData().SetScalars(colorArray)
+      polyData.Modified()
+
+      if logCallback:
+        logCallback("Color array added to cell data")
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Update display to show colors
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        if logCallback:
+          logCallback("Configuring display node...")
+
+        # Turn off texture first
+        displayNode.SetTextureImageDataConnection(None)
+
+        # Enable scalar visibility and set to use RGB colors directly
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("FaceColors")
+
+        # Set to use cell data (not point data)
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.CELL)
+
+        # Use RGB color mode instead of lookup table
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+
+        # Clear any existing color node to use direct RGB values
+        # displayNode.SetAndObserveColorNodeID(None)  # This causes errors, skip it
+
+        # Force update
+        displayNode.Modified()
+
+        if logCallback:
+          logCallback("Display node configured for face colors")
+      else:
+        if logCallback:
+          logCallback("Warning: No display node found")
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback(f"Successfully applied average face colors from {len(faceColors)} faces")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in applyAverageFaceColorsFromTexture: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def applyAverageFaceColorsFromTextureAlternative(self, modelNode, texturePath, progressCallback=None, logCallback=None):
+    """
+    Alternative method for applying average face colors using point data interpolation
+    This method converts face colors to point colors which might display better in Slicer
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture (alternative method): {os.path.basename(texturePath)}")
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      # Calculate face average colors
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Converting {len(faceColors)} face colors to point colors...")
+
+      # Convert face colors to point colors by averaging adjacent face colors
+      nPoints = polyData.GetNumberOfPoints()
+      nFaces = polyData.GetNumberOfCells()
+
+      pointColors = np.zeros((nPoints, 3))
+      pointCounts = np.zeros(nPoints)
+
+      # For each face, add its color to all its vertices
+      for faceIdx in range(nFaces):
+        cell = polyData.GetCell(faceIdx)
+        nCellPoints = cell.GetNumberOfPoints()
+
+        for ptIdx in range(nCellPoints):
+          pointId = cell.GetPointId(ptIdx)
+          pointColors[pointId] += faceColors[faceIdx]
+          pointCounts[pointId] += 1
+
+      # Average the colors for each point
+      for ptIdx in range(nPoints):
+        if pointCounts[ptIdx] > 0:
+          pointColors[ptIdx] /= pointCounts[ptIdx]
+
+      # Create VTK color array for point data
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("PointColors")
+      colorArray.SetNumberOfTuples(nPoints)
+
+      for i, color in enumerate(pointColors):
+        color_255 = np.clip(color, 0, 255).astype(np.uint8)
+        colorArray.SetTuple3(i, int(color_255[0]), int(color_255[1]), int(color_255[2]))
+
+      # Add color array to point data
+      polyData.GetPointData().SetScalars(colorArray)
+      polyData.Modified()
+
+      # Update display
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        displayNode.SetTextureImageDataConnection(None)
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("PointColors")
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.POINT)
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+        # displayNode.SetAndObserveColorNodeID(None)  # This causes errors, skip it
+        displayNode.Modified()
+
+      if logCallback:
+        logCallback("Successfully applied average face colors using point data method")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in alternative face coloring: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
 
   def _applyDimensionalityReduction(self, colorData, algorithm):
     """
