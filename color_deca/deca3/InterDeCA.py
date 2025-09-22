@@ -19,6 +19,7 @@ import colorsys
 try:
     from sklearn.decomposition import PCA, FastICA
     from sklearn.manifold import TSNE
+    from sklearn.cluster import KMeans
     import umap
     SKLEARN_AVAILABLE = True
     UMAP_AVAILABLE = True
@@ -26,6 +27,14 @@ except ImportError:
     SKLEARN_AVAILABLE = False
     UMAP_AVAILABLE = False
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
+
+try:
+    from skimage import color as skimage_color
+    from skimage.color import deltaE_ciede2000
+    SKIMAGE_AVAILABLE = True
+except ImportError:
+    SKIMAGE_AVAILABLE = False
+    print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
 # Import functions from the deca module to avoid duplication
 import sys
@@ -874,6 +883,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.averageFaceColorCheckbox.setToolTip("If checked, each face will be colored with the average color from the texture instead of using the texture directly")
     recolorWidgetLayout.addRow("Average Face Colors: ", self.averageFaceColorCheckbox)
 
+    # Quantize colors checkbox
+    self.quantizeColorsCheckbox = qt.QCheckBox()
+    self.quantizeColorsCheckbox.setChecked(False)
+    self.quantizeColorsCheckbox.setEnabled(False)  # Initially disabled
+    self.quantizeColorsCheckbox.setToolTip("If checked, quantize the average face colors using k-means clustering in CIE Lab color space")
+    recolorWidgetLayout.addRow("Quantize Colors: ", self.quantizeColorsCheckbox)
+
+    # Number of color clusters
+    self.numColorClustersSpin = qt.QSpinBox()
+    self.numColorClustersSpin.setRange(2, 64)
+    self.numColorClustersSpin.setValue(8)  # Default value
+    self.numColorClustersSpin.setEnabled(False)  # Initially disabled
+    self.numColorClustersSpin.setToolTip("Number of color clusters for quantization (2-64)")
+    recolorWidgetLayout.addRow("Number of Colors: ", self.numColorClustersSpin)
+
     # Apply texture button
     self.applyRecolorButton = qt.QPushButton("Apply Texture")
     self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
@@ -895,7 +919,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.recolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onRecolorParameterChanged)
     self.recolorTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onRecolorTexturesDirectoryChanged)
     self.recolorTextureSelector.connect("currentIndexChanged(int)", self.onRecolorParameterChanged)
-    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
+    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onAverageFaceColorToggled)
+    self.quantizeColorsCheckbox.connect("toggled(bool)", self.onQuantizeColorsToggled)
+    self.numColorClustersSpin.connect("valueChanged(int)", self.onRecolorParameterChanged)
     self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
 
     # Add vertical spacer so extra space goes below content
@@ -1962,6 +1988,27 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
                           self.recolorTextureSelector.currentIndex >= 0)
     self.applyRecolorButton.enabled = atlasSelected and textureSelected
 
+  def onAverageFaceColorToggled(self, checked):
+    """Handle toggling of the average face color checkbox"""
+    # Enable/disable quantization controls based on averaging checkbox
+    self.quantizeColorsCheckbox.setEnabled(checked)
+    self.numColorClustersSpin.setEnabled(checked and self.quantizeColorsCheckbox.isChecked())
+
+    # If averaging is disabled, also disable quantization
+    if not checked:
+      self.quantizeColorsCheckbox.setChecked(False)
+
+    # Update the apply button state
+    self.onRecolorParameterChanged()
+
+  def onQuantizeColorsToggled(self, checked):
+    """Handle toggling of the quantize colors checkbox"""
+    # Enable/disable the number of clusters spin box
+    self.numColorClustersSpin.setEnabled(checked and self.averageFaceColorCheckbox.isChecked())
+
+    # Update the apply button state
+    self.onRecolorParameterChanged()
+
   def onRecolorTexturesDirectoryChanged(self, directory):
     """Update texture selector when directory changes"""
     self.recolorTextureSelector.clear()
@@ -2004,6 +2051,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       texturesDir = self.recolorTexturesDirectorySelector.currentPath
       selectedTexture = self.recolorTextureSelector.currentText
       useAverageFaceColors = self.averageFaceColorCheckbox.isChecked()
+      useQuantization = self.quantizeColorsCheckbox.isChecked()
+      numClusters = self.numColorClustersSpin.value
 
       if not atlasModel:
         self.recolorLogInfo.appendPlainText("Error: No atlas model selected")
@@ -2020,26 +2069,39 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       self.recolorLogInfo.appendPlainText(f"Applying texture: {selectedTexture}")
       self.recolorLogInfo.appendPlainText(f"Average face colors: {'Yes' if useAverageFaceColors else 'No'}")
+      if useAverageFaceColors and useQuantization:
+        self.recolorLogInfo.appendPlainText(f"Color quantization: Yes ({numClusters} clusters)")
+      else:
+        self.recolorLogInfo.appendPlainText("Color quantization: No")
 
       logic = InterDeCALogic()
 
       if useAverageFaceColors:
-        # Try the main face coloring method first
-        self.recolorLogInfo.appendPlainText("Trying face-based coloring method...")
-        success = logic.applyAverageFaceColorsFromTexture(
-          atlasModel, texturePath,
-          progressCallback=self.updateRecolorProgress,
-          logCallback=self.logRecolorMessage
-        )
-
-        # If that doesn't work, try the alternative point-based method
-        if not success:
-          self.recolorLogInfo.appendPlainText("Face-based method failed, trying point-based method...")
-          success = logic.applyAverageFaceColorsFromTextureAlternative(
+        if useQuantization:
+          # Apply quantized face colors
+          self.recolorLogInfo.appendPlainText("Applying quantized face colors...")
+          success = logic.applyQuantizedFaceColorsFromTexture(
+            atlasModel, texturePath, numClusters,
+            progressCallback=self.updateRecolorProgress,
+            logCallback=self.logRecolorMessage
+          )
+        else:
+          # Try the main face coloring method first
+          self.recolorLogInfo.appendPlainText("Trying face-based coloring method...")
+          success = logic.applyAverageFaceColorsFromTexture(
             atlasModel, texturePath,
             progressCallback=self.updateRecolorProgress,
             logCallback=self.logRecolorMessage
           )
+
+          # If that doesn't work, try the alternative point-based method
+          if not success:
+            self.recolorLogInfo.appendPlainText("Face-based method failed, trying point-based method...")
+            success = logic.applyAverageFaceColorsFromTextureAlternative(
+              atlasModel, texturePath,
+              progressCallback=self.updateRecolorProgress,
+              logCallback=self.logRecolorMessage
+            )
       else:
         # Apply texture directly
         success = logic.applyTextureToModel(atlasModel, texturePath)
@@ -4615,4 +4677,305 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       import traceback
       traceback.print_exc()
       return {"success": False}
+
+  ################################### Color Quantization Functions ###################################
+
+  def rgb_to_lab(self, rgb):
+    """
+    Convert RGB color to CIE Lab color space using scikit-image
+
+    Args:
+        rgb: numpy array of shape (..., 3) with RGB values in range [0, 255]
+
+    Returns:
+        numpy array of shape (..., 3) with Lab values
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for color space conversion")
+
+    # Normalize RGB to [0, 1] for scikit-image
+    rgb_normalized = np.array(rgb, dtype=np.float64) / 255.0
+
+    # Use scikit-image for accurate RGB to Lab conversion
+    lab = skimage_color.rgb2lab(rgb_normalized)
+
+    return lab
+
+  def delta_e_2000(self, lab1, lab2):
+    """
+    Calculate ΔE2000 color difference between two Lab colors using scikit-image
+
+    Args:
+        lab1, lab2: numpy arrays of shape (..., 3) with Lab values
+
+    Returns:
+        numpy array of ΔE2000 values
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for ΔE2000 calculation")
+
+    # Use scikit-image's optimized ΔE2000 implementation
+    return deltaE_ciede2000(lab1, lab2)
+
+  def quantize_colors_lab_kmeans(self, rgb_colors, n_clusters, progressCallback=None, logCallback=None):
+    """
+    Quantize colors using k-means clustering in CIE Lab color space with ΔE2000 distance
+
+    Args:
+        rgb_colors: numpy array of shape (N, 3) with RGB values in range [0, 255]
+        n_clusters: number of color clusters (2-64)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict with 'success', 'quantized_colors', 'cluster_centers', 'labels'
+    """
+    try:
+      if logCallback:
+        logCallback(f"Starting color quantization with {n_clusters} clusters...")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Check if required libraries are available
+      if not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for k-means clustering")
+        return {"success": False}
+
+      if not SKIMAGE_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scikit-image not available for color space conversion")
+        return {"success": False}
+
+      # Convert RGB to Lab
+      if logCallback:
+        logCallback("Converting RGB to CIE Lab color space...")
+
+      lab_colors = self.rgb_to_lab(rgb_colors)
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Perform k-means clustering in Lab space
+      if logCallback:
+        logCallback(f"Performing k-means clustering with {n_clusters} clusters...")
+
+      kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+      cluster_labels = kmeans.fit_predict(lab_colors)
+      cluster_centers_lab = kmeans.cluster_centers_
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Convert cluster centers back to RGB
+      if logCallback:
+        logCallback("Converting cluster centers back to RGB...")
+
+      cluster_centers_rgb = self.lab_to_rgb(cluster_centers_lab)
+
+      # Create quantized colors by mapping each original color to its cluster center
+      quantized_colors = cluster_centers_rgb[cluster_labels]
+
+      if progressCallback:
+        progressCallback(90)
+
+      if logCallback:
+        logCallback(f"Quantization complete. Reduced {len(rgb_colors)} colors to {n_clusters} clusters.")
+        # Log some statistics
+        unique_original = len(np.unique(rgb_colors.view(np.void), axis=0))
+        logCallback(f"Original unique colors: {unique_original}, Quantized to: {n_clusters}")
+
+      if progressCallback:
+        progressCallback(100)
+
+      return {
+        "success": True,
+        "quantized_colors": quantized_colors.astype(np.uint8),
+        "cluster_centers": cluster_centers_rgb.astype(np.uint8),
+        "labels": cluster_labels,
+        "original_colors": rgb_colors
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in color quantization: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  def lab_to_rgb(self, lab):
+    """
+    Convert CIE Lab color to RGB color space using scikit-image
+
+    Args:
+        lab: numpy array of shape (..., 3) with Lab values
+
+    Returns:
+        numpy array of shape (..., 3) with RGB values in range [0, 255]
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for color space conversion")
+
+    # Use scikit-image for accurate Lab to RGB conversion
+    rgb_normalized = skimage_color.lab2rgb(lab)
+
+    # Convert from [0, 1] to [0, 255] and clamp
+    rgb = np.clip(rgb_normalized * 255, 0, 255)
+
+    return rgb
+
+  def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, progressCallback=None, logCallback=None):
+    """
+    Apply quantized average face colors from a texture to a model
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        numClusters: Number of color clusters for quantization
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture for quantization: {os.path.basename(texturePath)}")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Calculate face average colors
+      if logCallback:
+        logCallback("Calculating average face colors...")
+
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Calculated colors for {len(faceColors)} faces")
+
+      if progressCallback:
+        progressCallback(40)
+
+      # Quantize the colors using k-means in Lab space
+      if logCallback:
+        logCallback(f"Quantizing colors to {numClusters} clusters...")
+
+      quantResult = self.quantize_colors_lab_kmeans(
+        faceColors, numClusters,
+        progressCallback=lambda p: progressCallback(40 + p * 0.4) if progressCallback else None,
+        logCallback=logCallback
+      )
+
+      if not quantResult.get("success", False):
+        if logCallback:
+          logCallback("Error: Color quantization failed")
+        return False
+
+      quantizedColors = quantResult["quantized_colors"]
+      clusterCenters = quantResult["cluster_centers"]
+
+      if logCallback:
+        logCallback(f"Quantization successful. Cluster centers (RGB):")
+        for i, center in enumerate(clusterCenters):
+          logCallback(f"  Cluster {i+1}: [{center[0]}, {center[1]}, {center[2]}]")
+
+      if progressCallback:
+        progressCallback(85)
+
+      # Apply quantized colors to faces as cell data
+      nFaces = polyData.GetNumberOfCells()
+      if len(quantizedColors) != nFaces:
+        if logCallback:
+          logCallback(f"Error: Color count mismatch. Expected {nFaces}, got {len(quantizedColors)}")
+        return False
+
+      if logCallback:
+        logCallback(f"Applying quantized colors to {nFaces} faces")
+
+      # Create VTK color arrays for RGB components
+      colorArrayR = vtk.vtkUnsignedCharArray()
+      colorArrayR.SetName("QuantizedColorR")
+      colorArrayR.SetNumberOfComponents(1)
+      colorArrayR.SetNumberOfTuples(nFaces)
+
+      colorArrayG = vtk.vtkUnsignedCharArray()
+      colorArrayG.SetName("QuantizedColorG")
+      colorArrayG.SetNumberOfComponents(1)
+      colorArrayG.SetNumberOfTuples(nFaces)
+
+      colorArrayB = vtk.vtkUnsignedCharArray()
+      colorArrayB.SetName("QuantizedColorB")
+      colorArrayB.SetNumberOfComponents(1)
+      colorArrayB.SetNumberOfTuples(nFaces)
+
+      # Combined RGB array
+      colorArrayRGB = vtk.vtkUnsignedCharArray()
+      colorArrayRGB.SetName("QuantizedColors")
+      colorArrayRGB.SetNumberOfComponents(3)
+      colorArrayRGB.SetNumberOfTuples(nFaces)
+
+      for i in range(nFaces):
+        color = quantizedColors[i]
+        colorArrayR.SetValue(i, int(color[0]))
+        colorArrayG.SetValue(i, int(color[1]))
+        colorArrayB.SetValue(i, int(color[2]))
+        colorArrayRGB.SetTuple3(i, int(color[0]), int(color[1]), int(color[2]))
+
+      # Add arrays to cell data
+      polyData.GetCellData().AddArray(colorArrayR)
+      polyData.GetCellData().AddArray(colorArrayG)
+      polyData.GetCellData().AddArray(colorArrayB)
+      polyData.GetCellData().AddArray(colorArrayRGB)
+      polyData.GetCellData().SetActiveScalars("QuantizedColors")
+
+      # Update display
+      modelNode.CreateDefaultDisplayNodes()
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("QuantizedColors")
+        displayNode.SetAndObserveColorNodeID("vtkMRMLColorTableNodeGrey")
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback("Quantized face coloring applied successfully")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in applyQuantizedFaceColorsFromTexture: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
 
