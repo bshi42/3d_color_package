@@ -898,6 +898,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.numColorClustersSpin.setToolTip("Number of color clusters for quantization (2-64)")
     recolorWidgetLayout.addRow("Number of Colors: ", self.numColorClustersSpin)
 
+    # High contrast palette checkbox
+    self.useHighContrastPaletteCheckbox = qt.QCheckBox()
+    self.useHighContrastPaletteCheckbox.setChecked(False)
+    self.useHighContrastPaletteCheckbox.setEnabled(False)  # Initially disabled
+    self.useHighContrastPaletteCheckbox.setToolTip("If checked, use a high contrast color palette instead of the quantized colors from the texture")
+    recolorWidgetLayout.addRow("High Contrast Palette: ", self.useHighContrastPaletteCheckbox)
+
     # Apply texture button
     self.applyRecolorButton = qt.QPushButton("Apply Texture")
     self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
@@ -922,6 +929,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.averageFaceColorCheckbox.connect("toggled(bool)", self.onAverageFaceColorToggled)
     self.quantizeColorsCheckbox.connect("toggled(bool)", self.onQuantizeColorsToggled)
     self.numColorClustersSpin.connect("valueChanged(int)", self.onRecolorParameterChanged)
+    self.useHighContrastPaletteCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
     self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
 
     # Add vertical spacer so extra space goes below content
@@ -1992,19 +2000,28 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Handle toggling of the average face color checkbox"""
     # Enable/disable quantization controls based on averaging checkbox
     self.quantizeColorsCheckbox.setEnabled(checked)
-    self.numColorClustersSpin.setEnabled(checked and self.quantizeColorsCheckbox.isChecked())
+    quantizationEnabled = checked and self.quantizeColorsCheckbox.isChecked()
+    self.numColorClustersSpin.setEnabled(quantizationEnabled)
+    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
 
-    # If averaging is disabled, also disable quantization
+    # If averaging is disabled, also disable quantization and high contrast palette
     if not checked:
       self.quantizeColorsCheckbox.setChecked(False)
+      self.useHighContrastPaletteCheckbox.setChecked(False)
 
     # Update the apply button state
     self.onRecolorParameterChanged()
 
   def onQuantizeColorsToggled(self, checked):
     """Handle toggling of the quantize colors checkbox"""
-    # Enable/disable the number of clusters spin box
-    self.numColorClustersSpin.setEnabled(checked and self.averageFaceColorCheckbox.isChecked())
+    # Enable/disable the number of clusters spin box and high contrast palette checkbox
+    quantizationEnabled = checked and self.averageFaceColorCheckbox.isChecked()
+    self.numColorClustersSpin.setEnabled(quantizationEnabled)
+    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
+
+    # If quantization is disabled, also disable high contrast palette
+    if not checked:
+      self.useHighContrastPaletteCheckbox.setChecked(False)
 
     # Update the apply button state
     self.onRecolorParameterChanged()
@@ -2053,6 +2070,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       useAverageFaceColors = self.averageFaceColorCheckbox.isChecked()
       useQuantization = self.quantizeColorsCheckbox.isChecked()
       numClusters = self.numColorClustersSpin.value
+      useHighContrastPalette = self.useHighContrastPaletteCheckbox.isChecked()
 
       if not atlasModel:
         self.recolorLogInfo.appendPlainText("Error: No atlas model selected")
@@ -2070,7 +2088,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.recolorLogInfo.appendPlainText(f"Applying texture: {selectedTexture}")
       self.recolorLogInfo.appendPlainText(f"Average face colors: {'Yes' if useAverageFaceColors else 'No'}")
       if useAverageFaceColors and useQuantization:
-        self.recolorLogInfo.appendPlainText(f"Color quantization: Yes ({numClusters} clusters)")
+        paletteType = "High contrast palette" if useHighContrastPalette else "Quantized colors"
+        self.recolorLogInfo.appendPlainText(f"Color quantization: Yes ({numClusters} clusters, {paletteType})")
       else:
         self.recolorLogInfo.appendPlainText("Color quantization: No")
 
@@ -2081,7 +2100,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           # Apply quantized face colors
           self.recolorLogInfo.appendPlainText("Applying quantized face colors...")
           success = logic.applyQuantizedFaceColorsFromTexture(
-            atlasModel, texturePath, numClusters,
+            atlasModel, texturePath, numClusters, useHighContrastPalette,
             progressCallback=self.updateRecolorProgress,
             logCallback=self.logRecolorMessage
           )
@@ -4717,13 +4736,103 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # Use scikit-image's optimized ΔE2000 implementation
     return deltaE_ciede2000(lab1, lab2)
 
-  def quantize_colors_lab_kmeans(self, rgb_colors, n_clusters, progressCallback=None, logCallback=None):
+  def generate_high_contrast_palette(self, n_colors, logCallback=None):
+    """
+    Generate a high contrast color palette with up to 64 distinguishable colors
+
+    Args:
+        n_colors: Number of colors to generate (2-64)
+        logCallback: Optional callback for logging messages
+
+    Returns:
+        numpy array of shape (n_colors, 3) with RGB values in range [0, 255]
+    """
+    if logCallback:
+      logCallback(f"Generating high contrast palette with {n_colors} colors")
+
+    # Clamp to valid range
+    n_colors = max(2, min(64, n_colors))
+
+    # Base high contrast colors (carefully chosen for maximum distinguishability)
+    base_colors = [
+      [255, 0, 0],     # Red
+      [0, 255, 0],     # Green
+      [0, 0, 255],     # Blue
+      [255, 255, 0],   # Yellow
+      [255, 0, 255],   # Magenta
+      [0, 255, 255],   # Cyan
+      [255, 128, 0],   # Orange
+      [128, 0, 255],   # Purple
+      [0, 128, 255],   # Light Blue
+      [255, 0, 128],   # Pink
+      [128, 255, 0],   # Lime
+      [0, 255, 128],   # Spring Green
+      [255, 255, 255], # White
+      [0, 0, 0],       # Black
+      [128, 128, 128], # Gray
+      [192, 192, 192], # Light Gray
+      [64, 64, 64],    # Dark Gray
+      [128, 64, 0],    # Brown
+      [64, 128, 0],    # Olive
+      [0, 64, 128],    # Navy
+      [128, 0, 64],    # Maroon
+      [64, 0, 128],    # Indigo
+      [0, 128, 64],    # Teal
+      [255, 192, 128], # Peach
+      [128, 255, 192], # Mint
+      [192, 128, 255], # Lavender
+      [255, 128, 192], # Rose
+      [128, 192, 255], # Sky Blue
+      [192, 255, 128], # Pale Green
+      [255, 64, 64],   # Bright Red
+      [64, 255, 64],   # Bright Green
+      [64, 64, 255],   # Bright Blue
+    ]
+
+    if n_colors <= len(base_colors):
+      # Use the first n_colors from our base palette
+      return np.array(base_colors[:n_colors], dtype=np.uint8)
+
+    # For more than 32 colors, generate additional colors using HSV space
+    colors = base_colors.copy()
+
+    # Generate additional colors by varying hue, saturation, and value systematically
+    remaining = n_colors - len(colors)
+
+    # Use HSV space to generate well-spaced colors
+    for i in range(remaining):
+      # Calculate hue with golden ratio spacing for good distribution
+      golden_ratio = (1 + 5**0.5) / 2
+      hue = (i * 360 / golden_ratio) % 360
+
+      # Alternate between high and medium saturation/value for contrast
+      if i % 4 == 0:
+        sat, val = 1.0, 0.9  # Bright colors
+      elif i % 4 == 1:
+        sat, val = 0.7, 1.0  # Pastel colors
+      elif i % 4 == 2:
+        sat, val = 1.0, 0.6  # Dark colors
+      else:
+        sat, val = 0.5, 0.8  # Muted colors
+
+      # Convert HSV to RGB
+      rgb = colorsys.hsv_to_rgb(hue/360.0, sat, val)
+      rgb_255 = [int(c * 255) for c in rgb]
+      colors.append(rgb_255)
+
+    if logCallback:
+      logCallback(f"Generated {len(colors)} high contrast colors")
+
+    return np.array(colors[:n_colors], dtype=np.uint8)
+
+  def quantize_colors_lab_kmeans(self, rgb_colors, n_clusters, use_high_contrast=False, progressCallback=None, logCallback=None):
     """
     Quantize colors using k-means clustering in CIE Lab color space with ΔE2000 distance
 
     Args:
         rgb_colors: numpy array of shape (N, 3) with RGB values in range [0, 255]
         n_clusters: number of color clusters (2-64)
+        use_high_contrast: if True, use high contrast palette instead of quantized colors
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
 
@@ -4768,14 +4877,24 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(70)
 
-      # Convert cluster centers back to RGB
-      if logCallback:
-        logCallback("Converting cluster centers back to RGB...")
+      # Convert cluster centers back to RGB or use high contrast palette
+      if use_high_contrast:
+        if logCallback:
+          logCallback("Using high contrast palette instead of quantized colors...")
 
-      cluster_centers_rgb = self.lab_to_rgb(cluster_centers_lab)
+        # Generate high contrast palette
+        cluster_centers_rgb = self.generate_high_contrast_palette(n_clusters, logCallback)
 
-      # Create quantized colors by mapping each original color to its cluster center
-      quantized_colors = cluster_centers_rgb[cluster_labels]
+        # Create quantized colors by mapping each original color to its assigned high contrast color
+        quantized_colors = cluster_centers_rgb[cluster_labels]
+      else:
+        if logCallback:
+          logCallback("Converting cluster centers back to RGB...")
+
+        cluster_centers_rgb = self.lab_to_rgb(cluster_centers_lab)
+
+        # Create quantized colors by mapping each original color to its cluster center
+        quantized_colors = cluster_centers_rgb[cluster_labels]
 
       if progressCallback:
         progressCallback(90)
@@ -4825,7 +4944,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     return rgb
 
-  def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, progressCallback=None, logCallback=None):
+  def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, useHighContrastPalette=False, progressCallback=None, logCallback=None):
     """
     Apply quantized average face colors from a texture to a model
 
@@ -4833,6 +4952,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         modelNode: VTK model node to apply colors to
         texturePath: Path to the texture image file
         numClusters: Number of color clusters for quantization
+        useHighContrastPalette: If True, use high contrast palette instead of quantized colors
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
 
@@ -4890,6 +5010,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       quantResult = self.quantize_colors_lab_kmeans(
         faceColors, numClusters,
+        use_high_contrast=useHighContrastPalette,
         progressCallback=lambda p: progressCallback(40 + p * 0.4) if progressCallback else None,
         logCallback=logCallback
       )
