@@ -712,9 +712,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.colorByBinAvgCheck.setChecked(False)
     self.histLayout.addRow(self.colorByBinAvgCheck)
 
+    # HSV Options section
+    self.hsvOptionsLabel = qt.QLabel("HSV Options:")
+    self.hsvOptionsLabel.setStyleSheet("font-weight: bold; color: #666;")
+    self.histLayout.addRow(self.hsvOptionsLabel)
+
+    # Color enhancement option for 2D plots
+    self.enhanceColorsCheck = qt.QCheckBox("Enhance colors in 2D plot for visibility")
+    self.enhanceColorsCheck.setChecked(False)  # Default to actual colors
+    self.enhanceColorsCheck.setToolTip("When checked, boosts saturation/value for better visibility. When unchecked, uses actual colors from data.")
+    self.histLayout.addRow(self.enhanceColorsCheck)
+
     # HSV Filtering section
     self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
-    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666;")
+    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666; margin-top: 10px;")
     self.histLayout.addRow(self.hsvFilterLabel)
 
     # Saturation cutoff (percent)
@@ -1456,6 +1467,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Get HSV cutoff parameters for dimensionality reduction
       satCutoff = float(self.satCutoffSpin.value) if hasattr(self, 'satCutoffSpin') else 10.0
       valueCutoff = float(self.valueCutoffSpin.value) if hasattr(self, 'valueCutoffSpin') else 10.0
+      enhanceColors = bool(self.enhanceColorsCheck.isChecked()) if hasattr(self, 'enhanceColorsCheck') else False
 
       self.colorsEDALogInfo.appendPlainText(f"Starting color analysis...")
       self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
@@ -1467,7 +1479,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         progressCallback=self.updateColorsEDAProgress,
         logCallback=self.logColorsEDAMessage,
         satCutoff=satCutoff,
-        valueCutoff=valueCutoff
+        valueCutoff=valueCutoff,
+        enhanceColors=enhanceColors
       )
 
       if result and isinstance(result, dict) and result.get('success'):
@@ -3381,7 +3394,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     log("Failed to automatically install Blender. Please install manually.")
     return None
-  def runColorsEDA(self, atlasModel, texturesDir, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0):
+  def runColorsEDA(self, atlasModel, texturesDir, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0, enhanceColors=False):
     """
     Run color analysis with dimensionality reduction on face-averaged colors
 
@@ -3394,6 +3407,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         logCallback: Function to call with log messages
         satCutoff: Minimum saturation threshold for HSV filtering (0-100)
         valueCutoff: Minimum value/brightness threshold for HSV filtering (0-100)
+        enhanceColors: Whether to enhance colors for visibility in 2D plots
 
     Returns:
         bool: True if successful, False otherwise
@@ -3529,9 +3543,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if colorSpace == "HSV" and dimRedData.shape[0] != colorData.shape[0]:
         # Calculate how many faces per specimen passed the filter
         filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo)
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
       else:
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo)
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
 
       if progressCallback:
         progressCallback(100)
@@ -3918,7 +3932,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Error in dimensionality reduction: {e}")
       return None
 
-  def _plotColorsEDAResults(self, reducedData, specimenNames, nFaces, colorSpace, algorithm):
+  def _plotColorsEDAResults(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False):
     """
     Plot the dimensionality reduction results in a 2D viewer
 
@@ -3928,10 +3942,49 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         nFaces: number of faces per specimen
         colorSpace: "RGB" or "HSV"
         algorithm: "PCA", "ICA", or "UMAP"
+        originalColorData: numpy array of original color data for hue-based coloring (optional)
+        enhanceColors: whether to enhance colors for visibility
 
     Returns:
-        bool: True if successful
+        dict: {"success": bool, "chartNode": node} if successful
     """
+    try:
+      # Create enhanced plot with color information when HSV data is available
+      if colorSpace == "HSV" and originalColorData is not None and originalColorData.shape[1] >= 4:
+        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors)
+
+      # Standard single-series plot for RGB or when no color data available
+      return self._createStandardPlot(reducedData, algorithm, colorSpace)
+
+      # Create plot chart
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+
+      # Set title based on whether hue coloring is used
+      if colorArray is not None:
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors (Hue-Colored)")
+      else:
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
+
+      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+
+      # Show in plot view
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      plotViewNode = plotWidget.mrmlPlotViewNode()
+      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+      # Return both success status and chart node for UI to store
+      return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+      print(f"Error plotting results: {e}")
+      return {"success": False, "chartNode": None}
+
+  def _createStandardPlot(self, reducedData, algorithm, colorSpace):
+    """Create a standard single-series scatter plot"""
     try:
       # Create a scatter plot node
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
@@ -3963,8 +4016,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotSeriesNode.SetYColumnName(yArray.GetName())
       plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
       plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
-      plotSeriesNode.SetMarkerSize(4)
-      # Ensure no lines are drawn - only markers
+      plotSeriesNode.SetMarkerSize(6)
       plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
 
       # Create plot chart
@@ -3981,9 +4033,99 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotViewNode = plotWidget.mrmlPlotViewNode()
       plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
 
-      # Return both success status and chart node for UI to store
       return {"success": True, "chartNode": plotChartNode}
 
     except Exception as e:
-      print(f"Error plotting results: {e}")
+      print(f"Error creating standard plot: {e}")
       return {"success": False, "chartNode": None}
+
+  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False):
+    """
+    Render colored scatter by quantizing hue into bins and creating one series per bin.
+    This avoids the 'single color per series' limitation in Slicer plots.
+    """
+    try:
+        import colorsys
+
+        # 1) Compute hue (deg), sat, val from your 4D HSV repr
+        hue_cos = originalColorData[:, 0]
+        hue_sin = originalColorData[:, 1]
+        hue_deg = (np.degrees(np.arctan2(hue_sin, hue_cos)) + 360.0) % 360.0  # [0,360)
+        sat = np.clip(originalColorData[:, 2] / 100.0, 0.0, 1.0)
+        val = np.clip(originalColorData[:, 3] / 100.0, 0.0, 1.0)
+
+        # 2) Optional visibility boost
+        if enhanceColors:
+            sat = np.maximum(sat, 0.7)
+            val = np.maximum(val, 0.8)
+
+        min_hue = 0.0
+        max_hue = 360.0
+        min_hue = np.minimum(min_hue, np.min(hue_deg))
+        max_hue = np.maximum(max_hue, np.max(hue_deg))
+
+        # 3) Bin hues
+        n_bins = 36  # 10° per bin; bump to 72 if you want finer gradation
+        edges = np.linspace(min_hue, max_hue, n_bins + 1, endpoint=True)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        bin_idx = np.clip(np.digitize(hue_deg, edges, right=False) - 1, 0, n_bins - 1)
+
+        # 4) Make a chart and populate one series per bin
+        plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+        plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors"
+                               + (" (Enhanced Colors)" if enhanceColors else " (Actual Colors)"))
+        plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+        plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+        plotChartNode.SetLegendVisibility(False)
+
+        # Build series for occupied bins only (keeps node count tight)
+        for k in range(n_bins):
+            mask = (bin_idx == k)
+            if not np.any(mask):
+                continue
+
+            X = reducedData[mask, 0]
+            Y = reducedData[mask, 1]
+
+            # Representative color for the bin: use bin center hue and the mean sat/val of points in the bin
+            mean_sat = float(np.mean(sat[mask]))
+            mean_val = float(np.mean(val[mask]))
+            r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, mean_sat, mean_val)
+
+            # Build table
+            xArray = vtk.vtkFloatArray(); xArray.SetName(f"{algorithm}_Component_1"); xArray.SetNumberOfTuples(X.shape[0])
+            yArray = vtk.vtkFloatArray(); yArray.SetName(f"{algorithm}_Component_2"); yArray.SetNumberOfTuples(Y.shape[0])
+            for i in range(X.shape[0]):
+                xArray.SetValue(i, float(X[i])); yArray.SetValue(i, float(Y[i]))
+
+            tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+            tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}_bin{k:02d}")
+            tableNode.AddColumn(xArray); tableNode.AddColumn(yArray)
+
+            seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+            seriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}_bin{k:02d}")
+            seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+            seriesNode.SetXColumnName(xArray.GetName())
+            seriesNode.SetYColumnName(yArray.GetName())
+            seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+            seriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+            seriesNode.SetMarkerSize(6)
+            seriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+            seriesNode.SetColor(float(r), float(g), float(b))
+
+            plotChartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
+
+        # Show chart
+        layoutManager = slicer.app.layoutManager()
+        plotWidget = layoutManager.plotWidget(0)
+        plotViewNode = plotWidget.mrmlPlotViewNode()
+        plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+        return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+        print(f"Error creating binned colored scatter: {e}")
+        import traceback; traceback.print_exc()
+        return {"success": False, "chartNode": None}
+
