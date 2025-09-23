@@ -5943,58 +5943,39 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
   def _createPopulationPlot(self, reducedData, textureNames, method):
     """
     Create a population analysis plot using Slicer's plotting functionality
-
-    Args:
-        reducedData: 2D array of reduced data points
-        textureNames: List of texture names for labeling
-        method: Dimensionality reduction method name
-
-    Returns:
-        dict with plot information
+    with equal X/Y numeric ranges.
     """
     try:
-      # Create plot data
+      # --- series ---
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
       plotSeriesNode.SetName(f"MultiRecolor_Population_{method}")
 
-      # Create arrays for the plot data
-      xArray = vtk.vtkFloatArray()
-      xArray.SetName(f"{method} Component 1")
+      xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
+      yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
       xArray.SetNumberOfTuples(len(reducedData))
-
-      yArray = vtk.vtkFloatArray()
-      yArray.SetName(f"{method} Component 2")
       yArray.SetNumberOfTuples(len(reducedData))
-
-      # Labels array for texture names
-      labelsArray = vtk.vtkStringArray()
-      labelsArray.SetName("Texture Names")
+      labelsArray = vtk.vtkStringArray(); labelsArray.SetName("Texture Names")
       labelsArray.SetNumberOfTuples(len(reducedData))
 
-      # Fill arrays with data
       for i, (point, name) in enumerate(zip(reducedData, textureNames)):
         xArray.SetValue(i, float(point[0]))
         yArray.SetValue(i, float(point[1]))
         labelsArray.SetValue(i, name)
 
-      # Create table and add arrays
       tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
       tableNode.SetName(f"MultiRecolor_Population_Data_{method}")
-      tableNode.AddColumn(xArray)
-      tableNode.AddColumn(yArray)
-      tableNode.AddColumn(labelsArray)
+      tableNode.AddColumn(xArray); tableNode.AddColumn(yArray); tableNode.AddColumn(labelsArray)
 
-      # Set up plot series
       plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
       plotSeriesNode.SetXColumnName(xArray.GetName())
       plotSeriesNode.SetYColumnName(yArray.GetName())
       plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
       plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
       plotSeriesNode.SetMarkerSize(8)
-      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)  # No lines connecting points
-      plotSeriesNode.SetColor(0.2, 0.6, 0.8)  # Nice blue color
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+      plotSeriesNode.SetColor(0.2, 0.6, 0.8)
 
-      # Create plot chart
+      # --- chart ---
       plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
       plotChartNode.SetName(f"MultiRecolor_Population_Chart_{method}")
       plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
@@ -6002,24 +5983,36 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotChartNode.SetXAxisTitle(f"{method} Component 1")
       plotChartNode.SetYAxisTitle(f"{method} Component 2")
 
-      # Show in plot view
-      layoutManager = slicer.app.layoutManager()
-      plotWidget = layoutManager.plotWidget(0)
-      plotViewNode = plotWidget.mrmlPlotViewNode()
+      # Disable auto-range BEFORE setting manual ranges
+      if hasattr(plotChartNode, "SetXAxisRangeAuto"):
+        plotChartNode.SetXAxisRangeAuto(False)
+      if hasattr(plotChartNode, "SetYAxisRangeAuto"):
+        plotChartNode.SetYAxisRangeAuto(False)
+
+      # Equal numeric span on both axes
+      x_min, x_max = float(np.min(reducedData[:,0])), float(np.max(reducedData[:,0]))
+      y_min, y_max = float(np.min(reducedData[:,1])), float(np.max(reducedData[:,1]))
+      x_center = (x_min + x_max) / 2.0
+      y_center = (y_min + y_max) / 2.0
+      span = max(x_max - x_min, y_max - y_min)
+      span = max(span, 1e-6)  # avoid zero span
+      span *= 1.2  # 20% padding
+
+      plotChartNode.SetXAxisRange(x_center - span/2.0, x_center + span/2.0)
+      plotChartNode.SetYAxisRange(y_center - span/2.0, y_center + span/2.0)
+      plotChartNode.Modified()
+
+      # show
+      plotViewNode = slicer.app.layoutManager().plotWidget(0).mrmlPlotViewNode()
       plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
 
-      return {
-        "success": True,
-        "chart_node": plotChartNode,
-        "series_node": plotSeriesNode,
-        "table_node": tableNode
-      }
+      return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
 
     except Exception as e:
       print(f"Error creating population plot: {e}")
-      import traceback
-      traceback.print_exc()
+      import traceback; traceback.print_exc()
       return {"success": False}
+
 
   def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, useHighContrastPalette=False, progressCallback=None, logCallback=None):
     """
