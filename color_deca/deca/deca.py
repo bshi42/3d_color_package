@@ -620,38 +620,63 @@ class decaWidget(ScriptedLoadableModuleWidget):
     self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
 
   def onGenerateAtlasButton(self):
+    # Instantiates DeCA logic processor for atlas generation algorithms
     logic = decaLogic()
-    #set up output directory
+
+    # Creates timestamped output directory structure for DeCAL analysis results
+    # Parameters control symmetry (False), error checking (False), DeCAL mode (True), and atlas loading
     self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+    # Validates directory creation succeeded before continuing
     if self.folderNames == {}:
+      # Logs error message to GUI when folder creation fails
       self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
-      return
-    self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
-    self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
-    self.folderNames['originalTextures']=self.textureDirectoryDCL.currentPath
+      return  # Exits early if setup failed
+    # Stores source directory paths in the folder name dictionary
+    self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath  # Landmark files location
+    self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath  # 3D model files location
+    self.folderNames['originalTextures']=self.textureDirectoryDCL.currentPath  # Texture image files location
+    # Handles pre-existing atlas loading workflow
     if self.loadAtlasOptionDCL.checked:
       try:
+        # Retrieves user-specified atlas model path from GUI
         atlasModelPath = self.DCLBaseModelSelector.currentPath
+        # Loads atlas model into 3D Slicer scene
         self.atlasModel = slicer.util.loadModel(atlasModelPath)
       except:
+        # Reports model loading failure to user
         self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
-        return
+        return  # Aborts if atlas model can't be loaded
       try:
+        # Retrieves user-specified atlas landmark path from GUI
         atlasLMPath = self.DCLBaseLMSelector.currentPath
+        # Loads atlas landmarks into 3D Slicer scene
         self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
       except:
+        # Prints debug message to console
         print("Can't load from: ", atlasLMPath)
+        # Reports landmark loading failure to user
         self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
-        return
+        return  # Aborts if atlas landmarks can't be loaded
     else:
-      removeScale = True
+      # Generates new atlas from input specimens
+      removeScale = True  # Normalizes for size differences across specimens
+      # Creates unbiased atlas from all specimens in the dataset
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+    # Constructs output path for atlas model file
     atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    # Notifies user of save operation
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
+    # Writes atlas model to disk in PLY format
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
+
+    # Constructs output path for atlas landmark file
     atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    # Notifies user of save operation
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
+    # Writes atlas landmarks to disk in Slicer's JSON format
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+
+    # Enables point number calculation button now that atlas is ready
     self.getPointNumberButton.enabled = True
 
   def generateNewAtlas(self, removeScale, log):
@@ -693,9 +718,17 @@ class decaWidget(ScriptedLoadableModuleWidget):
     return atlasModel, atlasLMs
 #need to set up indexing correctly for the code to run follow down from runMean
   def onGetPointNumberButton(self):
+    # Instantiates logic processor for point calculations
     logic = decaLogic()
+
+    # Performs downsampling on atlas model based on user-specified spacing
+    # Returns both the downsampled mesh and the resulting point count
     subsampledTemplate, pointNumber = logic.runCheckPoints(self.atlasModel, self.spacingTolerance.value)
+
+    # Reports point count to user for planning computational requirements
     self.logInfoDCL.appendPlainText(f'The subsampled template has a total of {pointNumber} points.')
+
+    # Enables DeCAL execution now that point density is confirmed
     self.DCLApplyButton.enabled = True
 
   def onDCApplyButton(self):
@@ -843,8 +876,13 @@ class decaLogic(ScriptedLoadableModuleLogic):
       slicer.mrmlScene.RemoveNode(currentLMNode)
 
   def runCheckPoints(self, atlasNode, spacingTolerance):
+    # Converts user-specified tolerance value to percentage for VTK filter
     spacingPercentage = spacingTolerance/100
+
+    # Applies downsampling filter to reduce point density
     templateModel = self.downsampleModel(atlasNode, spacingPercentage)
+
+    # Returns both the downsampled model and its point count for user feedback
     return templateModel, templateModel.GetNumberOfPoints()
 
   def runDeCAL(self, baseNode, baseLMPath, meshDirectory, landmarkDirectory, outputDirectory, spacingTolerance):
@@ -914,28 +952,60 @@ class decaLogic(ScriptedLoadableModuleLogic):
       return None
 
   def downsampleModel(self, model, spacingPercentage):
+    # Extracts polydata from the input model node
     points=model.GetPolyData()
+
+    # Creates VTK clean filter to merge nearby points
     cleanFilter=vtk.vtkCleanPolyData()
+
+    # Uses relative tolerance based on mesh bounding box
     cleanFilter.SetToleranceIsAbsolute(False)
+
+    # Sets merge tolerance as percentage of diagonal
     cleanFilter.SetTolerance(spacingPercentage)
+
+    # Connects input polydata to filter
     cleanFilter.SetInputData(points)
+
+    # Executes the downsampling operation
     cleanFilter.Update()
+
+    # Returns the decimated polydata
     return cleanFilter.GetOutput()
 
   def addIndexArray(self, mesh, arrayName):
-    # Array of original index values
+    # Creates integer array to store original point indices
+    # This preserves point identity through downsampling operations
     indexArray = vtk.vtkIntArray()
+
+    # Sets array as single-component (one value per point)
     indexArray.SetNumberOfComponents(1)
+
+    # Assigns identifying name for later retrieval
     indexArray.SetName(arrayName)
+
+    # Iterates through all mesh points
     for i in range(mesh.GetPolyData().GetNumberOfPoints()):
+      # Stores original index value for each point
       indexArray.InsertNextValue(i)
+
+    # Attaches index array to mesh point data
     mesh.GetPolyData().GetPointData().AddArray(indexArray)
 
   def computeNormals(self, inputModel):
+    # Creates VTK filter for normal vector computation
     normals = vtk.vtkPolyDataNormals()
+
+    # Connects input model's polydata to filter
     normals.SetInputData(inputModel.GetPolyData())
+
+    # Ensures consistent normal orientation across surface
     normals.SetAutoOrientNormals(True)
+
+    # Executes normal computation
     normals.Update()
+
+    # Replaces model's polydata with normal-enhanced version
     inputModel.SetAndObservePolyData(normals.GetOutput())
 
   def runMirroring(self, meshDirectory, lmDirectory, mirrorMeshDirectory, mirrorLMDirectory, mirrorAxis, mirrorIndexText, slmDirectory=None, outputSLMDirectoryy=None, mirrorSLMIndexText=None):
@@ -1223,112 +1293,248 @@ class decaLogic(ScriptedLoadableModuleLogic):
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
      """
+    # Extracts shape dimensions from input array
     id,jd=a.shape
+
+    # Defines lambda for creating difference matrices
+    # Subtracts each element from reshaped column vector
     fnx = lambda q : q - np.reshape(q, (id, 1))
+
+    # Computes pairwise differences for x coordinates
     dx=fnx(a[:,0])
+
+    # Computes pairwise differences for y coordinates
     dy=fnx(a[:,1])
+
+    # Computes pairwise differences for z coordinates
     dz=fnx(a[:,2])
+
+    # Calculates Euclidean distances from coordinate differences
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
   def numpyToFiducialNode(self, numpyArray, nodeName):
+    # Creates new fiducial node in 3D Slicer scene
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
+
+    # Iterates through numpy array points
     for index in range(len(numpyArray)):
+      # Adds each point as control point with string index label
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
+
+    # Returns populated fiducial node
     return fiducialNode
 
   def computeAverageLM(self, fiducialGroup):
+    # Counts number of specimens in the group
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
+
+    # Gets landmark count from first specimen
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes 3D array: points x coordinates x samples
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
+
+    # Extracts landmark coordinates from each specimen
     for i in range(sampleNumber):
+      # Gets VTK point data from current specimen
       pointData = fiducialGroup.GetBlock(i).GetPoints().GetData()
+
+      # Converts VTK data to numpy array
       pointData_np = vtk_np.vtk_to_numpy(pointData)
+
+      # Stores in 3D array structure
       groupArray_np[:,:,i] = pointData_np
-    #Calculate mean point positions of aligned group
+
+    # Calculates mean position across all specimens for each landmark
     averagePoints_np = np.mean(groupArray_np, axis=2)
+
+    # Converts mean positions to fiducial node
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
+
     return averageLMNode
 
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
+    # Initializes point coordinate array
     point = [0,0,0]
+
+    # Creates empty polydata object
     polydataPoints = vtk.vtkPolyData()
+
+    # Creates VTK points container
     points = vtk.vtkPoints()
+
+    # Determines whether to load from file or use existing node
     if not loadOption:
+      # Uses passed node directly
       fiducialNode = nodeLocation
     else:
+      # Loads fiducial node from file path
       [success,fiducialNode] = slicer.util.loadMarkupsFiducialList(nodeLocation)
+
+      # Validates successful loading
       if not success:
         print("Could not load landmarks: ", nodeLocation)
         return
+
+    # Converts fiducial points to VTK points
     for i in range(fiducialNode.GetNumberOfControlPoints()):
+      # Gets position of current control point
       point = fiducialNode.GetNthControlPointPosition(i)
+
+      # Adds point to VTK points collection
       points.InsertNextPoint(point)
+
+    # Assigns points to polydata structure
     polydataPoints.SetPoints(points)
+
+    # Removes temporary node from scene
     slicer.mrmlScene.RemoveNode(fiducialNode)
+
     return polydataPoints
 
   def importLandmarks(self, topDir):
+    # Creates multi-block filter to group multiple landmark sets
     fiducialGroup = vtk.vtkMultiBlockDataGroupFilter()
+
+    # Initializes list to track processed filenames
     fileNameList = []
+
+    # Processes all landmark files in directory
     for file in sorted(os.listdir(topDir)):
+      # Filters for supported landmark formats
       if file.endswith(".fcsv") or file.endswith(".json"):
+        # Stores filename for reference
         fileNameList.append(file)
+
+        # Constructs full file path
         inputFilePath = os.path.join(topDir, file)
-        # may want to replace with vtk reader
+
+        # Converts landmark file to polydata format
+        # Note: may want to replace with vtk reader for efficiency
         polydataPoints = self.fiducialNodeToPolyData(inputFilePath)
+
+        # Adds to multi-block group
         fiducialGroup.AddInputData(polydataPoints)
+
+    # Executes grouping operation
     fiducialGroup.Update()
+
+    # Returns filenames and grouped landmark data
     return fileNameList, fiducialGroup.GetOutput()
 
   def importMeshes(self, topDir, extensions):
+      # Creates multi-block filter to group multiple mesh models
       modelGroup = vtk.vtkMultiBlockDataGroupFilter()
+
+      # Initializes list to track processed model names
       fileNameList = []
+
+      # Processes all mesh files in directory
       for file in sorted(os.listdir(topDir)):
+        # Checks if file has supported mesh extension
         if file.endswith(tuple(extensions)):
+          # Extracts base filename without extension
           base, ext = os.path.splitext(file)
+
+          # Stores base name for specimen identification
           fileNameList.append(base)
+
+          # Constructs full file path
           inputFilePath = os.path.join(topDir, file)
-          # may want to replace with vtk reader
+
+          # Loads mesh model into Slicer scene
+          # Note: may want to replace with vtk reader for efficiency
           modelNode = slicer.util.loadModel(inputFilePath)
+
+          # Extracts polydata and adds to group
           modelGroup.AddInputData(modelNode.GetPolyData())
+
+          # Removes temporary node from scene to free memory
           slicer.mrmlScene.RemoveNode(modelNode)
+
+      # Executes grouping operation
       modelGroup.Update()
+
+      # Returns model names and grouped mesh data
       return fileNameList, modelGroup.GetOutput()
 
   def procrustesImposition(self, originalLandmarks, sizeOption):
+    # Creates Procrustes alignment filter for shape analysis
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
-    if(sizeOption):
-      procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
 
+    # Configures alignment mode based on size normalization preference
+    if(sizeOption):
+      # Uses rigid body transformation (preserves size)
+      procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
+    # Default mode is similarity transform (removes size)
+
+    # Connects landmark data to filter
     procrustesFilter.SetInputData(originalLandmarks)
+
+    # Executes Procrustes alignment
     procrustesFilter.Update()
+
+    # Extracts computed mean shape
     meanShape = procrustesFilter.GetMeanPoints()
+
+    # Returns mean shape and aligned landmark sets
     return [meanShape, procrustesFilter.GetOutput()]
 
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
+    # Imports operator for min function key extraction
     import operator
+
+    # Gets number of specimens in aligned group
     sampleNumber = alignedPoints.GetNumberOfBlocks()
+
+    # Initializes list to store Procrustes distances
     procrustesDistances = []
+
+    # Calculates distance from each specimen to mean shape
     for i in range(sampleNumber):
+      # Gets current specimen's aligned landmarks
       alignedShape = alignedPoints.GetBlock(i)
+
+      # Initializes point coordinate arrays
       meanPoint = [0,0,0]
       alignedPoint = [0,0,0]
+
+      # Accumulates total distance for this specimen
       distance = 0
+
+      # Sums distances across all landmark points
       for j in range(meanShape.GetNumberOfPoints()):
+        # Gets coordinates from mean shape
         meanShape.GetPoint(j,meanPoint)
+
+        # Gets corresponding coordinates from specimen
         alignedShape.GetPoint(j,alignedPoint)
+
+        # Adds Euclidean distance to total
         distance += np.sqrt(vtk.vtkMath.Distance2BetweenPoints(meanPoint,alignedPoint))
+
+      # Stores total distance for this specimen
       procrustesDistances.append(distance)
+
     try:
+      # Finds specimen with minimum distance to mean
       min_index, min_value = min(enumerate(procrustesDistances), key=operator.itemgetter(1))
       return min_index
     except:
+      # Returns first specimen if error occurs
       return 0
 
   def getClosestToMeanPath(self, landmarkDirectory):
+    # Imports all landmark files from directory
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
+
+    # Performs Procrustes alignment without size preservation
     meanShape, alignedLandmarks = self.procrustesImposition(landmarks, False)
+
+    # Identifies specimen closest to mean configuration
     closestToMeanIndex = self.getClosestToMeanIndex(meanShape, alignedLandmarks)
+
+    # Returns filename of most representative specimen
     return lmNames[closestToMeanIndex]
 
   def denseCorrespondence(self, originalLandmarks, originalMeshes, textureImageNode, writeErrorOption=False):
@@ -1411,88 +1617,147 @@ class decaLogic(ScriptedLoadableModuleLogic):
   #NEW
 
   def denseSurfaceCorrespondencePair(self, originalMesh, originalLandmarks, alignedLandmarks,baseMesh, baseLandmarks, meanShape, iteration,textureImageNode, saveAsPointData='uchar-vector'):
-    # TPS warp target and base mesh to meanshape
+    # Creates thin-plate spline transform for warping to mean space
     meanTransform = vtk.vtkThinPlateSplineTransform()
+    # Sets source landmarks from original specimen
     meanTransform.SetSourceLandmarks(originalLandmarks)
+    # Sets target as mean shape coordinates
     meanTransform.SetTargetLandmarks(meanShape)
-    meanTransform.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    meanTransform.SetBasisToR()
 
+    # Creates filter to apply TPS transform to mesh
     meanTransformFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects original mesh as input
     meanTransformFilter.SetInputData(originalMesh)
+    # Applies TPS warping transform
     meanTransformFilter.SetTransform(meanTransform)
+    # Executes transformation
     meanTransformFilter.Update()
+    # Retrieves warped mesh in mean space
     meanWarpedMesh = meanTransformFilter.GetOutput()
 
+    # Creates TPS transform for warping atlas to mean space
     meanTransformBase = vtk.vtkThinPlateSplineTransform()
+    # Sets source landmarks from atlas
     meanTransformBase.SetSourceLandmarks(baseLandmarks)
+    # Sets target as mean shape coordinates
     meanTransformBase.SetTargetLandmarks(meanShape)
-    meanTransformBase.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    meanTransformBase.SetBasisToR()
 
+    # Creates filter to apply TPS transform to atlas
     meanTransformBaseFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects atlas mesh as input
     meanTransformBaseFilter.SetInputData(baseMesh)
+    # Applies TPS warping transform
     meanTransformBaseFilter.SetTransform(meanTransformBase)
+    # Executes transformation
     meanTransformBaseFilter.Update()
+    # Retrieves warped atlas in mean space
     meanWarpedBase = meanTransformBaseFilter.GetOutput()
 
-    # write ouput
+    # Writes intermediate results for error checking if requested
     if hasattr(self,"errorCheckPath"):
+      # Creates PLY writer for subject mesh
       plyWriterSubject = vtk.vtkPLYWriter()
+      # Constructs filename with specimen ID
       plyName = "subject_" + self.modelNames[iteration] + ".ply"
       plyPath = os.path.join(self.errorCheckPath, plyName)
+      # Configures writer with output path
       plyWriterSubject.SetFileName(plyPath)
+      # Sets warped subject mesh as data source
       plyWriterSubject.SetInputData(meanWarpedMesh)
+      # Writes subject mesh to file
       plyWriterSubject.Write()
 
+      # Creates PLY writer for atlas mesh
       plyWriterBase = vtk.vtkPLYWriter()
+      # Uses fixed name for atlas reference
       plyName = "base.ply"
       plyPath = os.path.join(self.errorCheckPath, plyName)
+      # Configures writer with output path
       plyWriterBase.SetFileName(plyPath)
+      # Sets warped atlas mesh as data source
       plyWriterBase.SetInputData(meanWarpedBase)
+      # Writes atlas mesh to file
       plyWriterBase.Write()
 
-    # Dense correspondence
+    # Creates cell locator for finding closest points
     cellLocator = vtk.vtkCellLocator()
+    # Sets warped subject mesh as search target
     cellLocator.SetDataSet(meanWarpedMesh)
+    # Builds spatial search structure
     cellLocator.BuildLocator()
 
+    # Initializes coordinate arrays
     point = [0,0,0]
     correspondingPoint = [0,0,0]
+    # Creates container for correspondence points
     correspondingPoints = vtk.vtkPoints()
-    cellId = vtk.reference(0)
-    subId = vtk.reference(0)
-    distance = vtk.reference(0.0)
+    # Creates reference variables for VTK output
+    cellId = vtk.reference(0)  # Cell containing closest point
+    subId = vtk.reference(0)  # Subcell ID
+    distance = vtk.reference(0.0)  # Distance to closest point
+
+    # Finds correspondence for each atlas point
     for i in range(meanWarpedBase.GetNumberOfPoints()):
+      # Gets current atlas point position
       meanWarpedBase.GetPoint(i,point)
+      # Finds closest point on subject mesh
       cellLocator.FindClosestPoint(point,correspondingPoint,cellId, subId, distance)
+      # Stores corresponding point with same index
       correspondingPoints.InsertPoint(i,correspondingPoint)
 
-    #Copy points into mesh with base connectivity
+    # Creates new mesh with correspondence points and atlas topology
     correspondingMesh = vtk.vtkPolyData()
+    # Assigns correspondence points
     correspondingMesh.SetPoints(correspondingPoints)
+    # Copies polygon connectivity from atlas
     correspondingMesh.SetPolys(meanWarpedBase.GetPolys())
 
-    # Apply inverse warping
+    # Creates inverse TPS transform to return from mean space
     inverseTransform = vtk.vtkThinPlateSplineTransform()
+    # Sets mean shape as source (reverse of forward transform)
     inverseTransform.SetSourceLandmarks(meanShape)
+    # Sets original landmarks as target
     inverseTransform.SetTargetLandmarks(originalLandmarks)
-    inverseTransform.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    inverseTransform.SetBasisToR()
 
+    # Creates filter to apply inverse transform
     inverseTransformFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects correspondence mesh as input
     inverseTransformFilter.SetInputData(correspondingMesh)
+    # Applies inverse TPS transform
     inverseTransformFilter.SetTransform(inverseTransform)
+    # Executes inverse transformation
     inverseTransformFilter.Update()
+    # Retrieves final mesh in original space
     finalMesh = inverseTransformFilter.GetOutput()
-    #NEW LINE FOR COLOR
+
+    # Transfers texture colors from original to correspondence mesh
     colorWrappedMesh = self.wrapTextureFromImage(originalMesh, textureImageNode, finalMesh, saveAsPointData)
 
     return colorWrappedMesh
 
   def convertPointsToVTK(self, points):
+    # Converts numpy array to VTK array format
+    # deep=True creates independent copy, VTK_FLOAT specifies data type
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
+
+    # Creates VTK points object
     points_vtk = vtk.vtkPoints()
+
+    # Assigns converted array as point data
     points_vtk.SetData(array_vtk)
+
+    # Creates polydata structure to hold points
     polydata_vtk = vtk.vtkPolyData()
+
+    # Attaches points to polydata
     polydata_vtk.SetPoints(points_vtk)
+
     return polydata_vtk
 #NEW BEGIN
   def wrapTextureFromImage(self, sourceMesh, textureImageNode, targetMesh, saveAsPointData='uchar-vector'):
@@ -1635,93 +1900,177 @@ class decaLogic(ScriptedLoadableModuleLogic):
     baseMesh.GetPointData().AddArray(colorVariance)
   #NEW END
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
+    # Counts number of specimens in correspondence group
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets point count from first specimen
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes 3D array: points x coordinates x samples
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
-    # get base mesh as closest to the meanshape
+
+    # Retrieves base mesh for topology reference
+    # Base mesh is specimen closest to mean shape
     baseMesh = denseCorrespondenceGroup.GetBlock(baseIndex)
-     # get points as array
+
+    # Extracts point coordinates from all specimens
     for i in range(sampleNumber):
+      # Gets current specimen's aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Converts VTK points to numpy array
       alignedMesh_np = vtk_np.vtk_to_numpy(alignedMesh.GetPoints().GetData())
+
+      # Stores in 3D array structure
       groupArray_np[:,:,i] = alignedMesh_np
-    #Calculate mean point positions of aligned group
+
+    # Calculates mean position for each point across all specimens
     averagePoints_np = np.mean(groupArray_np, axis=2)
+
+    # Converts mean points to VTK format
     averagePointsPolydata = self.convertPointsToVTK(averagePoints_np)
-    #Copy points into mesh with base connectivity
+
+    # Creates new polydata with mean points and base topology
     averageModel = vtk.vtkPolyData()
+
+    # Assigns averaged point positions
     averageModel.SetPoints(averagePointsPolydata.GetPoints())
+
+    # Copies connectivity from base mesh
     averageModel.SetPolys(baseMesh.GetPolys())
+
     return averageModel
 
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
+    # Counts specimens in correspondence group
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets number of corresponding points
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes array to store deformation magnitudes
     statsArray = np.zeros((pointNumber, sampleNumber))
+
+    # Creates VTK array for mean deformation values
     magnitudeMean = vtk.vtkDoubleArray()
     magnitudeMean.SetNumberOfComponents(1)
     magnitudeMean.SetName("Magnitude Mean")
+
+    # Creates VTK array for deformation standard deviations
     magnitudeSD = vtk.vtkDoubleArray()
     magnitudeSD.SetNumberOfComponents(1)
     magnitudeSD.SetName("Magnitude SD")
 
-     # get distance arrays
+    # Calculates deformation distances for each specimen
     for i in range(sampleNumber):
+      # Gets current specimen's aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Creates array for this specimen's deformations
       magnitudes = vtk.vtkDoubleArray()
       magnitudes.SetNumberOfComponents(1)
-      magnitudes.SetName(modelNameArray[i])
+      magnitudes.SetName(modelNameArray[i])  # Names array by specimen ID
+
+      # Computes point-wise distances from atlas
       for j in range(pointNumber):
+        # Gets atlas point position
         modelPoint = model.GetPoint(j)
+
+        # Gets corresponding point on specimen
         targetPoint = alignedMesh.GetPoint(j)
+
+        # Calculates Euclidean distance
         distance = np.sqrt(vtk.vtkMath.Distance2BetweenPoints(modelPoint,targetPoint))
+
+        # Stores distance in VTK array
         magnitudes.InsertNextValue(distance)
+
+        # Stores distance in statistics array
         statsArray[j,i]=distance
 
+      # Attaches specimen's magnitude array to model
       model.GetPointData().AddArray(magnitudes)
 
+    # Computes statistics across specimens for each point
     for i in range(pointNumber):
+      # Calculates mean deformation at this point
       pointMean = statsArray[i,:].mean()
       magnitudeMean.InsertNextValue(pointMean)
+
+      # Calculates standard deviation at this point
       pointSD = statsArray[i,:].std()
       magnitudeSD.InsertNextValue(pointSD)
 
+    # Attaches statistical arrays to model for visualization
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
+    # Counts specimens in correspondence groups
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets number of corresponding points
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes array for asymmetry measurements
     statsArray = np.zeros((pointNumber, sampleNumber))
+
+    # Creates VTK array for mean asymmetry values
     magnitudeMean = vtk.vtkDoubleArray()
     magnitudeMean.SetNumberOfComponents(1)
     magnitudeMean.SetName("Magnitude Mean")
+
+    # Creates VTK array for asymmetry standard deviations
     magnitudeSD = vtk.vtkDoubleArray()
     magnitudeSD.SetNumberOfComponents(1)
     magnitudeSD.SetName("Magnitude SD")
 
-     # get distance arrays
+    # Calculates asymmetry distances for each specimen
     for i in range(sampleNumber):
+      # Gets original aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Gets mirrored aligned mesh
       mirrorMesh = denseCorrespondenceGroupMirror.GetBlock(i)
+
+      # Creates array for this specimen's asymmetry
       magnitudes = vtk.vtkDoubleArray()
       magnitudes.SetNumberOfComponents(1)
-      magnitudes.SetName(modelNameArray[i])
+      magnitudes.SetName(modelNameArray[i])  # Names array by specimen ID
+
+      # Computes point-wise asymmetry
       for j in range(pointNumber):
+        # Gets atlas point (unused but kept for consistency)
         modelPoint = model.GetPoint(j)
+
+        # Gets corresponding point on original
         targetPoint1 = alignedMesh.GetPoint(j)
+
+        # Gets corresponding point on mirror
         targetPoint2 = mirrorMesh.GetPoint(j)
+
+        # Calculates distance between original and mirrored points
         distance = np.sqrt(vtk.vtkMath.Distance2BetweenPoints(targetPoint1,targetPoint2))
+
+        # Stores asymmetry distance
         magnitudes.InsertNextValue(distance)
+
+        # Stores in statistics array
         statsArray[j,i]=distance
 
+      # Attaches specimen's asymmetry array to model
       model.GetPointData().AddArray(magnitudes)
 
+    # Computes asymmetry statistics for each point
     for i in range(pointNumber):
+      # Calculates mean asymmetry at this point
       pointMean = statsArray[i,:].mean()
       magnitudeMean.InsertNextValue(pointMean)
+
+      # Calculates asymmetry variability at this point
       pointSD = statsArray[i,:].std()
       magnitudeSD.InsertNextValue(pointSD)
 
+    # Attaches statistical arrays for visualization
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
