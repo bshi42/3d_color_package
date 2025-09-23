@@ -1,3 +1,22 @@
+"""
+InterDeCA (Interactive Dense Correspondence Analysis) module for 3D Slicer.
+
+Extends the original DeCA module with advanced color analysis capabilities,
+texture baking through Blender integration, and interactive visualization tools
+for studying color patterns in biological specimens.
+
+Key features:
+- Blender integration for UV mapping and texture baking
+- Color space analysis (RGB/HSV) with dimensionality reduction
+- Multi-texture clustering for comparative color analysis
+- Interactive shape interpolation and visualization
+- Face-level color quantization and pattern analysis
+
+Dependencies:
+- Optional: sklearn, umap-learn, scikit-image for advanced analysis
+- External: Blender for texture processing
+"""
+
 import os
 import unittest
 import vtk, qt, ctk, slicer
@@ -16,6 +35,8 @@ import shutil
 import imageio # slicer.util.pip_install('imageio')
 import glob
 import colorsys
+
+# Attempts to import optional machine learning libraries
 try:
     from sklearn.decomposition import PCA, FastICA
     from sklearn.manifold import TSNE
@@ -28,6 +49,7 @@ except ImportError:
     UMAP_AVAILABLE = False
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
 
+# Attempts to import scikit-image for color quantization
 try:
     from skimage import color as skimage_color
     from skimage.color import deltaE_ciede2000
@@ -36,7 +58,7 @@ except ImportError:
     SKIMAGE_AVAILABLE = False
     print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
-# Import functions from the deca module to avoid duplication
+# Imports functions from the original DeCA module to avoid code duplication
 import sys
 import os
 
@@ -45,52 +67,94 @@ try:
     print('Successfully imported DeCA module!')
     print(f'decaLogic class: {decaLogic}')
 except ImportError as e:
-    # Handle case where deca module is not available
+    # Handles case where DeCA module is not available
     print(f'Could not import DeCA module: {e}')
     decaLogic = None
 
 print(f'Final decaLogic value: {decaLogic}')
 
 #
-# DeCA
+# InterDeCA
 #
 
 class InterDeCA(ScriptedLoadableModule):
-  """Uses ScriptedLoadableModule base class, available at:
+  """
+  Module class for Interactive Dense Correspondence Analysis (InterDeCA).
+
+  Extends DeCA functionality with color-based morphometric analysis tools,
+  providing workflows for texture processing, color pattern analysis,
+  and interactive visualization of biological specimens.
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def __init__(self, parent):
+    """
+    Initializes the InterDeCA module with metadata and configuration.
+
+    Args:
+      parent: Parent object from 3D Slicer framework
+    """
     ScriptedLoadableModule.__init__(self, parent)
-    self.parent.title = "InterDeCA" # TODO make this more human readable by adding spaces
+
+    # Sets module metadata for 3D Slicer's module browser
+    self.parent.title = "InterDeCA"  # Interactive Dense Correspondence Analysis
     self.parent.categories = ["SlicerMorph.DeCA Toolbox"]
-    self.parent.dependencies = []
-    self.parent.contributors = ["Sara Rolfe (SCRI)"] # replace with "Firstname Lastname (Organization)"
+    self.parent.dependencies = []  # Original DeCA module loaded separately
+    self.parent.contributors = ["Sara Rolfe (SCRI)"]
+
+    # Provides user-facing documentation
     self.parent.helpText = """
-      This module provides several flexible workflows for finding and analyzing dense correspondence points between models.
+      This module provides several flexible workflows for finding and analyzing dense correspondence points between models,
+      with enhanced support for color analysis and texture processing.
       """
     self.parent.helpText += self.getDefaultModuleDocumentationLink()
+
+    # Acknowledges funding sources
     self.parent.acknowledgementText = """This extension was developed by funding from National Institutes of Health (OD032627 and HD104435) to A. Murat Maga (SCRI)
-      """ # replace with organization, grant and thanks.
+      """
 
 #
-# DeCAWidget
+# InterDeCAWidget
 #
 
 class InterDeCAWidget(ScriptedLoadableModuleWidget):
-  """Uses ScriptedLoadableModuleWidget base class, available at:
+  """
+  GUI widget for the InterDeCA module.
+
+  Creates and manages an enhanced user interface with multiple tabs:
+  - DeCA: Standard dense correspondence with texture support
+  - DeCAL: Dense landmarking
+  - Visualize: Interactive results visualization with interpolation
+  - Colors EDA: Color pattern analysis with dimensionality reduction
+  - Recolor: Single texture application and quantization
+  - MultiRecolor: Multi-texture clustering analysis
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def setup(self):
+    """
+    Builds the module's user interface.
+
+    Creates a tabbed interface with six main workflows:
+    - DeCA: Dense correspondence with Blender integration
+    - DeCAL: Dense landmarking with subsampling
+    - Visualize: Heatmaps and shape interpolation
+    - Colors EDA: Statistical color analysis
+    - Recolor: Texture application and quantization
+    - MultiRecolor: Comparative multi-texture analysis
+    """
     ScriptedLoadableModuleWidget.setup(self)
 
-    # This variable will hold our temporary interpolation model
-    self.interpolatedModelNode = None
-    self.selectedOriginalModelNode = None
-    self.lastDeCAAlignedModelsPath = None
+    # Initializes variables for interpolation visualization
+    self.interpolatedModelNode = None  # Temporary model for interpolation
+    self.selectedOriginalModelNode = None  # Selected resampled model
+    self.lastDeCAAlignedModelsPath = None  # Path to aligned models
 
-    # Set up tabs to split workflow
+    # Sets up tabs to organize complex workflow
     tabsWidget = qt.QTabWidget()
     self.tabsWidget = tabsWidget
     DeCATab = qt.QWidget()
@@ -208,6 +272,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCAWidgetLayout.addRow("Textures directory (png): ", self.textureDirectoryDC)
 
     # --- Blender integration ---
+    # Configures external Blender processing for UV mapping and texture baking
     self.blenderGroup = ctk.ctkCollapsibleButton()
     self.blenderGroup.text = "Blender (cleanup, UV, bake)"
     DeCAWidgetLayout.addRow(self.blenderGroup)
@@ -586,6 +651,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     ################################### Phase 1: Data Sampling ###################################
     # Data Sampling section
+    # Creates interface for sampling color data from textured models
     dataSamplingWidget = ctk.ctkCollapsibleButton()
     dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
     dataSamplingWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f0f8ff; }")
@@ -594,7 +660,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     dataSamplingWidgetLayout.setHorizontalSpacing(8)
     dataSamplingWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
     dataSamplingWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    dataSamplingWidget.text = "Phase 1: Data Sampling"
+    dataSamplingWidget.text = "Phase 1: Data Sampling"  # First step: extract colors
     colorsEDATabLayout.addRow(dataSamplingWidget)
 
     # Atlas model selector for Colors EDA
@@ -655,6 +721,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     ################################### Phase 2: Analysis & Plotting ###################################
     # Analysis section
+    # Creates interface for statistical analysis and visualization of color data
     analysisWidget = ctk.ctkCollapsibleButton()
     analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
     analysisWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f8fff0; }")
@@ -663,7 +730,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     analysisWidgetLayout.setHorizontalSpacing(8)
     analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
     analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    analysisWidget.text = "Phase 2: Analysis & Plotting"
+    analysisWidget.text = "Phase 2: Analysis & Plotting"  # Second step: analyze patterns
     analysisWidget.enabled = False  # Disabled until data is sampled
     colorsEDATabLayout.addRow(analysisWidget)
 
