@@ -539,33 +539,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Add spacing before the visualization button
     visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
-    # Add spacing before the visualization button
-    visualizeWidgetLayout.addRow(" ", qt.QLabel())
-
-    #
-    # Start Visualization Button (at bottom)
-    #
-    self.startVisualizationButton = qt.QPushButton("Start Visualization")
-    self.startVisualizationButton.toolTip = "Prepare the 3D scene for visualization and show markups"
-    self.startVisualizationButton.setStyleSheet("""
-      QPushButton {
-        background-color: #87CEEB;
-        color: #2C3E50;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #6BB6E8;
-      }
-      QPushButton:pressed {
-        background-color: #4FA8D8;
-      }
-      """)
-    visualizeWidgetLayout.addRow(self.startVisualizationButton)
-
     #
     # --- Mesh Region Selection Section ---
     #
@@ -675,6 +648,33 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.selectionInfoLabel = qt.QLabel("No region selected")
     self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
     regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
+
+    # Add spacing before the visualization button
+    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+
+    #
+    # Start Visualization Button (at bottom)
+    #
+    self.startVisualizationButton = qt.QPushButton("Start Visualization")
+    self.startVisualizationButton.toolTip = "Prepare the 3D scene for visualization and show markups"
+    self.startVisualizationButton.setStyleSheet("""
+      QPushButton {
+        background-color: #87CEEB;
+        color: #2C3E50;
+        font-weight: bold;
+        border: none;
+        border-radius: 5px;
+        padding: 8px 16px;
+        min-height: 30px;
+      }
+      QPushButton:hover {
+        background-color: #6BB6E8;
+      }
+      QPushButton:pressed {
+        background-color: #4FA8D8;
+      }
+      """)
+    visualizeWidgetLayout.addRow(self.startVisualizationButton)
 
     self.lastBakedTexturesPath = None
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
@@ -2044,9 +2044,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   def onTabChanged(self, index):
     if self.tabsWidget.tabText(index) == "Visualize Results":
-      self._hideMarkupsForVisualization(remove=False) 
+      # Only update the preview list, don't automatically change the scene
       self.updateBakedPreviewList()
-      self._ensureModelsAreVisible()
+      # Reset the visualization button state
+      self.resetVisualizationButton()
 
   def updateBakedPreviewList(self):
     self.previewTextureCombo.blockSignals(True)
