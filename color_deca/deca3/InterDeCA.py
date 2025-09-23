@@ -1318,16 +1318,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
 
     ################################### Colors EDA Tab ###################################
-    # Layout within the Colors EDA tab
-    colorsEDAWidget = ctk.ctkCollapsibleButton()
-    colorsEDAWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)  # Do not expand vertically
-    colorsEDAWidgetLayout = qt.QFormLayout(colorsEDAWidget)
-    colorsEDAWidgetLayout.setVerticalSpacing(4)
-    colorsEDAWidgetLayout.setHorizontalSpacing(8)
-    colorsEDAWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    colorsEDAWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    colorsEDAWidget.text = "Color Analysis Settings"
-    colorsEDATabLayout.addRow(colorsEDAWidget)
+
+    ################################### Phase 1: Data Sampling ###################################
+    # Data Sampling section
+    dataSamplingWidget = ctk.ctkCollapsibleButton()
+    dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    dataSamplingWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f0f8ff; }")
+    dataSamplingWidgetLayout = qt.QFormLayout(dataSamplingWidget)
+    dataSamplingWidgetLayout.setVerticalSpacing(6)
+    dataSamplingWidgetLayout.setHorizontalSpacing(8)
+    dataSamplingWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    dataSamplingWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    dataSamplingWidget.text = "Phase 1: Data Sampling"
+    colorsEDATabLayout.addRow(dataSamplingWidget)
 
     # Atlas model selector for Colors EDA
     self.colorsAtlasModelSelect = slicer.qMRMLNodeComboBox()
@@ -1339,13 +1342,65 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.colorsAtlasModelSelect.removeEnabled = False
     self.colorsAtlasModelSelect.showHidden = False
     self.colorsAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    colorsEDAWidgetLayout.addRow("Atlas Model: ", self.colorsAtlasModelSelect)
+    dataSamplingWidgetLayout.addRow("Atlas Model: ", self.colorsAtlasModelSelect)
 
     # Baked textures directory selector
     self.bakedTexturesDirectorySelector = ctk.ctkPathLineEdit()
     self.bakedTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
     self.bakedTexturesDirectorySelector.setToolTip("Select directory containing baked atlas-space textures")
-    colorsEDAWidgetLayout.addRow("Baked Textures Directory: ", self.bakedTexturesDirectorySelector)
+    dataSamplingWidgetLayout.addRow("Textures Directory: ", self.bakedTexturesDirectorySelector)
+
+    # Random seed input
+    self.randomSeedSpin = qt.QSpinBox()
+    self.randomSeedSpin.setRange(0, 999999)
+    self.randomSeedSpin.setValue(42)  # Default seed
+    self.randomSeedSpin.setToolTip("Random seed for reproducible face sampling")
+    dataSamplingWidgetLayout.addRow("Random Seed: ", self.randomSeedSpin)
+
+    # Percentage of faces to sample
+    self.faceSamplePercentSpin = qt.QDoubleSpinBox()
+    self.faceSamplePercentSpin.setRange(1.0, 100.0)
+    self.faceSamplePercentSpin.setSingleStep(5.0)
+    self.faceSamplePercentSpin.setSuffix(" %")
+    self.faceSamplePercentSpin.setValue(100.0)  # Default to all faces
+    self.faceSamplePercentSpin.setToolTip("Percentage of faces to randomly sample from the atlas model")
+    dataSamplingWidgetLayout.addRow("Sample Percentage: ", self.faceSamplePercentSpin)
+
+    # Sample Data button
+    self.sampleDataButton = qt.QPushButton("Sample Data")
+    self.sampleDataButton.toolTip = "Sample faces and calculate color averages from textures"
+    self.sampleDataButton.enabled = False
+    dataSamplingWidgetLayout.addRow(self.sampleDataButton)
+
+    # Sampling progress and status
+    self.samplingProgressBar = qt.QProgressBar()
+    self.samplingProgressBar.setVisible(False)
+    dataSamplingWidgetLayout.addRow("Sampling Progress: ", self.samplingProgressBar)
+
+    self.samplingStatusLabel = qt.QLabel("No data sampled")
+    self.samplingStatusLabel.setStyleSheet("color: #666; font-style: italic;")
+    dataSamplingWidgetLayout.addRow("Status: ", self.samplingStatusLabel)
+
+    # Add visual separator between phases
+    separatorLine = qt.QFrame()
+    separatorLine.setFrameShape(qt.QFrame.HLine)
+    separatorLine.setFrameShadow(qt.QFrame.Sunken)
+    separatorLine.setStyleSheet("QFrame { color: #cccccc; margin: 10px 0px; }")
+    colorsEDATabLayout.addRow(separatorLine)
+
+    ################################### Phase 2: Analysis & Plotting ###################################
+    # Analysis section
+    analysisWidget = ctk.ctkCollapsibleButton()
+    analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    analysisWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f8fff0; }")
+    analysisWidgetLayout = qt.QFormLayout(analysisWidget)
+    analysisWidgetLayout.setVerticalSpacing(6)
+    analysisWidgetLayout.setHorizontalSpacing(8)
+    analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    analysisWidget.text = "Phase 2: Analysis & Plotting"
+    analysisWidget.enabled = False  # Disabled until data is sampled
+    colorsEDATabLayout.addRow(analysisWidget)
 
     # Color space selection - compact layout
     self.colorSpaceWidget = qt.QWidget()
@@ -1366,7 +1421,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.colorSpaceLayout.addWidget(self.hsvRadio)
     self.colorSpaceLayout.addStretch()  # Push buttons to the left
 
-    colorsEDAWidgetLayout.addRow("Color Space:", self.colorSpaceWidget)
+    analysisWidgetLayout.addRow("Color Space:", self.colorSpaceWidget)
 
     # Dimensionality reduction algorithm selection - compact layout
     self.dimRedWidget = qt.QWidget()
@@ -1390,7 +1445,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.dimRedLayout.addWidget(self.umapRadio)
     self.dimRedLayout.addStretch()  # Push buttons to the left
 
-    colorsEDAWidgetLayout.addRow("Dimensionality Reduction:", self.dimRedWidget)
+    analysisWidgetLayout.addRow("Dimensionality Reduction:", self.dimRedWidget)
 
     # Enable/disable based on availability
     if not SKLEARN_AVAILABLE:
@@ -1421,28 +1476,28 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.viewModeLayout.addWidget(self.viewChannelRadio)
     self.viewModeLayout.addStretch()
 
-    colorsEDAWidgetLayout.addRow("View Mode:", self.viewModeWidget)
+    analysisWidgetLayout.addRow("View Mode:", self.viewModeWidget)
 
-    # Run analysis button
-    self.runColorsEDAButton = qt.QPushButton("Run Analysis")
-    self.runColorsEDAButton.toolTip = "Run color analysis with dimensionality reduction and histograms"
-    self.runColorsEDAButton.enabled = False
-    colorsEDAWidgetLayout.addRow(self.runColorsEDAButton)
+    # Plot button (renamed from "Run Analysis")
+    self.plotButton = qt.QPushButton("Plot")
+    self.plotButton.toolTip = "Generate plots from sampled data using selected analysis settings"
+    self.plotButton.enabled = False
+    analysisWidgetLayout.addRow(self.plotButton)
 
-    # Progress and log information
-    self.colorsEDAProgressBar = qt.QProgressBar()
-    self.colorsEDAProgressBar.setVisible(False)
-    colorsEDAWidgetLayout.addRow("Progress: ", self.colorsEDAProgressBar)
+    # Analysis progress and log information
+    self.analysisProgressBar = qt.QProgressBar()
+    self.analysisProgressBar.setVisible(False)
+    analysisWidgetLayout.addRow("Analysis Progress: ", self.analysisProgressBar)
 
     self.colorsEDALogInfo = qt.QPlainTextEdit()
     self.colorsEDALogInfo.setPlaceholderText("Colors EDA log information")
     self.colorsEDALogInfo.setReadOnly(True)
     self.colorsEDALogInfo.setMaximumHeight(150)
-    colorsEDAWidgetLayout.addRow(self.colorsEDALogInfo)
+    analysisWidgetLayout.addRow(self.colorsEDALogInfo)
 
     # Channel Histogram controls (rendered in the main plot viewer)
     self.histCollapsible = ctk.ctkCollapsibleButton()
-    self.histCollapsible.text = "Channel Histogram"
+    self.histCollapsible.text = "Channel Histogram Options"
     self.histCollapsible.collapsed = False
     self.histCollapsible.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
     self.histLayout = qt.QFormLayout(self.histCollapsible)
@@ -1492,26 +1547,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.valueCutoffSpin.setToolTip("Minimum value/brightness threshold for HSV filtering")
     self.histLayout.addRow("Value cutoff:", self.valueCutoffSpin)
 
-    # Auto-refresh when options change
-    self.colorByBinAvgCheck.toggled.connect(self._refreshCurrentHistogram)
-    self.satCutoffSpin.valueChanged.connect(self._refreshCurrentHistogram)
-    self.valueCutoffSpin.valueChanged.connect(self._refreshCurrentHistogram)
+    # Note: Removed auto-refresh event hooks - now manual refresh via Plot button
 
     # Keep references to created MRML nodes (tables/series/charts) for cleanup
     self.histTableNodes = []
     self.histSeriesNodes = []
     self.histChartNodes = []
 
-    colorsEDAWidgetLayout.addRow(self.histCollapsible)
+    analysisWidgetLayout.addRow(self.histCollapsible)
 
-    # Connections
+    # Store reference to analysis widget for enabling/disabling
+    self.analysisWidget = analysisWidget
+
+    # Connections for histogram controls
     self.histChannelSelector.connect("currentIndexChanged(int)", self.onHistChannelChanged)
 
-    # Connections for Colors EDA
-    self.colorsAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onColorsEDAParameterChanged)
-    self.bakedTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onColorsEDAParameterChanged)
-    self.runColorsEDAButton.connect('clicked(bool)', self.onRunColorsEDAButton)
+    # Connections for Phase 1: Data Sampling
+    self.colorsAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onSamplingParameterChanged)
+    self.bakedTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onSamplingParameterChanged)
+    self.sampleDataButton.connect('clicked(bool)', self.onSampleDataButton)
+
+    # Connections for Phase 2: Analysis & Plotting
+    self.plotButton.connect('clicked(bool)', self.onPlotButton)
     self.viewModeButtonGroup.connect('buttonClicked(QAbstractButton*)', self.onViewModeChanged)
+
+    # Initialize sampled data storage
+    self.sampledColorData = None
+    self.sampledSpecimenNames = None
+    self.sampledFaceIndices = None
 
     # Add vertical spacer so extra space goes below content
     colorsEDATabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
@@ -3293,12 +3356,82 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   ################################### Colors EDA Functions ###################################
 
-  def onColorsEDAParameterChanged(self):
-    """Enable/disable the run button based on parameter selection"""
+  def onSamplingParameterChanged(self):
+    """Enable/disable the sample data button based on parameter selection"""
     atlasSelected = bool(self.colorsAtlasModelSelect.currentNode())
     texturesSelected = bool(self.bakedTexturesDirectorySelector.currentPath and
                            os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
-    self.runColorsEDAButton.enabled = atlasSelected and texturesSelected
+    self.sampleDataButton.enabled = atlasSelected and texturesSelected
+
+  def onSampleDataButton(self):
+    """Sample faces and calculate color averages from textures"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.samplingProgressBar.setVisible(True)
+      self.samplingProgressBar.setValue(0)
+
+      # Get parameters
+      atlasModel = self.colorsAtlasModelSelect.currentNode()
+      texturesDir = self.bakedTexturesDirectorySelector.currentPath
+      randomSeed = int(self.randomSeedSpin.value)
+      samplePercent = float(self.faceSamplePercentSpin.value)
+
+      self.samplingStatusLabel.setText("Sampling in progress...")
+      self.samplingStatusLabel.setStyleSheet("color: #0066cc; font-style: italic;")
+
+      # Run the sampling
+      logic = InterDeCALogic()
+      result = logic.sampleColorData(
+        atlasModel, texturesDir, randomSeed, samplePercent,
+        progressCallback=self.updateSamplingProgress,
+        logCallback=self.logSamplingMessage
+      )
+
+      if result and result.get('success'):
+        # Store the sampled data
+        self.sampledColorData = result['colorData']
+        self.sampledSpecimenNames = result['specimenNames']
+        self.sampledFaceIndices = result['faceIndices']
+
+        # Update status
+        nSpecimens = len(self.sampledSpecimenNames)
+        nFaces = len(self.sampledFaceIndices)
+        self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
+        self.samplingStatusLabel.setStyleSheet("color: #006600; font-weight: bold;")
+
+        # Enable analysis phase
+        self.analysisWidget.enabled = True
+        self.plotButton.enabled = True
+
+        self.colorsEDALogInfo.appendPlainText(f"Data sampling completed successfully!")
+        self.colorsEDALogInfo.appendPlainText(f"Sampled {nFaces} faces ({samplePercent:.1f}%) from {nSpecimens} specimens")
+      else:
+        self.samplingStatusLabel.setText("Sampling failed")
+        self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+        self.colorsEDALogInfo.appendPlainText("Data sampling failed - check log for details")
+
+      self.samplingProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.samplingProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.samplingStatusLabel.setText("Sampling failed")
+      self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+      self.colorsEDALogInfo.appendPlainText(f"Error during sampling: {str(e)}")
+      slicer.util.errorDisplay(f"Data sampling failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateSamplingProgress(self, value):
+    """Update sampling progress bar"""
+    self.samplingProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logSamplingMessage(self, message):
+    """Log message during sampling"""
+    self.colorsEDALogInfo.appendPlainText(message)
+    slicer.app.processEvents()
 
   def _ensureMainPlotViewNode(self):
     """Get the main plot view node for displaying charts"""
@@ -3328,18 +3461,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         except: pass
 
 
-  def onRunColorsEDAButton(self):
-    """Run the color analysis with dimensionality reduction"""
+  def onPlotButton(self):
+    """Generate plots from sampled data using selected analysis settings"""
     try:
+      # Check if we have sampled data
+      if self.sampledColorData is None:
+        slicer.util.errorDisplay("No sampled data available. Please run 'Sample Data' first.")
+        return
+
       qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-      self.colorsEDAProgressBar.setVisible(True)
-      self.colorsEDAProgressBar.setValue(0)
+      self.analysisProgressBar.setVisible(True)
+      self.analysisProgressBar.setValue(0)
 
-      logic = InterDeCALogic()
-
-      # Get parameters
-      atlasModel = self.colorsAtlasModelSelect.currentNode()
-      texturesDir = self.bakedTexturesDirectorySelector.currentPath
+      # Get analysis parameters
       colorSpace = "HSV" if self.hsvRadio.isChecked() else "RGB"
 
       if self.pcaRadio.isChecked():
@@ -3350,19 +3484,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         dimRedAlgo = "UMAP"
 
       # Get HSV cutoff parameters for dimensionality reduction
-      satCutoff = float(self.satCutoffSpin.value) if hasattr(self, 'satCutoffSpin') else 10.0
-      valueCutoff = float(self.valueCutoffSpin.value) if hasattr(self, 'valueCutoffSpin') else 10.0
-      enhanceColors = bool(self.enhanceColorsCheck.isChecked()) if hasattr(self, 'enhanceColorsCheck') else False
+      satCutoff = float(self.satCutoffSpin.value)
+      valueCutoff = float(self.valueCutoffSpin.value)
+      enhanceColors = bool(self.enhanceColorsCheck.isChecked())
 
-      self.colorsEDALogInfo.appendPlainText(f"Starting color analysis...")
+      self.colorsEDALogInfo.appendPlainText(f"Starting analysis on sampled data...")
       self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
       self.colorsEDALogInfo.appendPlainText(f"Dimensionality reduction: {dimRedAlgo}")
 
-      # Run the analysis
-      result = logic.runColorsEDA(
-        atlasModel, texturesDir, colorSpace, dimRedAlgo,
-        progressCallback=self.updateColorsEDAProgress,
-        logCallback=self.logColorsEDAMessage,
+      # Run the analysis on pre-sampled data
+      logic = InterDeCALogic()
+      result = logic.runColorsEDAFromSampledData(
+        self.sampledColorData, self.sampledSpecimenNames, colorSpace, dimRedAlgo,
+        progressCallback=self.updateAnalysisProgress,
+        logCallback=self.logAnalysisMessage,
         satCutoff=satCutoff,
         valueCutoff=valueCutoff,
         enhanceColors=enhanceColors
@@ -3379,10 +3514,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           self.histChannelSelector.setCurrentIndex(0)
 
           # Store the cutoff values used for this analysis
-          if 'satCutoff' in result:
-            self._lastSatCutoff = result['satCutoff']
-          if 'valueCutoff' in result:
-            self._lastValueCutoff = result['valueCutoff']
+          self._lastSatCutoff = satCutoff
+          self._lastValueCutoff = valueCutoff
 
           # Store the 2D plot chart node for view switching
           if 'chartNode' in result and result['chartNode']:
@@ -3394,31 +3527,41 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           else:
             self.colorsEDALogInfo.appendPlainText("Channel histogram view enabled")
             try:
-              # self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, 0)
               self._refreshCurrentHistogram()
             except Exception as e:
               self.colorsEDALogInfo.appendPlainText(f"Failed to show histogram: {e}")
       else:
         self.colorsEDALogInfo.appendPlainText("Analysis failed - check log for details")
 
-      self.colorsEDAProgressBar.setVisible(False)
+      self.analysisProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
 
     except Exception as e:
-      self.colorsEDAProgressBar.setVisible(False)
+      self.analysisProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
       self.colorsEDALogInfo.appendPlainText(f"Error: {str(e)}")
-      slicer.util.errorDisplay(f"Colors EDA failed: {str(e)}")
+      slicer.util.errorDisplay(f"Analysis failed: {str(e)}")
       import traceback
       traceback.print_exc()
 
+  def updateAnalysisProgress(self, value):
+    """Update analysis progress bar"""
+    self.analysisProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logAnalysisMessage(self, message):
+    """Log message during analysis"""
+    self.colorsEDALogInfo.appendPlainText(message)
+    slicer.app.processEvents()
+
+  # Legacy function names kept for compatibility with existing logic methods
   def updateColorsEDAProgress(self, value):
-    """Update progress bar"""
-    self.colorsEDAProgressBar.setValue(int(value))
+    """Update progress bar (legacy compatibility)"""
+    self.analysisProgressBar.setValue(int(value))
     slicer.app.processEvents()
 
   def logColorsEDAMessage(self, message):
-    """Log message to the Colors EDA log"""
+    """Log message to the Colors EDA log (legacy compatibility)"""
     self.colorsEDALogInfo.appendPlainText(message)
     slicer.app.processEvents()
 
@@ -6016,6 +6159,131 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return False
 
+  def sampleColorData(self, atlasModel, texturesDir, randomSeed, samplePercent, progressCallback=None, logCallback=None):
+    """
+    Sample faces and calculate color averages from textures
+
+    Args:
+        atlasModel: VTK model node of the atlas
+        texturesDir: Directory containing baked atlas-space PNG textures
+        randomSeed: Random seed for reproducible sampling
+        samplePercent: Percentage of faces to sample (1-100)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict: Result with success flag, colorData, specimenNames, and faceIndices
+    """
+    try:
+      if logCallback:
+        logCallback("Starting face sampling...")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Get atlas polydata
+      atlasPolyData = atlasModel.GetPolyData()
+      if not atlasPolyData:
+        if logCallback:
+          logCallback("Error: Atlas model has no polydata")
+        return {"success": False}
+
+      # Get total number of faces
+      nTotalFaces = atlasPolyData.GetNumberOfCells()
+      if logCallback:
+        logCallback(f"Atlas model has {nTotalFaces} faces")
+
+      # Calculate number of faces to sample
+      nSampleFaces = max(1, int(nTotalFaces * samplePercent / 100.0))
+      if logCallback:
+        logCallback(f"Sampling {nSampleFaces} faces ({samplePercent:.1f}%)")
+
+      # Set random seed and sample face indices
+      np.random.seed(randomSeed)
+      if samplePercent >= 100.0:
+        # Use all faces
+        sampledFaceIndices = np.arange(nTotalFaces)
+      else:
+        # Randomly sample faces
+        sampledFaceIndices = np.random.choice(nTotalFaces, size=nSampleFaces, replace=False)
+        sampledFaceIndices = np.sort(sampledFaceIndices)  # Sort for consistent processing
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Get list of texture files
+      textureFiles = []
+      if os.path.isdir(texturesDir):
+        for f in os.listdir(texturesDir):
+          if f.lower().endswith('.png') and not f.lower().startswith('average_texture'):
+            textureFiles.append(os.path.join(texturesDir, f))
+
+      if not textureFiles:
+        if logCallback:
+          logCallback(f"Error: No PNG files found in {texturesDir}")
+        return {"success": False}
+
+      if logCallback:
+        logCallback(f"Found {len(textureFiles)} texture files")
+
+      # Process each texture and calculate face colors for sampled faces only
+      allFaceColors = []
+      specimenNames = []
+
+      for i, texturePath in enumerate(textureFiles):
+        if logCallback:
+          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {os.path.basename(texturePath)}")
+
+        # Load texture image
+        try:
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            if logCallback:
+              logCallback(f"Warning: Skipping {os.path.basename(texturePath)} - invalid format")
+            continue
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Could not load {os.path.basename(texturePath)}: {e}")
+          continue
+
+        # Calculate face-averaged colors for sampled faces only
+        faceColors = self._calculateSampledFaceAverageColors(atlasPolyData, textureImage, sampledFaceIndices, "RGB")
+        if faceColors is not None:
+          allFaceColors.append(faceColors)
+          specimenNames.append(os.path.splitext(os.path.basename(texturePath))[0])
+
+        if progressCallback:
+          progressCallback(15 + int(80 * (i + 1) / len(textureFiles)))
+
+      if not allFaceColors:
+        if logCallback:
+          logCallback("Error: No valid textures processed")
+        return {"success": False}
+
+      # Convert to numpy array
+      allFaceColors = np.array(allFaceColors)  # Shape: (N_specimens, N_sampled_faces, 3)
+
+      if logCallback:
+        logCallback(f"Successfully sampled data from {len(allFaceColors)} specimens")
+        logCallback(f"Sampled color data shape: {allFaceColors.shape}")
+
+      if progressCallback:
+        progressCallback(100)
+
+      return {
+        "success": True,
+        "colorData": allFaceColors,
+        "specimenNames": specimenNames,
+        "faceIndices": sampledFaceIndices
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in sampleColorData: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
   def _calculateFaceAverageColors(self, polyData, textureImage, colorSpace):
     """
     Calculate average color for each face of the mesh using texture coordinates
@@ -6092,6 +6360,80 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     except Exception as e:
       print(f"Error calculating face colors: {e}")
+      return None
+
+  def _calculateSampledFaceAverageColors(self, polyData, textureImage, faceIndices, colorSpace):
+    """
+    Calculate average color for specific faces of the mesh using texture coordinates
+
+    Args:
+        polyData: VTK polydata of the atlas model
+        textureImage: numpy array of the texture image (H, W, C)
+        faceIndices: numpy array of face indices to process
+        colorSpace: "RGB" or "HSV"
+
+    Returns:
+        numpy array of shape (N_sampled_faces, 3) for RGB or (N_sampled_faces, 4) for HSV
+    """
+    try:
+      # Get texture coordinates
+      tcoords = polyData.GetPointData().GetTCoords()
+      if not tcoords:
+        return None
+
+      tcoords_np = vtk_np.vtk_to_numpy(tcoords)
+
+      # Get texture image dimensions
+      height, width = textureImage.shape[:2]
+
+      faceColors = []
+
+      # Process only the specified face indices
+      for faceIdx in faceIndices:
+        # Get the cell (face) points
+        cell = polyData.GetCell(int(faceIdx))
+        nPoints = cell.GetNumberOfPoints()
+
+        # Get vertex indices for this face
+        vertexIndices = []
+        for ptIdx in range(nPoints):
+          vertexIndices.append(cell.GetPointId(ptIdx))
+
+        # Get texture coordinates for these vertices
+        faceTexCoords = tcoords_np[vertexIndices]
+
+        # Convert texture coordinates to pixel coordinates
+        # Flip V coordinate (1 - v) to handle texture inversion
+        faceTexCoords_flipped = faceTexCoords.copy()
+        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
+
+        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
+        pixelCoords = pixelCoords.astype(int)
+
+        # Sample colors at these pixel locations
+        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
+
+        # Calculate average color for this face
+        avgColor = np.mean(facePixelColors, axis=0)
+
+        # Convert color space if needed
+        if colorSpace == "HSV":
+          # Convert RGB to HSV
+          rgb_normalized = avgColor / 255.0
+          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
+          # Convert hue to 2D vector (cos, sin) to handle circular nature
+          hue_radians = hsv[0] * 2 * np.pi  # Convert to radians
+          hue_cos = np.cos(hue_radians)
+          hue_sin = np.sin(hue_radians)
+          # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+          avgColor = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
+
+        faceColors.append(avgColor)
+
+      return np.array(faceColors)
+
+    except Exception as e:
+      print(f"Error calculating sampled face colors: {e}")
       return None
 
   def applyAverageFaceColorsFromTexture(self, modelNode, texturePath, progressCallback=None, logCallback=None):
@@ -6567,4 +6909,149 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         print(f"Error creating binned colored scatter: {e}")
         import traceback; traceback.print_exc()
         return {"success": False, "chartNode": None}
+
+  def runColorsEDAFromSampledData(self, sampledColorData, specimenNames, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0, enhanceColors=False):
+    """
+    Run color analysis with dimensionality reduction on pre-sampled color data
+
+    Args:
+        sampledColorData: numpy array of shape (N_specimens, N_sampled_faces, 3)
+        specimenNames: list of specimen names
+        colorSpace: "RGB" or "HSV"
+        dimRedAlgo: "PCA", "ICA", or "UMAP"
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+        satCutoff: Minimum saturation threshold for HSV filtering (0-100)
+        valueCutoff: Minimum value/brightness threshold for HSV filtering (0-100)
+        enhanceColors: Whether to enhance colors for visibility in 2D plots
+
+    Returns:
+        dict: Result with success flag, colorData, colorSpace, and chartNode
+    """
+    try:
+      if logCallback:
+        logCallback("Starting analysis on sampled data...")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Check dependencies
+      if dimRedAlgo in ["PCA", "ICA"] and not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for PCA/ICA")
+        return {"success": False}
+
+      if dimRedAlgo == "UMAP" and not UMAP_AVAILABLE:
+        if logCallback:
+          logCallback("Error: umap-learn not available for UMAP")
+        return {"success": False}
+
+      # Convert sampled data to the format expected by analysis
+      nSpecimens, nSampledFaces, nChannels = sampledColorData.shape
+
+      # Convert color space if needed
+      if colorSpace == "HSV":
+        if logCallback:
+          logCallback("Converting RGB sampled data to HSV...")
+
+        # Convert each specimen's data from RGB to HSV
+        hsvColorData = []
+        for specIdx in range(nSpecimens):
+          specRgbData = sampledColorData[specIdx]  # Shape: (N_sampled_faces, 3)
+          specHsvData = []
+
+          for faceIdx in range(nSampledFaces):
+            rgb = specRgbData[faceIdx] / 255.0  # Normalize to 0-1
+            hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+            # Convert hue to 2D vector (cos, sin) to handle circular nature
+            hue_radians = hsv[0] * 2 * np.pi
+            hue_cos = np.cos(hue_radians)
+            hue_sin = np.sin(hue_radians)
+            # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+            hsv_vec = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
+            specHsvData.append(hsv_vec)
+
+          hsvColorData.append(np.array(specHsvData))
+
+        colorData = np.array(hsvColorData)  # Shape: (N_specimens, N_sampled_faces, 4)
+        nChannels = 4
+      else:
+        colorData = sampledColorData
+
+      # Reshape to (N_sampled_faces * N_specimens, nChannels)
+      colorDataFlat = colorData.reshape(-1, nChannels)
+
+      if logCallback:
+        logCallback(f"Color data shape: {colorDataFlat.shape}")
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Apply dimensionality reduction with optional HSV filtering
+      if logCallback:
+        logCallback(f"Applying {dimRedAlgo} dimensionality reduction...")
+
+      # Filter data for dimensionality reduction if in HSV mode
+      dimRedData = colorDataFlat
+      if colorSpace == "HSV":
+        # Extract saturation and value channels (indices 2 and 3)
+        sat = colorDataFlat[:, 2]  # 0..100
+        val = colorDataFlat[:, 3]  # 0..100
+
+        # Create mask for saturation and value cutoffs
+        mask = (sat >= satCutoff) & (val >= valueCutoff)
+        dimRedData = colorDataFlat[mask]
+
+        if logCallback:
+          logCallback(f"HSV filtering: {np.sum(mask)}/{len(mask)} samples passed cutoffs (sat>={satCutoff}, val>={valueCutoff})")
+          logCallback(f"Filtered data shape for dim reduction: {dimRedData.shape}")
+
+      reducedData = self._applyDimensionalityReduction(dimRedData, dimRedAlgo)
+
+      if reducedData is None:
+        if logCallback:
+          logCallback(f"Error: {dimRedAlgo} failed")
+        return {"success": False}
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Plot results in 2D viewer
+      # For HSV with filtering, we need to adjust the specimen information
+      if colorSpace == "HSV" and dimRedData.shape[0] != colorDataFlat.shape[0]:
+        # Calculate how many faces per specimen passed the filter
+        filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+      else:
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nSampledFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+
+      if progressCallback:
+        progressCallback(100)
+
+      # Return result details for downstream UI updates (e.g., histograms)
+      # Always return the FULL color data for histogram use, not the filtered data
+      if plotResult and isinstance(plotResult, dict):
+        return {
+          "success": True,
+          "colorData": colorDataFlat,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "chartNode": plotResult.get("chartNode"),
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+      else:
+        return {
+          "success": bool(plotResult),
+          "colorData": colorDataFlat,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in runColorsEDAFromSampledData: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
 
