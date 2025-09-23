@@ -27,16 +27,6 @@ except ImportError:
     UMAP_AVAILABLE = False
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
 
-from .color_theme import ColorTheme
-from sklearn.cluster import KMeans 
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
-from scipy.spatial.distance import pdist
-import plotly.graph_objects as go 
-import plotly.express as px
 
 # Import functions from the deca module to avoid duplication
 import sys
@@ -113,14 +103,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
     recolorTab = qt.QWidget()
     recolorTabLayout = qt.QFormLayout(recolorTab)
-    colorAnalysisTab = qt.QWidget()
-    colorAnalysisTabLayout = qt.QFormLayout(colorAnalysisTab)
 
     tabsWidget.addTab(DeCATab, "DeCA")
     tabsWidget.addTab(visualizeTab, "Visualize Results")
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
     tabsWidget.addTab(recolorTab, "Recolor")
-    tabsWidget.addTab(colorAnalysisTab, "Color Analysis")
 
     self.layout.addWidget(tabsWidget)
 
@@ -225,7 +212,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.filters = ctk.ctkPathLineEdit.Dirs
     self.landmarkDirectoryDC.setToolTip("Select directory containing landmarks")
     
-    inputDirLayout.addRow("Landmarks: ", self.landmarkDirectoryDC)
+    # Add validation status label for landmarks
+    self.landmarkValidationLabelDC = qt.QLabel()
+    self.landmarkValidationLabelDC.setStyleSheet(ColorTheme.getLabelStyle())
+    self.landmarkValidationLabelDC.setText("No directory selected")
+    
+    landmarkDirWidget = qt.QWidget()
+    landmarkDirLayout = qt.QHBoxLayout(landmarkDirWidget)
+    landmarkDirLayout.setContentsMargins(0, 0, 0, 0)
+    landmarkDirLayout.addWidget(self.landmarkDirectoryDC)
+    landmarkDirLayout.addWidget(self.landmarkValidationLabelDC)
+    inputDirLayout.addRow("Landmarks: ", landmarkDirWidget)
 
     # Textures directory
     self.textureDirectoryDC = ctk.ctkPathLineEdit()
@@ -546,124 +543,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Add spacing before the visualization button
     visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
-    #
-    # Texture Analysis Section
-    #
-    self.textureAnalysisCollapsible = ctk.ctkCollapsibleButton()
-    self.textureAnalysisCollapsible.text = "Texture Analysis"
-    self.textureAnalysisCollapsible.collapsed = True
-    visualizeWidgetLayout.addRow(self.textureAnalysisCollapsible)
-    
-    textureAnalysisLayout = qt.QFormLayout(self.textureAnalysisCollapsible)
-    
-    # Model selector for texture analysis
-    self.textureAnalysisModelSelector = slicer.qMRMLNodeComboBox()
-    self.textureAnalysisModelSelector.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.textureAnalysisModelSelector.setToolTip("Select model for texture analysis")
-    self.textureAnalysisModelSelector.setCurrentNode(None)
-    textureAnalysisLayout.addRow("Model:", self.textureAnalysisModelSelector)
-    
-    # Texture analysis type
-    self.textureAnalysisTypeCombo = qt.QComboBox()
-    self.textureAnalysisTypeCombo.addItems([
-      "Surface Roughness Analysis",
-      "Texture Pattern Recognition", 
-      "Regional Texture Comparison",
-      "Texture Histogram Analysis"
-    ])
-    self.textureAnalysisTypeCombo.setToolTip("Select type of texture analysis to perform")
-    textureAnalysisLayout.addRow("Analysis Type:", self.textureAnalysisTypeCombo)
-    
-    # Analysis parameters
-    self.textureAnalysisParamsWidget = qt.QWidget()
-    self.textureAnalysisParamsLayout = qt.QFormLayout(self.textureAnalysisParamsWidget)
-    
-    # Roughness analysis parameters
-    self.roughnessKernelSizeSpin = qt.QSpinBox()
-    self.roughnessKernelSizeSpin.setRange(3, 21)
-    self.roughnessKernelSizeSpin.setValue(5)
-    self.roughnessKernelSizeSpin.setToolTip("Kernel size for roughness calculation (odd numbers only)")
-    self.roughnessKernelSizeSpin.setSingleStep(2)
-    self.textureAnalysisParamsLayout.addRow("Kernel Size:", self.roughnessKernelSizeSpin)
-    
-    # Pattern recognition parameters
-    self.patternScaleSpin = qt.QDoubleSpinBox()
-    self.patternScaleSpin.setRange(0.1, 10.0)
-    self.patternScaleSpin.setValue(1.0)
-    self.patternScaleSpin.setDecimals(1)
-    self.patternScaleSpin.setToolTip("Scale factor for pattern detection")
-    self.textureAnalysisParamsLayout.addRow("Pattern Scale:", self.patternScaleSpin)
-    
-    # Regional comparison parameters
-    self.regionCountSpin = qt.QSpinBox()
-    self.regionCountSpin.setRange(2, 20)
-    self.regionCountSpin.setValue(4)
-    self.regionCountSpin.setToolTip("Number of regions to compare")
-    self.textureAnalysisParamsLayout.addRow("Region Count:", self.regionCountSpin)
-    
-    # Histogram parameters
-    self.histogramBinsSpin = qt.QSpinBox()
-    self.histogramBinsSpin.setRange(10, 256)
-    self.histogramBinsSpin.setValue(64)
-    self.histogramBinsSpin.setToolTip("Number of bins for histogram analysis")
-    self.textureAnalysisParamsLayout.addRow("Histogram Bins:", self.histogramBinsSpin)
-    
-    textureAnalysisLayout.addRow("Parameters:", self.textureAnalysisParamsWidget)
-    
-    # Analysis buttons
-    self.runTextureAnalysisButton = qt.QPushButton("Run Texture Analysis")
-    self.runTextureAnalysisButton.setStyleSheet("""
-      QPushButton {
-        background-color: #9C27B0;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #8E24AA;
-      }
-      QPushButton:pressed {
-        background-color: #7B1FA2;
-      }
-    """)
-    textureAnalysisLayout.addRow(self.runTextureAnalysisButton)
-    
-    # Results display
-    self.textureAnalysisResultsText = qt.QTextEdit()
-    self.textureAnalysisResultsText.setMaximumHeight(150)
-    self.textureAnalysisResultsText.setReadOnly(True)
-    self.textureAnalysisResultsText.setToolTip("Texture analysis results will be displayed here")
-    textureAnalysisLayout.addRow("Results:", self.textureAnalysisResultsText)
-    
-    # Export results button
-    self.exportTextureResultsButton = qt.QPushButton("Export Results")
-    self.exportTextureResultsButton.setEnabled(False)
-    self.exportTextureResultsButton.setStyleSheet("""
-      QPushButton {
-        background-color: #607D8B;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 6px 12px;
-        min-height: 25px;
-      }
-      QPushButton:hover {
-        background-color: #546E7A;
-      }
-      QPushButton:pressed {
-        background-color: #455A64;
-      }
-      QPushButton:disabled {
-        background-color: #BDBDBD;
-        color: #757575;
-      }
-    """)
-    textureAnalysisLayout.addRow(self.exportTextureResultsButton)
-
     # Add spacing before the visualization button
     visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
@@ -694,8 +573,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.lastBakedTexturesPath = None
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
     
-    # Try to restore texture path from settings
-    self.restoreTexturePathFromSettings()
 
     # Connections
     self.meshSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onVisualizeMeshSelect)
@@ -709,615 +586,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
     self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
     
-    # Texture analysis connections
-    self.runTextureAnalysisButton.connect('clicked(bool)', self.onRunTextureAnalysis)
-    self.exportTextureResultsButton.connect('clicked(bool)', self.onExportTextureResults)
-    self.textureAnalysisTypeCombo.connect('currentIndexChanged(int)', self.onTextureAnalysisTypeChanged)
-
-    ################################### Color Analysis Tab ###################################
-    
-    # Load DeCA Models Section
-    self.loadDecaModelsWidget = ctk.ctkCollapsibleButton()
-    self.loadDecaModelsWidget.text = "Load DeCA Models"
-    self.loadDecaModelsWidget.collapsed = False
-    colorAnalysisTabLayout.addRow(self.loadDecaModelsWidget)
-    loadDecaModelsLayout = qt.QFormLayout(self.loadDecaModelsWidget)
-    
-    # Atlas model selector
-    self.atlasModelPathSelector = ctk.ctkPathLineEdit()
-    self.atlasModelPathSelector.filters = ctk.ctkPathLineEdit.Files
-    self.atlasModelPathSelector.nameFilters = ["Model (*.ply *.stl *.obj *.vtk *.vtp)"]
-    self.atlasModelPathSelector.setToolTip("Select the DeCA atlas model file")
-    loadDecaModelsLayout.addRow("Atlas Model:", self.atlasModelPathSelector)
-    
-    # DeCA output directory selector
-    self.decaOutputDirSelector = ctk.ctkPathLineEdit()
-    self.decaOutputDirSelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.decaOutputDirSelector.setToolTip("Select the DeCA output directory containing aligned models and textures")
-    loadDecaModelsLayout.addRow("DeCA Output Directory:", self.decaOutputDirSelector)
-    
-    # Load DeCA models button
-    self.loadDecaModelsButton = qt.QPushButton("Load DeCA Models")
-    self.loadDecaModelsButton.toolTip = "Load atlas model and aligned specimens from DeCA output"
-    self.loadDecaModelsButton.setStyleSheet("""
-      QPushButton {
-        background-color: #4CAF50;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #45a049;
-      }
-      QPushButton:pressed {
-        background-color: #3d8b40;
-      }
-    """)
-    loadDecaModelsLayout.addRow(self.loadDecaModelsButton)
-    
-    # Status label for loaded models
-    self.loadedModelsStatusLabel = qt.QLabel("No DeCA models loaded")
-    self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
-    loadDecaModelsLayout.addRow("Status:", self.loadedModelsStatusLabel)
-    
-    # Model selector for color extraction
-    self.colorExtractionModelSelector = slicer.qMRMLNodeComboBox()
-    self.colorExtractionModelSelector.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.colorExtractionModelSelector.setToolTip("Select model for color analysis")
-    self.colorExtractionModelSelector.selectNodeUponCreation = False
-    self.colorExtractionModelSelector.addEnabled = False
-    self.colorExtractionModelSelector.removeEnabled = False
-    self.colorExtractionModelSelector.noneEnabled = True
-    self.colorExtractionModelSelector.showHidden = False
-    self.colorExtractionModelSelector.showChildNodeTypes = False
-    self.colorExtractionModelSelector.setMRMLScene(slicer.mrmlScene)
-    loadDecaModelsLayout.addRow("Select model for analysis:", self.colorExtractionModelSelector)
-
-    # Shared Coordinate System Visualization Section
-    self.coordinateSystemWidget = ctk.ctkCollapsibleButton()
-    self.coordinateSystemWidget.text = "Shared Coordinate System Visualization"
-    self.coordinateSystemWidget.collapsed = False
-    colorAnalysisTabLayout.addRow(self.coordinateSystemWidget)
-    coordinateSystemLayout = qt.QFormLayout(self.coordinateSystemWidget)
-    
-    # Side-by-side comparison controls
-    self.beforeAfterComparisonButton = qt.QPushButton("Show Before/After Alignment")
-    self.beforeAfterComparisonButton.toolTip = "Display specimens before and after DeCA alignment side-by-side"
-    self.beforeAfterComparisonButton.setStyleSheet("""
-      QPushButton {
-        background-color: #4CAF50;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #45A049;
-      }
-      QPushButton:pressed {
-        background-color: #3D8B40;
-      }
-    """)
-    coordinateSystemLayout.addRow(self.beforeAfterComparisonButton)
-    
-    # Layout options for comparison
-    self.comparisonLayoutCombo = qt.QComboBox()
-    self.comparisonLayoutCombo.addItem("Single View (All models)")
-    self.comparisonLayoutCombo.addItem("Four-Up View")
-    self.comparisonLayoutCombo.addItem("Side-by-Side View")
-    self.comparisonLayoutCombo.addItem("Conventional View")
-    self.comparisonLayoutCombo.setToolTip("Choose how to display the before/after comparison")
-    coordinateSystemLayout.addRow("Comparison Layout:", self.comparisonLayoutCombo)
-    
-    # Spacing control
-    self.modelSpacingSlider = ctk.ctkSliderWidget()
-    self.modelSpacingSlider.singleStep = 10
-    self.modelSpacingSlider.minimum = 50
-    self.modelSpacingSlider.maximum = 500
-    self.modelSpacingSlider.value = 200
-    self.modelSpacingSlider.setToolTip("Adjust spacing between models")
-    coordinateSystemLayout.addRow("Model Spacing:", self.modelSpacingSlider)
-    
-    # Color Clustering & Analysis Section
-    self.colorClusteringWidget = ctk.ctkCollapsibleButton()
-    self.colorClusteringWidget.text = "Color Clustering and Analysis Tools"
-    self.colorClusteringWidget.collapsed = False
-    colorAnalysisTabLayout.addRow(self.colorClusteringWidget)
-    colorClusteringLayout = qt.QFormLayout(self.colorClusteringWidget)
-    
-    # Clustering controls in horizontal layout
-    clusteringControlsFrame = qt.QFrame()
-    clusteringControlsLayout = qt.QHBoxLayout(clusteringControlsFrame)
-    clusteringControlsLayout.setContentsMargins(0, 0, 0, 0)
-    clusteringControlsLayout.setSpacing(10)
-
-    # Number of clusters
-    clusteringControlsLayout.addWidget(qt.QLabel("Clusters:"))
-    self.numClustersSpinBox = qt.QSpinBox()
-    self.numClustersSpinBox.setMinimum(2)
-    self.numClustersSpinBox.setMaximum(20)
-    self.numClustersSpinBox.setValue(3)
-    self.numClustersSpinBox.setToolTip("Number of color clusters to create")
-    clusteringControlsLayout.addWidget(self.numClustersSpinBox)
-
-    # Clustering method selection
-    clusteringControlsLayout.addWidget(qt.QLabel("Method:"))
-    self.clusteringMethodCombo = qt.QComboBox()
-    self.clusteringMethodCombo.addItem("K-means")
-    self.clusteringMethodCombo.addItem("K-means++")
-    self.clusteringMethodCombo.addItem("Hierarchical")
-    self.clusteringMethodCombo.setToolTip("Clustering algorithm to use")
-    clusteringControlsLayout.addWidget(self.clusteringMethodCombo)
-
-    clusteringControlsLayout.addStretch()
-    colorClusteringLayout.addRow(clusteringControlsFrame)
-    
-    # Run clustering button
-    self.runClusteringButton = qt.QPushButton("Run Color Clustering")
-    self.runClusteringButton.toolTip = "Perform color clustering analysis on selected model"
-    self.runClusteringButton.setStyleSheet("""
-      QPushButton {
-        background-color: #4CAF50;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #45a049;
-      }
-      QPushButton:pressed {
-        background-color: #3d8b40;
-      }
-    """)
-    colorClusteringLayout.addRow(self.runClusteringButton)
-    
-    # Cluster statistics display
-    self.clusterStatsText = qt.QPlainTextEdit()
-    self.clusterStatsText.setMaximumHeight(80)
-    self.clusterStatsText.setPlaceholderText("Cluster statistics will appear here...")
-    self.clusterStatsText.setReadOnly(True)
-    colorClusteringLayout.addRow("Results:", self.clusterStatsText)
-
-    # Hierarchical Color Space Merging Section
-    self.hierarchicalMergingWidget = ctk.ctkCollapsibleButton()
-    self.hierarchicalMergingWidget.text = "Hierarchical Color Space Merging"
-    self.hierarchicalMergingWidget.collapsed = True
-    colorAnalysisTabLayout.addRow(self.hierarchicalMergingWidget)
-    hierarchicalMergingLayout = qt.QFormLayout(self.hierarchicalMergingWidget)
-    
-    # Color similarity threshold
-    self.colorSimilarityThreshold = ctk.ctkSliderWidget()
-    self.colorSimilarityThreshold.singleStep = 0.01
-    self.colorSimilarityThreshold.minimum = 0.0
-    self.colorSimilarityThreshold.maximum = 1.0
-    self.colorSimilarityThreshold.value = 0.1
-    self.colorSimilarityThreshold.setToolTip("Threshold for merging similar colors")
-    hierarchicalMergingLayout.addRow("Similarity threshold:", self.colorSimilarityThreshold)
-    
-    # Generate dendrogram button
-    self.generateDendrogramButton = qt.QPushButton("Generate Color Dendrogram")
-    self.generateDendrogramButton.toolTip = "Create hierarchical clustering dendrogram of colors"
-    self.generateDendrogramButton.setStyleSheet("""
-      QPushButton {
-        background-color: #4CAF50;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #45a049;
-      }
-      QPushButton:pressed {
-        background-color: #3d8b40;
-      }
-    """)
-    hierarchicalMergingLayout.addRow(self.generateDendrogramButton)
-
-
-    # Color Analysis Connections
-    self.loadDecaModelsButton.connect('clicked(bool)', self.onLoadDecaModels)
-    self.beforeAfterComparisonButton.connect('clicked(bool)', self.onBeforeAfterComparison)
-    self.runClusteringButton.connect('clicked(bool)', self.onRunColorClustering)
-    self.generateDendrogramButton.connect('clicked(bool)', self.onGenerateDendrogram)
-    
 
     # Auto-detect Blender executable on startup
     self.autoDetectBlender()
-    
-    # Load persistent data after UI is set up
-    self.loadPersistentData()
-
-  def savePersistentData(self):
-    """Save important data to persistent storage"""
-    try:
-      # Save directory paths
-      if hasattr(self, 'meshDirectoryDC') and self.meshDirectoryDC.currentPath:
-        self.settings.setValue("meshDirectory", self.meshDirectoryDC.currentPath)
-      if hasattr(self, 'landmarkDirectoryDC') and self.landmarkDirectoryDC.currentPath:
-        self.settings.setValue("landmarkDirectory", self.landmarkDirectoryDC.currentPath)
-      if hasattr(self, 'textureDirectoryDC') and self.textureDirectoryDC.currentPath:
-        self.settings.setValue("textureDirectory", self.textureDirectoryDC.currentPath)
-      if hasattr(self, 'outputDirectoryDC') and self.outputDirectoryDC.currentPath:
-        self.settings.setValue("outputDirectory", self.outputDirectoryDC.currentPath)
-      if hasattr(self, 'blenderExeEdit') and self.blenderExeEdit.currentPath:
-        self.settings.setValue("blenderExecutable", self.blenderExeEdit.currentPath)
-      
-      # Save atlas model reference (by name, since node objects can't be serialized)
-      if hasattr(self, 'atlasModel') and self.atlasModel:
-        self.settings.setValue("atlasModelName", self.atlasModel.GetName())
-      
-      # Save other important settings
-      if hasattr(self, 'bakeSizeSpin'):
-        self.settings.setValue("bakeSize", self.bakeSizeSpin.value)
-      if hasattr(self, 'bakeExtrusionSpin'):
-        self.settings.setValue("bakeExtrusion", self.bakeExtrusionSpin.value)
-      if hasattr(self, 'bakeMarginPxSpin'):
-        self.settings.setValue("bakeMarginPx", self.bakeMarginPxSpin.value)
-      
-      # Save landmark lock state
-      if hasattr(self, 'landmarkLockButton'):
-        # Check if landmarks are currently locked
-        markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
-        if markups and hasattr(self, '_areLandmarksLocked'):
-          is_locked = self._areLandmarksLocked(markups[0])
-          self.settings.setValue("landmarksLocked", is_locked)
-        
-      self.settings.sync()
-    except Exception as e:
-      print(f"Warning: Could not save persistent data: {e}")
-
-  def loadPersistentData(self):
-    """Load persistent data from storage"""
-    try:
-      # Load directory paths
-      if hasattr(self, 'meshDirectoryDC'):
-        mesh_dir = self.settings.value("meshDirectory", "")
-        if mesh_dir and os.path.exists(mesh_dir):
-          self.meshDirectoryDC.setCurrentPath(mesh_dir)
-          
-      if hasattr(self, 'landmarkDirectoryDC'):
-        lm_dir = self.settings.value("landmarkDirectory", "")
-        if lm_dir and os.path.exists(lm_dir):
-          self.landmarkDirectoryDC.setCurrentPath(lm_dir)
-          
-      if hasattr(self, 'textureDirectoryDC'):
-        tex_dir = self.settings.value("textureDirectory", "")
-        if tex_dir and os.path.exists(tex_dir):
-          self.textureDirectoryDC.setCurrentPath(tex_dir)
-          
-      if hasattr(self, 'outputDirectoryDC'):
-        out_dir = self.settings.value("outputDirectory", "")
-        if out_dir and os.path.exists(out_dir):
-          self.outputDirectoryDC.setCurrentPath(out_dir)
-          
-      if hasattr(self, 'blenderExeEdit'):
-        blender_exe = self.settings.value("blenderExecutable", "")
-        if blender_exe and os.path.exists(blender_exe):
-          self.blenderExeEdit.setCurrentPath(blender_exe)
-      
-      # Try to restore atlas model by name
-      atlas_name = self.settings.value("atlasModelName", "")
-      if atlas_name:
-        try:
-          atlas_node = slicer.util.getNode(atlas_name)
-          if atlas_node and atlas_node.IsA("vtkMRMLModelNode"):
-            self.atlasModel = atlas_node
-            print(f"Restored atlas model: {atlas_name}")
-        except Exception:
-          pass  # Atlas model not found, that's okay
-      
-      # Load other settings
-      if hasattr(self, 'bakeSizeSpin'):
-        bake_size = self.settings.value("bakeSize", 2048)
-        self.bakeSizeSpin.setValue(int(bake_size))
-      if hasattr(self, 'bakeExtrusionSpin'):
-        bake_extrusion = self.settings.value("bakeExtrusion", 0.005)
-        self.bakeExtrusionSpin.setValue(float(bake_extrusion))
-      if hasattr(self, 'bakeMarginPxSpin'):
-        bake_margin = self.settings.value("bakeMarginPx", 2)
-        self.bakeMarginPxSpin.setValue(int(bake_margin))
-      
-      # Load landmark lock state
-      if hasattr(self, 'landmarkLockButton'):
-        landmarks_locked = self.settings.value("landmarksLocked", False)
-        if landmarks_locked:
-          # Apply the saved lock state
-          markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
-          if markups and hasattr(self, '_setLandmarkLockState'):
-            for markup in markups:
-              self._setLandmarkLockState(markup, True)
-            self._updateLandmarkLockUI(True)
-        
-    except Exception as e:
-      print(f"Warning: Could not load persistent data: {e}")
-
-  def cleanup(self):
-    """Called when module is about to be unloaded - save persistent data"""
-    try:
-      self.savePersistentData()
-    except Exception as e:
-      print(f"Warning: Could not save persistent data during cleanup: {e}")
-
-    ################################### Colors EDA Tab ###################################
-    # Layout within the Colors EDA tab
-    colorsEDAWidget = ctk.ctkCollapsibleButton()
-    colorsEDAWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)  # Do not expand vertically
-    colorsEDAWidgetLayout = qt.QFormLayout(colorsEDAWidget)
-    colorsEDAWidgetLayout.setVerticalSpacing(4)
-    colorsEDAWidgetLayout.setHorizontalSpacing(8)
-    colorsEDAWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    colorsEDAWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    colorsEDAWidget.text = "Color Analysis Settings"
-    colorsEDATabLayout.addRow(colorsEDAWidget)
-
-    # Atlas model selector for Colors EDA
-    self.colorsAtlasModelSelect = slicer.qMRMLNodeComboBox()
-    self.colorsAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.colorsAtlasModelSelect.setToolTip("Select the atlas model for color analysis")
-    self.colorsAtlasModelSelect.selectNodeUponCreation = False
-    self.colorsAtlasModelSelect.noneEnabled = True
-    self.colorsAtlasModelSelect.addEnabled = False
-    self.colorsAtlasModelSelect.removeEnabled = False
-    self.colorsAtlasModelSelect.showHidden = False
-    self.colorsAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    colorsEDAWidgetLayout.addRow("Atlas Model: ", self.colorsAtlasModelSelect)
-
-    # Baked textures directory selector
-    self.bakedTexturesDirectorySelector = ctk.ctkPathLineEdit()
-    self.bakedTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.bakedTexturesDirectorySelector.setToolTip("Select directory containing baked atlas-space textures")
-    colorsEDAWidgetLayout.addRow("Baked Textures Directory: ", self.bakedTexturesDirectorySelector)
-
-    # Color space selection - compact layout
-    self.colorSpaceWidget = qt.QWidget()
-    self.colorSpaceWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.colorSpaceWidget.setFixedHeight(25)  # Fixed height for consistency
-    self.colorSpaceLayout = qt.QHBoxLayout(self.colorSpaceWidget)
-    self.colorSpaceLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
-    self.colorSpaceLayout.setSpacing(15)  # Slightly more space between buttons
-
-    self.rgbRadio = qt.QRadioButton("RGB")
-    self.hsvRadio = qt.QRadioButton("HSV")
-    self.hsvRadio.setChecked(True)
-
-    self.colorSpaceButtonGroup = qt.QButtonGroup()
-    self.colorSpaceButtonGroup.addButton(self.rgbRadio)
-    self.colorSpaceButtonGroup.addButton(self.hsvRadio)
-    self.colorSpaceLayout.addWidget(self.rgbRadio)
-    self.colorSpaceLayout.addWidget(self.hsvRadio)
-    self.colorSpaceLayout.addStretch()  # Push buttons to the left
-
-    colorsEDAWidgetLayout.addRow("Color Space:", self.colorSpaceWidget)
-
-    # Dimensionality reduction algorithm selection - compact layout
-    self.dimRedWidget = qt.QWidget()
-    self.dimRedWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.dimRedWidget.setFixedHeight(25)  # Fixed height for consistency
-    self.dimRedLayout = qt.QHBoxLayout(self.dimRedWidget)
-    self.dimRedLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
-    self.dimRedLayout.setSpacing(15)  # Slightly more space between buttons
-
-    self.pcaRadio = qt.QRadioButton("PCA")
-    self.pcaRadio.setChecked(True)
-    self.icaRadio = qt.QRadioButton("ICA")
-    self.umapRadio = qt.QRadioButton("UMAP")
-
-    self.dimRedButtonGroup = qt.QButtonGroup()
-    self.dimRedButtonGroup.addButton(self.pcaRadio)
-    self.dimRedButtonGroup.addButton(self.icaRadio)
-    self.dimRedButtonGroup.addButton(self.umapRadio)
-    self.dimRedLayout.addWidget(self.pcaRadio)
-    self.dimRedLayout.addWidget(self.icaRadio)
-    self.dimRedLayout.addWidget(self.umapRadio)
-    self.dimRedLayout.addStretch()  # Push buttons to the left
-
-    colorsEDAWidgetLayout.addRow("Dimensionality Reduction:", self.dimRedWidget)
-
-    # Enable/disable based on availability
-    if not SKLEARN_AVAILABLE:
-        self.pcaRadio.setEnabled(False)
-        self.icaRadio.setEnabled(False)
-        self.pcaRadio.setToolTip("sklearn not available")
-        self.icaRadio.setToolTip("sklearn not available")
-    if not UMAP_AVAILABLE:
-        self.umapRadio.setEnabled(False)
-        self.umapRadio.setToolTip("umap-learn not available")
-
-    # View mode selection - 2D vs Channel views
-    self.viewModeWidget = qt.QWidget()
-    self.viewModeWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.viewModeWidget.setFixedHeight(25)
-    self.viewModeLayout = qt.QHBoxLayout(self.viewModeWidget)
-    self.viewModeLayout.setContentsMargins(0, 2, 0, 2)
-    self.viewModeLayout.setSpacing(15)
-
-    self.view2DRadio = qt.QRadioButton("2D (Dim Reduction)")
-    self.view2DRadio.setChecked(True)
-    self.viewChannelRadio = qt.QRadioButton("Channel Histograms")
-
-    self.viewModeButtonGroup = qt.QButtonGroup()
-    self.viewModeButtonGroup.addButton(self.view2DRadio)
-    self.viewModeButtonGroup.addButton(self.viewChannelRadio)
-    self.viewModeLayout.addWidget(self.view2DRadio)
-    self.viewModeLayout.addWidget(self.viewChannelRadio)
-    self.viewModeLayout.addStretch()
-
-    colorsEDAWidgetLayout.addRow("View Mode:", self.viewModeWidget)
-
-    # Run analysis button
-    self.runColorsEDAButton = qt.QPushButton("Run Analysis")
-    self.runColorsEDAButton.toolTip = "Run color analysis with dimensionality reduction and histograms"
-    self.runColorsEDAButton.enabled = False
-    colorsEDAWidgetLayout.addRow(self.runColorsEDAButton)
-
-    # Progress and log information
-    self.colorsEDAProgressBar = qt.QProgressBar()
-    self.colorsEDAProgressBar.setVisible(False)
-    colorsEDAWidgetLayout.addRow("Progress: ", self.colorsEDAProgressBar)
-
-    self.colorsEDALogInfo = qt.QPlainTextEdit()
-    self.colorsEDALogInfo.setPlaceholderText("Colors EDA log information")
-    self.colorsEDALogInfo.setReadOnly(True)
-    self.colorsEDALogInfo.setMaximumHeight(150)
-    colorsEDAWidgetLayout.addRow(self.colorsEDALogInfo)
-
-    # Channel Histogram controls (rendered in the main plot viewer)
-    self.histCollapsible = ctk.ctkCollapsibleButton()
-    self.histCollapsible.text = "Channel Histogram"
-    self.histCollapsible.collapsed = False
-    self.histCollapsible.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    self.histLayout = qt.QFormLayout(self.histCollapsible)
-    self.histLayout.setContentsMargins(0, 0, 0, 0)
-    self.histLayout.setSpacing(4)
-
-    self.histChannelSelector = qt.QComboBox()
-    self.histChannelSelector.addItems(["Channel 1", "Channel 2", "Channel 3"])  # Labels updated after run
-    self.histChannelSelector.setEnabled(False)
-    self.histLayout.addRow("Channel:", self.histChannelSelector)
-
-    # Color-by-bin-average toggle
-    self.colorByBinAvgCheck = qt.QCheckBox("Color bars by bin average")
-    self.colorByBinAvgCheck.setChecked(False)
-    self.histLayout.addRow(self.colorByBinAvgCheck)
-
-    # HSV Options section
-    self.hsvOptionsLabel = qt.QLabel("HSV Options:")
-    self.hsvOptionsLabel.setStyleSheet("font-weight: bold; color: #666;")
-    self.histLayout.addRow(self.hsvOptionsLabel)
-
-    # Color enhancement option for 2D plots
-    self.enhanceColorsCheck = qt.QCheckBox("Enhance colors in 2D plot for visibility")
-    self.enhanceColorsCheck.setChecked(False)  # Default to actual colors
-    self.enhanceColorsCheck.setToolTip("When checked, boosts saturation/value for better visibility. When unchecked, uses actual colors from data.")
-    self.histLayout.addRow(self.enhanceColorsCheck)
-
-    # HSV Filtering section
-    self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
-    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666; margin-top: 10px;")
-    self.histLayout.addRow(self.hsvFilterLabel)
-
-    # Saturation cutoff (percent)
-    self.satCutoffSpin = qt.QDoubleSpinBox()
-    self.satCutoffSpin.setRange(0.0, 100.0)
-    self.satCutoffSpin.setSingleStep(5.0)
-    self.satCutoffSpin.setSuffix(" %")
-    self.satCutoffSpin.setValue(10.0)   # default from our earlier fix
-    self.satCutoffSpin.setToolTip("Minimum saturation threshold for HSV filtering")
-    self.histLayout.addRow("Saturation cutoff:", self.satCutoffSpin)
-
-    self.valueCutoffSpin = qt.QDoubleSpinBox()
-    self.valueCutoffSpin.setRange(0.0, 100.0)
-    self.valueCutoffSpin.setSingleStep(5.0)
-    self.valueCutoffSpin.setSuffix(" %")
-    self.valueCutoffSpin.setValue(10.0)   # default from our earlier fix
-    self.valueCutoffSpin.setToolTip("Minimum value/brightness threshold for HSV filtering")
-    self.histLayout.addRow("Value cutoff:", self.valueCutoffSpin)
-
-    # Auto-refresh when options change
-    self.colorByBinAvgCheck.toggled.connect(self._refreshCurrentHistogram)
-    self.satCutoffSpin.valueChanged.connect(self._refreshCurrentHistogram)
-    self.valueCutoffSpin.valueChanged.connect(self._refreshCurrentHistogram)
-
-    # Keep references to created MRML nodes (tables/series/charts) for cleanup
-    self.histTableNodes = []
-    self.histSeriesNodes = []
-    self.histChartNodes = []
-
-    colorsEDAWidgetLayout.addRow(self.histCollapsible)
-
-    # Connections
-    self.histChannelSelector.connect("currentIndexChanged(int)", self.onHistChannelChanged)
-
-    # Connections for Colors EDA
-    self.colorsAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onColorsEDAParameterChanged)
-    self.bakedTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onColorsEDAParameterChanged)
-    self.runColorsEDAButton.connect('clicked(bool)', self.onRunColorsEDAButton)
-    self.viewModeButtonGroup.connect('buttonClicked(QAbstractButton*)', self.onViewModeChanged)
-
-    # Add vertical spacer so extra space goes below content
-    colorsEDATabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
-
-    ################################### Recolor Tab ###################################
-    # Layout within the Recolor tab
-    recolorWidget = ctk.ctkCollapsibleButton()
-    recolorWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    recolorWidgetLayout = qt.QFormLayout(recolorWidget)
-    recolorWidgetLayout.setVerticalSpacing(4)
-    recolorWidgetLayout.setHorizontalSpacing(8)
-    recolorWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    recolorWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    recolorWidget.text = "Recolor Settings"
-    recolorTabLayout.addRow(recolorWidget)
-
-    # Atlas model selector for Recolor
-    self.recolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
-    self.recolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.recolorAtlasModelSelect.setToolTip("Select the atlas model for recoloring")
-    self.recolorAtlasModelSelect.selectNodeUponCreation = False
-    self.recolorAtlasModelSelect.noneEnabled = True
-    self.recolorAtlasModelSelect.addEnabled = False
-    self.recolorAtlasModelSelect.removeEnabled = False
-    self.recolorAtlasModelSelect.showHidden = False
-    self.recolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    recolorWidgetLayout.addRow("Atlas Model: ", self.recolorAtlasModelSelect)
-
-    # Textures directory selector
-    self.recolorTexturesDirectorySelector = ctk.ctkPathLineEdit()
-    self.recolorTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.recolorTexturesDirectorySelector.setToolTip("Select directory containing texture images")
-    recolorWidgetLayout.addRow("Textures Directory: ", self.recolorTexturesDirectorySelector)
-
-    # Texture selection dropdown
-    self.recolorTextureSelector = qt.QComboBox()
-    self.recolorTextureSelector.setToolTip("Select a texture to apply to the model")
-    self.recolorTextureSelector.enabled = False
-    recolorWidgetLayout.addRow("Select Texture: ", self.recolorTextureSelector)
-
-    # Average face color checkbox
-    self.averageFaceColorCheckbox = qt.QCheckBox()
-    self.averageFaceColorCheckbox.setChecked(False)
-    self.averageFaceColorCheckbox.setToolTip("If checked, each face will be colored with the average color from the texture instead of using the texture directly")
-    recolorWidgetLayout.addRow("Average Face Colors: ", self.averageFaceColorCheckbox)
-
-    # Apply texture button
-    self.applyRecolorButton = qt.QPushButton("Apply Texture")
-    self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
-    self.applyRecolorButton.enabled = False
-    recolorWidgetLayout.addRow(self.applyRecolorButton)
-
-    # Progress and log information for Recolor
-    self.recolorProgressBar = qt.QProgressBar()
-    self.recolorProgressBar.setVisible(False)
-    recolorWidgetLayout.addRow("Progress: ", self.recolorProgressBar)
-
-    self.recolorLogInfo = qt.QPlainTextEdit()
-    self.recolorLogInfo.setPlaceholderText("Recolor log information")
-    self.recolorLogInfo.setReadOnly(True)
-    self.recolorLogInfo.setMaximumHeight(150)
-    recolorWidgetLayout.addRow(self.recolorLogInfo)
-
-    # Connections for Recolor
-    self.recolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onRecolorParameterChanged)
-    self.recolorTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onRecolorTexturesDirectoryChanged)
-    self.recolorTextureSelector.connect("currentIndexChanged(int)", self.onRecolorParameterChanged)
-    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
-    self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
-
-    # Add vertical spacer so extra space goes below content
-    recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
-
-    ################################### Colors EDA Tab ###################################
 
     ################################### Phase 1: Data Sampling ###################################
     # Data Sampling section
@@ -1699,7 +970,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Validate mesh directory when changed"""
     model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']
     self.validateDirectory(directory, model_extensions, self.meshValidationLabelDC, "models")
-    self.savePersistentData()  # Save when directory changes
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
@@ -1709,7 +979,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Validate landmark directory when changed"""
     landmark_extensions = ['.fcsv', '.json', '.mrk.json']
     self.validateDirectory(directory, landmark_extensions, self.landmarkValidationLabelDC, "landmarks")
-    self.savePersistentData()  # Save when directory changes
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
@@ -1724,7 +993,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if valid and count > 0:
       self.validateTextureMatching()
     
-    self.savePersistentData()  # Save when directory changes
     self.onParameterSelectDC()
   
   def validateTextureMatching(self):
@@ -1858,12 +1126,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
       os.makedirs(alignedModelFolderDC)
       resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels") # <-- ADD THIS LINE
-      os.makedirs(resampledModelFolderDC)
+      os.makedirs(resampledModelFolderDC)  
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
-      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC)
+      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC) 
       if not loadAtlasOption:
         tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
         os.makedirs(tempLMFolderDC)
@@ -2027,11 +1295,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if atlasNode and originalNode:
         atlasPolyData = atlasNode.GetPolyData()
         originalPolyData = originalNode.GetPolyData()
-
+        
         if not (atlasPolyData and originalPolyData):
             self.interpolationSlider.enabled = False
             return
-
+            
         atlasPointCount = atlasPolyData.GetNumberOfPoints()
         originalPointCount = originalPolyData.GetNumberOfPoints()
 
@@ -2046,7 +1314,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
             print(errorMsg) # Also print to Python console for easy copy/paste
             self.interpolationSlider.enabled = False
             return
-
+            
         self.interpolationSlider.enabled = True
         # Trigger an initial update
         self.onInterpolationSliderChanged(self.interpolationSlider.value)
@@ -2095,6 +1363,50 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     inputPathsSelected = bool(self.meshDirectoryDC.currentPath and self.landmarkDirectoryDC.currentPath and self.outputDirectoryDC.currentPath)
     self.applyButtonDC.enabled = bool(atlasPathSelected and inputPathsSelected)
 
+  def onParameterSelectDCL(self):
+    atlasPathSelected = bool(self.DCLBaseModelSelector.currentPath and self.DCLBaseLMSelector.currentPath) or self.calculateAtlasOptionDCL.checked
+    inputPathsSelected = bool(self.meshDirectoryDCL.currentPath and self.landmarkDirectoryDCL.currentPath and self.OutputDirectoryDCL.currentPath)
+    self.getAtlasButton.enabled = bool(atlasPathSelected and inputPathsSelected)
+
+  def onPointSelectionSelect(self):
+    self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
+
+  def onDCLLandmarkDirectorySelect(self):
+    self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
+
+  def onGenerateAtlasButton(self):
+    logic = InterDeCALogic()
+    #set up output directory
+    self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+    if self.folderNames == {}:
+      self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
+      return
+    self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
+    self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
+    if self.loadAtlasOptionDCL.checked:
+      try:
+        atlasModelPath = self.DCLBaseModelSelector.currentPath
+        self.atlasModel = slicer.util.loadModel(atlasModelPath)
+      except:
+        self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
+        return
+      try:
+        atlasLMPath = self.DCLBaseLMSelector.currentPath
+        self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
+      except:
+        print("Can't load from: ", atlasLMPath)
+        self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
+        return
+    else:
+      removeScale = True
+      self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+    atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
+    slicer.util.saveNode(self.atlasModel, atlasModelPath)
+    atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
+    slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+    self.getPointNumberButton.enabled = True
 
   def onTabChanged(self, index):
     if self.tabsWidget.tabText(index) == "Visualize Results":
@@ -2252,743 +1564,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       print(f"Warning: Could not update landmark lock UI: {e}")
 
-  ################################### Texture Analysis Methods ###################################
-
-  def onTextureAnalysisTypeChanged(self, index):
-    """Update parameter visibility based on analysis type"""
-    try:
-      # Show/hide relevant parameters based on analysis type
-      analysis_type = self.textureAnalysisTypeCombo.currentText
-      
-      # Reset all parameter visibility
-      self.roughnessKernelSizeSpin.setVisible(False)
-      self.patternScaleSpin.setVisible(False)
-      self.regionCountSpin.setVisible(False)
-      self.histogramBinsSpin.setVisible(False)
-      
-      # Show relevant parameters
-      if "Roughness" in analysis_type:
-        self.roughnessKernelSizeSpin.setVisible(True)
-      elif "Pattern" in analysis_type:
-        self.patternScaleSpin.setVisible(True)
-      elif "Regional" in analysis_type:
-        self.regionCountSpin.setVisible(True)
-      elif "Histogram" in analysis_type:
-        self.histogramBinsSpin.setVisible(True)
-        
-    except Exception as e:
-      print(f"Warning: Could not update texture analysis parameters: {e}")
-
-  def onRunTextureAnalysis(self):
-    """Run the selected texture analysis"""
-    try:
-      model_node = self.textureAnalysisModelSelector.currentNode()
-      if not model_node:
-        slicer.util.errorDisplay("Please select a model for texture analysis.")
-        return
-      
-      analysis_type = self.textureAnalysisTypeCombo.currentText
-      self.textureAnalysisResultsText.clear()
-      self.textureAnalysisResultsText.append(f"Running {analysis_type}...")
-      
-      # Get model data
-      poly_data = model_node.GetPolyData()
-      if not poly_data:
-        slicer.util.errorDisplay("Selected model has no geometry data.")
-        return
-      
-      # Run the appropriate analysis
-      if "Roughness" in analysis_type:
-        results = self._analyzeSurfaceRoughness(poly_data)
-      elif "Pattern" in analysis_type:
-        results = self._analyzeTexturePatterns(poly_data)
-      elif "Regional" in analysis_type:
-        results = self._analyzeRegionalTexture(poly_data)
-      elif "Histogram" in analysis_type:
-        results = self._analyzeTextureHistogram(poly_data)
-      else:
-        slicer.util.errorDisplay("Unknown analysis type selected.")
-        return
-      
-      # Display results
-      self._displayTextureAnalysisResults(results, analysis_type)
-      self.exportTextureResultsButton.setEnabled(True)
-      
-    except Exception as e:
-      error_msg = f"Error running texture analysis: {str(e)}"
-      slicer.util.errorDisplay(error_msg)
-      self.textureAnalysisResultsText.append(f"ERROR: {error_msg}")
-
-  def _analyzeSurfaceRoughness(self, poly_data):
-    """Analyze surface roughness using local variance"""
-    try:
-      import numpy as np
-      from scipy import ndimage
-      
-      # Get points and normals
-      points = slicer.util.arrayFromModelPoints(poly_data)
-      normals = slicer.util.arrayFromModelPointNormals(poly_data)
-      
-      if points is None or normals is None:
-        return {"error": "Could not extract point data from model"}
-      
-      # Calculate local surface roughness using normal variance
-      kernel_size = self.roughnessKernelSizeSpin.value
-      
-      # For each point, calculate local normal variance
-      roughness_values = []
-      for i in range(len(points)):
-        # Find nearby points (simplified - in practice would use spatial indexing)
-        distances = np.linalg.norm(points - points[i], axis=1)
-        nearby_indices = np.where(distances < kernel_size * 0.1)[0]  # Scale factor
-        
-        if len(nearby_indices) > 1:
-          nearby_normals = normals[nearby_indices]
-          # Calculate variance of normal directions
-          normal_variance = np.var(np.linalg.norm(nearby_normals, axis=1))
-          roughness_values.append(normal_variance)
-        else:
-          roughness_values.append(0.0)
-      
-      roughness_values = np.array(roughness_values)
-      
-      # Calculate statistics
-      mean_roughness = np.mean(roughness_values)
-      std_roughness = np.std(roughness_values)
-      min_roughness = np.min(roughness_values)
-      max_roughness = np.max(roughness_values)
-      
-      # Create roughness map on model
-      self._applyTextureToModel(poly_data, roughness_values, "Surface Roughness")
-      
-      return {
-        "type": "Surface Roughness Analysis",
-        "mean": mean_roughness,
-        "std": std_roughness,
-        "min": min_roughness,
-        "max": max_roughness,
-        "values": roughness_values,
-        "kernel_size": kernel_size
-      }
-      
-    except Exception as e:
-      return {"error": f"Surface roughness analysis failed: {str(e)}"}
-
-  def _analyzeTexturePatterns(self, poly_data):
-    """Analyze texture patterns using frequency domain analysis"""
-    try:
-      import numpy as np
-      from scipy import fft
-      
-      # Get texture coordinates if available
-      texture_coords = poly_data.GetPointData().GetTCoords()
-      if texture_coords is None:
-        return {"error": "Model has no texture coordinates for pattern analysis"}
-      
-      # Convert to numpy array
-      tex_array = slicer.util.arrayFromVTKMatrix(texture_coords)
-      
-      # Analyze patterns in texture space
-      scale = self.patternScaleSpin.value
-      
-      # Simple pattern detection using FFT
-      pattern_strength = []
-      for i in range(len(tex_array)):
-        # Sample local texture region (simplified)
-        local_tex = tex_array[max(0, i-10):min(len(tex_array), i+10)]
-        if len(local_tex) > 5:
-          # Calculate FFT magnitude as pattern indicator
-          fft_result = np.abs(fft.fft(local_tex[:, 0]))  # Use U coordinate
-          pattern_strength.append(np.mean(fft_result[1:len(fft_result)//2]))  # Exclude DC component
-        else:
-          pattern_strength.append(0.0)
-      
-      pattern_strength = np.array(pattern_strength) * scale
-      
-      # Calculate pattern statistics
-      mean_pattern = np.mean(pattern_strength)
-      std_pattern = np.std(pattern_strength)
-      
-      # Detect repeating patterns
-      pattern_regions = np.where(pattern_strength > mean_pattern + std_pattern)[0]
-      
-      return {
-        "type": "Texture Pattern Recognition",
-        "mean_pattern_strength": mean_pattern,
-        "std_pattern_strength": std_pattern,
-        "pattern_regions_count": len(pattern_regions),
-        "pattern_regions": pattern_regions,
-        "scale_factor": scale
-      }
-      
-    except Exception as e:
-      return {"error": f"Pattern recognition analysis failed: {str(e)}"}
-
-  def _analyzeRegionalTexture(self, poly_data):
-    """Compare texture properties between different anatomical regions"""
-    try:
-      import numpy as np
-      from sklearn.cluster import KMeans
-      
-      # Get points and normals
-      points = slicer.util.arrayFromModelPoints(poly_data)
-      normals = slicer.util.arrayFromModelPointNormals(poly_data)
-      
-      if points is None or normals is None:
-        return {"error": "Could not extract point data from model"}
-      
-      # Combine position and normal information for clustering
-      features = np.column_stack([points, normals])
-      
-      # Cluster points into regions
-      n_regions = self.regionCountSpin.value
-      kmeans = KMeans(n_clusters=n_regions, random_state=42)
-      region_labels = kmeans.fit_predict(features)
-      
-      # Analyze texture properties for each region
-      region_stats = {}
-      for region_id in range(n_regions):
-        region_mask = region_labels == region_id
-        region_points = points[region_mask]
-        region_normals = normals[region_mask]
-        
-        if len(region_points) > 0:
-          # Calculate region statistics
-          region_center = np.mean(region_points, axis=0)
-          region_size = len(region_points)
-          normal_variance = np.var(np.linalg.norm(region_normals, axis=1))
-          
-          region_stats[region_id] = {
-            "center": region_center,
-            "size": region_size,
-            "normal_variance": normal_variance,
-            "points": region_points
-          }
-      
-      # Create regional comparison visualization
-      self._visualizeRegionalTexture(poly_data, region_labels, region_stats)
-      
-      return {
-        "type": "Regional Texture Comparison",
-        "n_regions": n_regions,
-        "region_stats": region_stats,
-        "region_labels": region_labels
-      }
-      
-    except Exception as e:
-      return {"error": f"Regional texture analysis failed: {str(e)}"}
-
-  def _analyzeTextureHistogram(self, poly_data):
-    """Analyze texture value distributions using histograms"""
-    try:
-      import numpy as np
-      import matplotlib.pyplot as plt
-      
-      # Get texture coordinates
-      texture_coords = poly_data.GetPointData().GetTCoords()
-      if texture_coords is None:
-        return {"error": "Model has no texture coordinates for histogram analysis"}
-      
-      # Convert to numpy array
-      tex_array = slicer.util.arrayFromVTKMatrix(texture_coords)
-      
-      # Calculate texture intensity (simplified - would use actual texture data)
-      # For now, use texture coordinate values as proxy
-      u_values = tex_array[:, 0]
-      v_values = tex_array[:, 1]
-      
-      # Create histograms
-      n_bins = self.histogramBinsSpin.value
-      
-      u_hist, u_bins = np.histogram(u_values, bins=n_bins, range=(0, 1))
-      v_hist, v_bins = np.histogram(v_values, bins=n_bins, range=(0, 1))
-      
-      # Calculate histogram statistics
-      u_mean = np.mean(u_values)
-      u_std = np.std(u_values)
-      v_mean = np.mean(v_values)
-      v_std = np.std(v_values)
-      
-      # Detect peaks in histograms
-      u_peaks = self._findHistogramPeaks(u_hist)
-      v_peaks = self._findHistogramPeaks(v_hist)
-      
-      # Create histogram visualization
-      self._createHistogramVisualization(u_hist, u_bins, v_hist, v_bins)
-      
-      return {
-        "type": "Texture Histogram Analysis",
-        "u_stats": {"mean": u_mean, "std": u_std, "peaks": u_peaks},
-        "v_stats": {"mean": v_mean, "std": v_std, "peaks": v_peaks},
-        "u_histogram": u_hist,
-        "v_histogram": v_hist,
-        "u_bins": u_bins,
-        "v_bins": v_bins,
-        "n_bins": n_bins
-      }
-      
-    except Exception as e:
-      return {"error": f"Histogram analysis failed: {str(e)}"}
-
-  def _findHistogramPeaks(self, histogram, min_height=0.1):
-    """Find peaks in histogram data"""
-    try:
-      from scipy.signal import find_peaks
-      peaks, properties = find_peaks(histogram, height=min_height * np.max(histogram))
-      return peaks.tolist()
-    except Exception:
-      # Fallback: simple peak detection
-      peaks = []
-      for i in range(1, len(histogram) - 1):
-        if histogram[i] > histogram[i-1] and histogram[i] > histogram[i+1]:
-          if histogram[i] > min_height * np.max(histogram):
-            peaks.append(i)
-      return peaks
-
-  def _applyTextureToModel(self, poly_data, values, name):
-    """Apply texture values to model for visualization"""
-    try:
-      # Create a new model node with the texture values
-      model_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
-      model_node.SetAndObservePolyData(poly_data)
-      model_node.SetName(f"{name}_Model")
-      
-      # Add texture values as point data
-      texture_array = vtk.util.numpy_support.numpy_to_vtk(values)
-      texture_array.SetName(name)
-      poly_data.GetPointData().AddArray(texture_array)
-      
-      # Set as active scalar
-      poly_data.GetPointData().SetActiveScalars(name)
-      
-      # Create display node
-      display_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
-      display_node.SetAndObserveColorNodeID("vtkMRMLColorTableNodeFilePlasma.txt")
-      display_node.SetScalarVisibility(True)
-      model_node.SetAndObserveDisplayNodeID(display_node.GetID())
-      
-      return model_node
-      
-    except Exception as e:
-      print(f"Warning: Could not apply texture to model: {e}")
-
-  def _visualizeRegionalTexture(self, poly_data, region_labels, region_stats):
-    """Create visualization for regional texture analysis"""
-    try:
-      # Create model with regional coloring
-      model_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
-      model_node.SetAndObservePolyData(poly_data)
-      model_node.SetName("Regional_Texture_Analysis")
-      
-      # Add region labels as point data
-      region_array = vtk.util.numpy_support.numpy_to_vtk(region_labels)
-      region_array.SetName("Region_Labels")
-      poly_data.GetPointData().AddArray(region_array)
-      poly_data.GetPointData().SetActiveScalars("Region_Labels")
-      
-      # Create display node
-      display_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
-      display_node.SetAndObserveColorNodeID("vtkMRMLColorTableNodeFileRainbow.txt")
-      display_node.SetScalarVisibility(True)
-      model_node.SetAndObserveDisplayNodeID(display_node.GetID())
-      
-      return model_node
-      
-    except Exception as e:
-      print(f"Warning: Could not create regional visualization: {e}")
-
-  def _createHistogramVisualization(self, u_hist, u_bins, v_hist, v_bins):
-    """Create histogram visualization plots"""
-    try:
-      import matplotlib.pyplot as plt
-      
-      # Create figure with subplots
-      fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-      
-      # U coordinate histogram
-      ax1.bar(u_bins[:-1], u_hist, width=np.diff(u_bins), alpha=0.7, color='blue')
-      ax1.set_title('U Coordinate Histogram')
-      ax1.set_xlabel('U Value')
-      ax1.set_ylabel('Frequency')
-      ax1.grid(True, alpha=0.3)
-      
-      # V coordinate histogram
-      ax2.bar(v_bins[:-1], v_hist, width=np.diff(v_bins), alpha=0.7, color='red')
-      ax2.set_title('V Coordinate Histogram')
-      ax2.set_xlabel('V Value')
-      ax2.set_ylabel('Frequency')
-      ax2.grid(True, alpha=0.3)
-      
-      plt.tight_layout()
-      plt.show()
-      
-    except Exception as e:
-      print(f"Warning: Could not create histogram visualization: {e}")
-
-  def _displayTextureAnalysisResults(self, results, analysis_type):
-    """Display texture analysis results in the text widget"""
-    try:
-      self.textureAnalysisResultsText.clear()
-      self.textureAnalysisResultsText.append(f"=== {analysis_type} Results ===\n")
-      
-      if "error" in results:
-        self.textureAnalysisResultsText.append(f"ERROR: {results['error']}")
-        return
-      
-      # Display results based on analysis type
-      if "Roughness" in analysis_type:
-        self.textureAnalysisResultsText.append(f"Mean Roughness: {results['mean']:.4f}")
-        self.textureAnalysisResultsText.append(f"Std Deviation: {results['std']:.4f}")
-        self.textureAnalysisResultsText.append(f"Min Roughness: {results['min']:.4f}")
-        self.textureAnalysisResultsText.append(f"Max Roughness: {results['max']:.4f}")
-        self.textureAnalysisResultsText.append(f"Kernel Size: {results['kernel_size']}")
-        
-      elif "Pattern" in analysis_type:
-        self.textureAnalysisResultsText.append(f"Mean Pattern Strength: {results['mean_pattern_strength']:.4f}")
-        self.textureAnalysisResultsText.append(f"Std Pattern Strength: {results['std_pattern_strength']:.4f}")
-        self.textureAnalysisResultsText.append(f"Pattern Regions Found: {results['pattern_regions_count']}")
-        self.textureAnalysisResultsText.append(f"Scale Factor: {results['scale_factor']}")
-        
-      elif "Regional" in analysis_type:
-        self.textureAnalysisResultsText.append(f"Number of Regions: {results['n_regions']}")
-        for region_id, stats in results['region_stats'].items():
-          self.textureAnalysisResultsText.append(f"\nRegion {region_id}:")
-          self.textureAnalysisResultsText.append(f"  Size: {stats['size']} points")
-          self.textureAnalysisResultsText.append(f"  Center: ({stats['center'][0]:.3f}, {stats['center'][1]:.3f}, {stats['center'][2]:.3f})")
-          self.textureAnalysisResultsText.append(f"  Normal Variance: {stats['normal_variance']:.4f}")
-          
-      elif "Histogram" in analysis_type:
-        u_stats = results['u_stats']
-        v_stats = results['v_stats']
-        self.textureAnalysisResultsText.append(f"U Coordinate Statistics:")
-        self.textureAnalysisResultsText.append(f"  Mean: {u_stats['mean']:.4f}")
-        self.textureAnalysisResultsText.append(f"  Std: {u_stats['std']:.4f}")
-        self.textureAnalysisResultsText.append(f"  Peaks: {u_stats['peaks']}")
-        self.textureAnalysisResultsText.append(f"\nV Coordinate Statistics:")
-        self.textureAnalysisResultsText.append(f"  Mean: {v_stats['mean']:.4f}")
-        self.textureAnalysisResultsText.append(f"  Std: {v_stats['std']:.4f}")
-        self.textureAnalysisResultsText.append(f"  Peaks: {v_stats['peaks']}")
-        self.textureAnalysisResultsText.append(f"\nHistogram Bins: {results['n_bins']}")
-      
-      self.textureAnalysisResultsText.append(f"\nAnalysis completed successfully!")
-      
-    except Exception as e:
-      self.textureAnalysisResultsText.append(f"Error displaying results: {str(e)}")
-
-  def onExportTextureResults(self):
-    """Export texture analysis results to file"""
-    try:
-      if not self.textureAnalysisResultsText.toPlainText().strip():
-        slicer.util.warningDisplay("No results to export.")
-        return
-      
-      # Get output directory
-      output_dir = self.outputDirectoryDC.currentPath if hasattr(self, 'outputDirectoryDC') else ""
-      if not output_dir:
-        output_dir = slicer.app.temporaryPath
-      
-      # Create filename
-      analysis_type = self.textureAnalysisTypeCombo.currentText.replace(" ", "_")
-      filename = f"texture_analysis_{analysis_type}_{slicer.util.getDate()}.txt"
-      filepath = os.path.join(output_dir, filename)
-      
-      # Write results to file
-      with open(filepath, 'w') as f:
-        f.write(self.textureAnalysisResultsText.toPlainText())
-      
-      slicer.util.infoDisplay(f"Results exported to: {filepath}")
-      
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error exporting results: {str(e)}")
-
-  ################################### Color Analysis Methods ###################################
-
-    
-  def onLoadDecaModels(self):
-    """Load DeCA atlas model and aligned specimens for color analysis"""
-    try:
-      atlas_path = self.atlasModelPathSelector.currentPath
-      output_dir = self.decaOutputDirSelector.currentPath
-      
-      if not atlas_path or not os.path.exists(atlas_path):
-        slicer.util.warningDisplay("Please select a valid atlas model file.")
-        return
-        
-      if not output_dir or not os.path.isdir(output_dir):
-        slicer.util.warningDisplay("Please select a valid DeCA output directory.")
-        return
-      
-      # Clear existing DeCA models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      for node in modelNodes:
-        if 'deca_' in node.GetName().lower():
-          slicer.mrmlScene.RemoveNode(node)
-      
-      loaded_models = []
-      
-      # Load atlas model
-      try:
-        atlas_model = slicer.util.loadModel(atlas_path)
-        atlas_model.SetName("DeCA_Atlas")
-        
-        # Ensure display node exists
-        if not atlas_model.GetDisplayNode():
-          atlas_model.CreateDefaultDisplayNodes()
-        
-        display_node = atlas_model.GetDisplayNode()
-        if display_node:
-          display_node.SetColor(1.0, 0.8, 0.2)  # Gold color for atlas
-          display_node.SetVisibility(True)
-        
-        loaded_models.append("Atlas")
-        print(f"Loaded atlas model: {os.path.basename(atlas_path)}")
-      except Exception as e:
-        slicer.util.errorDisplay(f"Failed to load atlas model: {str(e)}")
-        return
-      
-      # Look for aligned models directory
-      aligned_models_dir = None
-      possible_dirs = ['alignedModels', 'aligned', 'models', 'output']
-      for dir_name in possible_dirs:
-        test_path = os.path.join(output_dir, dir_name)
-        if os.path.isdir(test_path):
-          aligned_models_dir = test_path
-          break
-      
-      if not aligned_models_dir:
-        # Use output directory directly
-        aligned_models_dir = output_dir
-      
-      # Load aligned models
-      model_files = [f for f in os.listdir(aligned_models_dir) 
-                    if f.lower().endswith(('.ply', '.obj', '.stl', '.vtk', '.vtp'))]
-      
-      loaded_count = 0
-      for i, model_file in enumerate(model_files[:10]):  # Limit to 10 models for performance
-        try:
-          model_path = os.path.join(aligned_models_dir, model_file)
-          model = slicer.util.loadModel(model_path)
-          specimen_name = os.path.splitext(model_file)[0]
-          model.SetName(f"DeCA_Specimen_{specimen_name}")
-          
-          # Ensure display node exists
-          if not model.GetDisplayNode():
-            model.CreateDefaultDisplayNodes()
-          
-          display_node = model.GetDisplayNode()
-          if display_node:
-            # Set different colors for each specimen
-            color_index = i % 10
-            colors = [
-              [0.8, 0.2, 0.2],  # Red
-              [0.2, 0.8, 0.2],  # Green  
-              [0.2, 0.2, 0.8],  # Blue
-              [0.8, 0.8, 0.2],  # Yellow
-              [0.8, 0.2, 0.8],  # Magenta
-              [0.2, 0.8, 0.8],  # Cyan
-              [0.8, 0.5, 0.2],  # Orange
-              [0.5, 0.2, 0.8],  # Purple
-              [0.2, 0.8, 0.5],  # Teal
-              [0.8, 0.5, 0.5]   # Pink
-            ]
-            
-            display_node.SetColor(*colors[color_index])
-            display_node.SetVisibility(True)
-          
-          loaded_count += 1
-          print(f"Loaded specimen {loaded_count}: {specimen_name}")
-          
-        except Exception as e:
-          print(f"Failed to load model {model_file}: {str(e)}")
-          continue
-      
-      loaded_models.append(f"{loaded_count} specimens")
-      
-      # Look for textures directory
-      textures_dir = None
-      possible_texture_dirs = ['atlasTextures', 'textures', 'baked', 'atlas_textures']
-      for dir_name in possible_texture_dirs:
-        test_path = os.path.join(output_dir, dir_name)
-        if os.path.isdir(test_path):
-          textures_dir = test_path
-          break
-      
-      texture_count = 0
-      if textures_dir:
-        texture_files = [f for f in os.listdir(textures_dir) 
-                        if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        texture_count = len(texture_files)
-        loaded_models.append(f"{texture_count} textures")
-        
-        # Store texture directory for later use
-        self.setTexturePathAndUpdate(textures_dir)
-        
-        # Try to apply texture to atlas if available
-        if texture_count > 0:
-          avg_texture = os.path.join(textures_dir, "average_texture.png")
-          if os.path.exists(avg_texture):
-            logic = InterDeCALogic()
-            logic.applyTextureToModel(atlas_model, avg_texture)
-            loaded_models.append("atlas textured")
-      
-      # Update status
-      status_text = f"Loaded: {', '.join(loaded_models)}"
-      self.loadedModelsStatusLabel.setText(status_text)
-      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(positive); font-weight: bold; }")
-      
-      # Update color extraction model selector to include loaded models
-      self.colorExtractionModelSelector.setCurrentNode(atlas_model)
-      
-      # Reset view to show all models
-      slicer.app.layoutManager().resetThreeDViews()
-      
-      print(f"DeCA models loaded successfully: {status_text}")
-      slicer.util.infoDisplay(f"Successfully loaded DeCA models:\n{status_text}")
-      
-    except Exception as e:
-      error_msg = f"Error loading DeCA models: {str(e)}"
-      print(error_msg)
-      self.loadedModelsStatusLabel.setText("Failed to load models")
-      self.loadedModelsStatusLabel.setStyleSheet("QLabel { color: palette(negative); font-weight: bold; }")
-      slicer.util.errorDisplay(error_msg)
-    
-  def onBeforeAfterComparison(self):
-    """Show side-by-side comparison of specimens before and after DeCA alignment"""
-    try:
-      # Debug: List all current models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      print(f"DEBUG: Found {len(modelNodes)} total models in scene:")
-      for node in modelNodes:
-        visibility = "visible" if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility() else "hidden"
-        print(f"  - {node.GetName()} ({visibility})")
-      
-      # Check if we have loaded DeCA models
-      deca_models = [node for node in modelNodes if 'DeCA_' in node.GetName()]
-      print(f"DEBUG: Found {len(deca_models)} DeCA models")
-      
-      if not deca_models:
-        slicer.util.warningDisplay("No DeCA models found in scene.\nPlease load DeCA models first using the 'Load DeCA Models' button.")
-        return
-      
-      if deca_models:
-        # Use loaded DeCA models for comparison
-        print("Using loaded DeCA models for comparison")
-        logic = InterDeCALogic()
-        success = logic.createComparisonFromLoadedModels(self.modelSpacingSlider.value, 
-                                                        self.comparisonLayoutCombo.currentText)
-        if success:
-          print("Before/After comparison created from loaded models")
-          
-          # Ensure all comparison models are visible
-          comparison_models = [node for node in slicer.util.getNodesByClass('vtkMRMLModelNode') 
-                             if 'comparison_' in node.GetName()]
-          print(f"DEBUG: Making {len(comparison_models)} comparison models visible")
-          for node in comparison_models:
-            if node.GetDisplayNode():
-              node.GetDisplayNode().SetVisibility(True)
-              print(f"  - Made {node.GetName()} visible")
-          
-          # Force view update
-          slicer.app.layoutManager().resetThreeDViews()
-          
-          slicer.util.infoDisplay("Comparison created successfully!\nBlue = Individual specimens\nGreen = Atlas reference")
-        else:
-          slicer.util.warningDisplay("Failed to create comparison from loaded models.")
-        return
-      
-      # Fallback to original workflow if no DeCA models are loaded
-      originalDir = getattr(self, 'meshDirectoryDC', None)
-      alignedDir = getattr(self, 'lastDeCAAlignedModelsPath', None)
-      
-      if not originalDir or not originalDir.currentPath:
-        slicer.util.warningDisplay("Please either:\n1. Load DeCA models using 'Load DeCA Models' button above, OR\n2. Run DeCA analysis first to set original models directory.")
-        return
-        
-      if not alignedDir or not os.path.exists(alignedDir):
-        slicer.util.warningDisplay("No aligned models found. Please run DeCA analysis first.")
-        return
-        
-      # Create comparison visualization using original workflow
-      logic = InterDeCALogic()
-      logic.createBeforeAfterComparison(originalDir.currentPath, alignedDir)
-      
-      print("Before/After comparison created successfully")
-      
-    except Exception as e:
-      print(f"ERROR in onBeforeAfterComparison: {str(e)}")
-      import traceback
-      traceback.print_exc()
-      slicer.util.errorDisplay(f"Error creating before/after comparison: {str(e)}")
-
-
-  def onRunColorClustering(self):
-    """Perform color clustering analysis on selected model"""
-    try:
-      # Get the atlas model from loaded DeCA models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      atlas_models = [node for node in modelNodes if 'DeCA_Atlas' in node.GetName()]
-      
-      if not atlas_models:
-        slicer.util.warningDisplay("Please load DeCA models first using 'Load DeCA Models' button.")
-        return
-        
-      model = atlas_models[0]
-        
-      numClusters = self.numClustersSpinBox.value
-      method = self.clusteringMethodCombo.currentText
-      
-      logic = InterDeCALogic()
-      clusterResults = logic.performColorClustering(model, numClusters, method)
-      
-      if clusterResults:
-        # Display cluster statistics
-        self.clusterStatsText.clear()
-        self.clusterStatsText.appendPlainText(f"Clustering Method: {method}")
-        self.clusterStatsText.appendPlainText(f"Number of Clusters: {numClusters}")
-        self.clusterStatsText.appendPlainText(f"Total Points: {clusterResults['total_points']}")
-        
-        for i, (centroid, count, percentage) in enumerate(zip(
-            clusterResults['centroids'], 
-            clusterResults['cluster_counts'], 
-            clusterResults['percentages'])):
-          rgb = [int(c*255) for c in centroid[:3]]
-          self.clusterStatsText.appendPlainText(
-            f"Cluster {i+1}: RGB({rgb[0]}, {rgb[1]}, {rgb[2]}) - {count} points ({percentage:.1f}%)")
-        
-        print(f"Color clustering completed with {numClusters} clusters")
-      else:
-        slicer.util.warningDisplay("Color clustering failed. Please ensure the model has texture data.")
-        
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error performing color clustering: {str(e)}")
-
-  def onGenerateDendrogram(self):
-    """Generate hierarchical clustering dendrogram of colors"""
-    try:
-      # Get the atlas model from loaded DeCA models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      atlas_models = [node for node in modelNodes if 'DeCA_Atlas' in node.GetName()]
-      
-      if not atlas_models:
-        slicer.util.warningDisplay("Please load DeCA models first using 'Load DeCA Models' button.")
-        return
-        
-      model = atlas_models[0]
-        
-      threshold = self.colorSimilarityThreshold.value
-      
-      logic = InterDeCALogic()
-      dendrogram_path = logic.generateColorDendrogram(model, threshold)
-      
-      if dendrogram_path and os.path.exists(dendrogram_path):
-        print(f"Color dendrogram saved to: {dendrogram_path}")
-        slicer.util.infoDisplay(f"Color dendrogram generated and saved to:\n{dendrogram_path}")
-      else:
-        slicer.util.warningDisplay("Failed to generate color dendrogram.")
-        
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error generating dendrogram: {str(e)}")
-
 
   def generateNewAtlas(self, removeScale, log):
     """Generate a new atlas model and landmark set from data"""
@@ -3055,7 +1630,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   def onTabChanged(self, index):
     if self.tabsWidget.tabText(index) == "Visualize Results":
-      self._hideMarkupsForVisualization(remove=False)
+      self._hideMarkupsForVisualization(remove=False) 
       self.updateBakedPreviewList()
       self._ensureModelsAreVisible()
 
@@ -3064,30 +1639,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.previewTextureCombo.clear()
     d = self.lastBakedTexturesPath
     if d and os.path.isdir(d):
-      items = [os.path.splitext(f)[0] for f in sorted(os.listdir(d)) if f.lower().endswith('.png')]
-      for it in items: self.previewTextureCombo.addItem(it)
+      items = [f for f in os.listdir(d) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+      items.sort()
+      self.previewTextureCombo.addItems(items)
     self.previewTextureCombo.blockSignals(False)
-  
-  def saveTexturePathToSettings(self):
-    """Save the current texture path to Slicer settings"""
-    if self.lastBakedTexturesPath:
-      settings = qt.QSettings()
-      settings.setValue("InterDeCA/lastBakedTexturesPath", self.lastBakedTexturesPath)
-  
-  def restoreTexturePathFromSettings(self):
-    """Restore texture path from Slicer settings"""
-    settings = qt.QSettings()
-    saved_path = settings.value("InterDeCA/lastBakedTexturesPath", "")
-    if saved_path and os.path.isdir(saved_path):
-      self.lastBakedTexturesPath = saved_path
-      self.updateBakedPreviewList()
-  
-  def setTexturePathAndUpdate(self, path):
-    """Set texture path and update both dropdown and settings"""
-    if path and os.path.isdir(path):
-      self.lastBakedTexturesPath = path
-      self.saveTexturePathToSettings()
-      self.updateBakedPreviewList()
 
   def onPreviewTextureSelected(self, idx):
     if idx < 0: return
@@ -3106,181 +1661,193 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     loadAtlasOption   = self.loadAtlasOptionDC.checked
     removeScaleOption = self.removeScaleCheckBoxDC.checked
 
-    # Initialize progress tracking
-    self.currentOperation = "DeCA Analysis"
+    # Start progress tracking
     self.applyButtonDC.enabled = False
-    self.updateProgressDC(0, "Initializing DeCA analysis...", showCancel=True)
+    self.updateProgressDC(0, "Initializing DeCA analysis...")
 
-    try:
-      # Folders
-      self.updateProgressDC(5, "Creating output directories...")
-      self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
-      if not self.folderNames:
-        self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
-        self.resetProgressDC()
-        self.applyButtonDC.enabled = True
-        return
-      self.folderNames['originalLMs']  = self.landmarkDirectoryDC.currentPath
-      self.folderNames['originalModels'] = self.meshDirectoryDC.currentPath
-      self.lastDeCAAlignedModelsPath = self.folderNames['resampledModels']  # for Visualize tab
+    # Folders
+    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
+    if not self.folderNames:
+      self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
+      self.resetProgressDC()
+      self.applyButtonDC.enabled = True
+      return
+    self.folderNames['originalLMs']  = self.landmarkDirectoryDC.currentPath
+    self.folderNames['originalModels'] = self.meshDirectoryDC.currentPath
+    self.lastDeCAAlignedModelsPath = self.folderNames['resampledModels']  # for Visualize tab
 
-      # ---- 1) Load or compute atlas (Slicer) ----
-      if loadAtlasOption:
-        self.updateProgressDC(10, "Loading atlas model and landmarks...")
-        try:
-          self.atlasModel = slicer.util.loadModel(self.DCBaseModelSelector.currentPath)
-        except Exception:
-          self.logInfoDC.appendPlainText(f"Can't load model from: {self.DCBaseModelSelector.currentPath}")
-          self.resetProgressDC()
-          self.applyButtonDC.enabled = True
-          return
-        try:
-          self.atlasLMs = slicer.util.loadMarkups(self.DCBaseLMSelector.currentPath)
-        except Exception:
-          self.logInfoDC.appendPlainText(f"Can't load landmarks from: {self.DCBaseLMSelector.currentPath}")
-          self.resetProgressDC()
-          self.applyButtonDC.enabled = True
-          return
-      else:
-        self.updateProgressDC(10, "Generating new atlas from data...")
-        self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
-
-      # Check if atlas generation was successful
-      if self.atlasModel is None or self.atlasLMs is None:
-        self.logInfoDC.appendPlainText("Failed to generate atlas. Please check the data and try again.")
-        return
-
-      # Save an intermediate atlas file (RAS) so Blender can read it
-      self.updateProgressDC(20, "Saving atlas for Blender processing...")
-      atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
-      logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
-
-      # ---- 2) Blender cleanup + Smart UV ----
-      self.updateProgressDC(25, "Preparing atlas with Blender (cleanup + UV)...")
-      blender_exe    = self.blenderExeEdit.currentPath
-      merge_dist     = float(self.blMergeDistSpin.value)
-      smart_angle    = float(self.blSmartAngleSpin.value)
-      island_margin  = float(self.blIslandMarginSpin.value)
-  
-      # Auto-detect/install Blender if path is not set or invalid
-      if not (blender_exe and os.path.isfile(blender_exe) and os.access(blender_exe, os.X_OK)):
-        self.logInfoDC.appendPlainText("Blender path not set or invalid. Attempting automatic detection/installation...")
-        blender_exe = logic.getBlenderExecutable(lambda msg: self.logInfoDC.appendPlainText(msg))
-  
-        if blender_exe:
-          # Update the UI field with the found/installed path
-          self.blenderExeEdit.setCurrentPath(blender_exe)
-          self.logInfoDC.appendPlainText(f"Using Blender at: {blender_exe}")
-        else:
-          self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
-          self.resetProgressDC()
-          self.applyButtonDC.enabled = True
-          return
-      atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
+    # ---- 1) Load or compute atlas (Slicer) ----
+    self.updateProgressDC(10, "Loading or computing atlas...")
+    if loadAtlasOption:
       try:
-        logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
-                                    merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
-        self.logInfoDC.appendPlainText(f"Atlas cleaned & UV'd in Blender → {atlas_uv_obj}")
-      except Exception as e:
-        self.logInfoDC.appendPlainText(f"Blender atlas UV step failed: {e}")
-        self.resetProgressDC()
-        self.applyButtonDC.enabled = True
-        return
-
-      # Reload UV'd atlas back into Slicer (replace old atlas node)
-      try:
-        slicer.mrmlScene.RemoveNode(self.atlasModel)
+        self.atlasModel = slicer.util.loadModel(self.DCBaseModelSelector.currentPath)
       except Exception:
-        pass
-      self.atlasModel = logic._load_model_with_cs(atlas_uv_obj, 'RAS')
-
-      median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
-      if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
-        self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
-
-      # Save atlas landmarks & a copy of the atlas (PLY) for provenance
-      atlasLMPath   = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
-      slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-      atlasPlyPath  = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
-      logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
-
-      # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
-      self.updateProgressDC(40, "Performing rigid alignment to atlas...")
-      try:
-        self.logInfoDC.appendPlainText("Rigid alignment to atlas")
-        logic.runAlign(self.atlasModel, self.atlasLMs,
-                       self.folderNames['originalModels'], self.folderNames['originalLMs'],
-                       self.folderNames['alignedModels'], self.folderNames['alignedLMs'],
-                       removeScaleOption)
-      except ValueError as errorText:
-        self.logInfoDC.appendPlainText(str(errorText))
+        self.logInfoDC.appendPlainText(f"Can't load model from: {self.DCBaseModelSelector.currentPath}")
         self.resetProgressDC()
         self.applyButtonDC.enabled = True
         return
-
-      # ---- 4) DeCA resampling (Slicer). Also create OBJ copies that reuse atlas UV (for Blender bake) ----
-      self.updateProgressDC(60, "Calculating point correspondences (resampling)...")
       try:
-        self.logInfoDC.appendPlainText("Calculating point correspondences to atlas")
-        logic.runDCAlign(
-          atlas_uv_obj, atlasLMPath,
-          self.folderNames['alignedModels'],
-          self.folderNames['alignedLMs'],
-          self.folderNames['output'],
-          writeErrorOption,
-          atlas_uv_template_obj=atlas_uv_obj  # NEW: used to stamp the same UVs onto resampled OBJ copies
-        )
-      except Exception as e:
-        self.logInfoDC.appendPlainText(f"DeCA resampling failed: {e}")
+        self.atlasLMs = slicer.util.loadMarkups(self.DCBaseLMSelector.currentPath)
+      except Exception:
+        self.logInfoDC.appendPlainText(f"Can't load landmarks from: {self.DCBaseLMSelector.currentPath}")
         self.resetProgressDC()
         self.applyButtonDC.enabled = True
         return
+    else:
+      self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
 
-      # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
-      self.updateProgressDC(80, "Setting up texture baking...")
-      textures_output_dir = os.path.join(self.folderNames['output'], "atlasTextures")
-      os.makedirs(textures_output_dir, exist_ok=True)
-      self.setTexturePathAndUpdate(textures_output_dir)
+    # Check if atlas generation was successful
+    if self.atlasModel is None or self.atlasLMs is None:
+      self.logInfoDC.appendPlainText("Failed to generate atlas. Please check the data and try again.")
+      self.resetProgressDC()
+      self.applyButtonDC.enabled = True
+      return
 
-      texturesDir = self.textureDirectoryDC.currentPath
-      if os.path.isdir(texturesDir):
-        self.updateProgressDC(85, "Baking textures with Blender...")
-        try:
-          made = logic.blender_bake_all(
-            blender_exe=blender_exe,
-            alignedDir=self.folderNames['alignedModels'],
-            resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
-            texturesDir=texturesDir,
-            outDir=textures_output_dir,
-            bake_size=int(self.bakeSizeSpin.value),
-            bake_extrusion=float(self.bakeExtrusionSpin.value),
-            bake_margin_px=int(self.bakeMarginPxSpin.value),
-            merge_dist=merge_dist
-          )
-          self.updateProgressDC(95, "Calculating average texture...")
-          logic._calculate_average_texture(textures_output_dir)
-          self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {textures_output_dir}")
-        except Exception as e:
-          self.logInfoDC.appendPlainText(f"Blender baking failed: {e}")
+    # Save an intermediate atlas file (RAS) so Blender can read it
+    self.updateProgressDC(30, "Preparing atlas for UV mapping...")
+    atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
+    logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
+
+    # ---- 2) Blender cleanup + Smart UV ----
+    self.updateProgressDC(40, "Processing atlas with Blender...")
+    blender_exe    = self.blenderExeEdit.currentPath
+    merge_dist     = float(self.blMergeDistSpin.value)
+    smart_angle    = float(self.blSmartAngleSpin.value)
+    island_margin  = float(self.blIslandMarginSpin.value)
+
+    # Auto-detect/install Blender if path is not set or invalid
+    if not (blender_exe and os.path.isfile(blender_exe) and os.access(blender_exe, os.X_OK)):
+      self.logInfoDC.appendPlainText("Blender path not set or invalid. Attempting automatic detection/installation...")
+      blender_exe = logic.getBlenderExecutable(lambda msg: self.logInfoDC.appendPlainText(msg))
+
+      if blender_exe:
+        # Update the UI field with the found/installed path
+        self.blenderExeEdit.setCurrentPath(blender_exe)
+        self.logInfoDC.appendPlainText(f"Using Blender at: {blender_exe}")
       else:
-        self.logInfoDC.appendPlainText("No textures directory set → skipping bake.")
-
-      # ---- 6) Fill Visualize dropdown ----
-      self.updateProgressDC(100, "Finalizing results...")
-      self.updateBakedPreviewList()
-      
-      # Success - reset progress and re-enable button
-      self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
-      self.resetProgressDC()
-      self.applyButtonDC.enabled = True
-      
+        self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
+      return
+    atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
+    try:
+      logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
+                                  merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
+      self.logInfoDC.appendPlainText(f"Atlas cleaned & UV’d in Blender → {atlas_uv_obj}")
     except Exception as e:
-      # Handle any unexpected errors
-      self.logInfoDC.appendPlainText(f"Unexpected error during DeCA analysis: {str(e)}")
+      self.logInfoDC.appendPlainText(f"Blender atlas UV step failed: {e}")
+      return
+
+    # Reload UV’d atlas back into Slicer (replace old atlas node)
+    try:
+      slicer.mrmlScene.RemoveNode(self.atlasModel)
+    except Exception:
+      pass
+    self.atlasModel = logic._load_model_with_cs(atlas_uv_obj, 'RAS')
+
+    median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
+    if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
+      self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
+
+    # Save atlas landmarks & a copy of the atlas (PLY) for provenance
+    atlasLMPath   = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+    atlasPlyPath  = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
+
+    # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
+    self.updateProgressDC(60, "Rigid alignment to atlas...")
+    try:
+      self.logInfoDC.appendPlainText("Rigid alignment to atlas")
+      logic.runAlign(self.atlasModel, self.atlasLMs,
+                     self.folderNames['originalModels'], self.folderNames['originalLMs'],
+                     self.folderNames['alignedModels'], self.folderNames['alignedLMs'],
+                     removeScaleOption)
+    except ValueError as errorText:
+      self.logInfoDC.appendPlainText(str(errorText))
       self.resetProgressDC()
       self.applyButtonDC.enabled = True
+      return
+
+    # ---- 4) DeCA resampling (Slicer). Also create OBJ copies that reuse atlas UV (for Blender bake) ----
+    self.updateProgressDC(70, "Calculating point correspondences...")
+    try:
+      self.logInfoDC.appendPlainText("Calculating point correspondences to atlas")
+      logic.runDCAlign(
+        atlas_uv_obj, atlasLMPath,
+        self.folderNames['alignedModels'],
+        self.folderNames['alignedLMs'],
+        self.folderNames['output'],
+        writeErrorOption,
+        atlas_uv_template_obj=atlas_uv_obj  # NEW: used to stamp the same UVs onto resampled OBJ copies
+      )
+    except Exception as e:
+      self.logInfoDC.appendPlainText(f"DeCA resampling failed: {e}")
+      self.resetProgressDC()
+      self.applyButtonDC.enabled = True
+      return
+
+    # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
+    self.updateProgressDC(80, "Setting up texture baking...")
+    self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
+    os.makedirs(self.lastBakedTexturesPath, exist_ok=True)
+
+    texturesDir = self.textureDirectoryDC.currentPath
+    if os.path.isdir(texturesDir):
+      self.updateProgressDC(85, "Baking textures with Blender...")
+      try:
+        made = logic.blender_bake_all(
+          blender_exe=blender_exe,
+          alignedDir=self.folderNames['alignedModels'],
+          resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
+          texturesDir=texturesDir,
+          outDir=self.lastBakedTexturesPath,
+          bake_size=int(self.bakeSizeSpin.value),
+          bake_extrusion=float(self.bakeExtrusionSpin.value),
+          bake_margin_px=int(self.bakeMarginPxSpin.value),
+          merge_dist=merge_dist
+        )
+        self.updateProgressDC(95, "Calculating average texture...")
+        logic._calculate_average_texture(self.lastBakedTexturesPath)
+        self.logInfoDC.appendPlainText(f"Baked {len(made)} textures to {self.lastBakedTexturesPath}")
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Blender baking failed: {e}")
+    else:
+      self.logInfoDC.appendPlainText("No textures directory set → skipping bake.")
+
+    # ---- 6) Fill Visualize dropdown ----
+    self.updateProgressDC(100, "Finalizing results...")
+    self.updateBakedPreviewList()
+    
+    # Success - reset progress and re-enable button
+    self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
+    self.resetProgressDC()
+    self.applyButtonDC.enabled = True
 
 
+  def onDCLApplyButton(self):
+    logic = InterDeCALogic()
+    # rigidly align to template
+    self.logInfoDCL.appendPlainText(f"Rigid alignment to the atlas")
+    removeScale = True
+    try:
+      logic.runAlign(self.atlasModel, self.atlasLMs, self.folderNames['originalModels'], self.folderNames['originalLMs'],self.folderNames['alignedModels'], self.folderNames['alignedLMs'], removeScale)
+    except ValueError as errorText:
+      self.logInfoDCL.appendPlainText(str(errorText))
+      return
+    # generate point correspondences
+    self.logInfoDCL.appendPlainText(f"Calculating point correspondences")
+    atlasDenseLandmarks = logic.runDeCAL(self.atlasModel, self.atlasLMs, self.folderNames['alignedModels'],
+    self.folderNames['alignedLMs'], self.folderNames['DeCALOutput'], self.spacingTolerance.value)
+    # setup for optional subsetting
+    self.pointSelection.setCurrentNode(atlasDenseLandmarks)
+    self.DCLLandmarkDirectory.setCurrentPath(self.folderNames['DeCALOutput'])
+
+  def onSubsetApplyButton(self):
+    logic = InterDeCALogic()
+    topDir = os.path.dirname(self.DCLLandmarkDirectory.currentPath)
+    lmDirectorySubset = os.path.join(topDir, "DeCALSubset")
+    os.makedirs(lmDirectorySubset)
+    atlasNode = self.pointSelection.currentNode()
+    lmDirectorySubset = logic.runSubsetLandmarks(atlasNode, self.DCLLandmarkDirectory.currentPath, lmDirectorySubset)
 
   def _hideMarkupsForVisualization(self, remove=False):
     """
@@ -3319,38 +1886,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         pass
 
   def _ensureModelsAreVisible(self):
-    """Make only relevant DeCA models visible, not all models in the scene"""
-    # Only show models that are likely to be DeCA-related
-    relevant_models = []
-    
-    # Check for atlas models
-    if hasattr(self, 'atlasModel') and self.atlasModel:
-      relevant_models.append(self.atlasModel)
-    
-    # Check for loaded DeCA models from the model selector
-    if hasattr(self, 'meshSelect') and self.meshSelect.currentNode():
-      relevant_models.append(self.meshSelect.currentNode())
-    
-    # Check for models in the color extraction selector
-    if hasattr(self, 'colorExtractionModelSelector') and self.colorExtractionModelSelector.currentNode():
-      relevant_models.append(self.colorExtractionModelSelector.currentNode())
-    
-    # Check for models that might be DeCA results (look for common naming patterns)
     for m in slicer.util.getNodesByClass('vtkMRMLModelNode'):
       try:
-        node_name = m.GetName().lower()
-        # Look for DeCA-related naming patterns
-        if any(keyword in node_name for keyword in ['deca', 'atlas', 'aligned', 'resampled', 'correspondence']):
-          relevant_models.append(m)
-      except Exception:
-        pass
-    
-    # Make only relevant models visible
-    for model in relevant_models:
-      try:
-        dn = model.GetDisplayNode()
-        if dn: 
-          dn.SetVisibility(True)
+        dn = m.GetDisplayNode()
+        if dn: dn.SetVisibility(True)
       except Exception:
         pass
 
@@ -4652,7 +3191,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         # Find the closest point on the warped SUBJECT's surface
         closestPoint, closestCellId, subId, dist2 = [0.0, 0.0, 0.0], vtk.reference(0), vtk.reference(0), vtk.reference(0.0)
         cellLocator.FindClosestPoint(point, closestPoint, closestCellId, subId, dist2)
-
+        
         # This new point is the resampled POSITION
         correspondingPoints.InsertPoint(i, closestPoint)
 
@@ -4660,17 +3199,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         if warpedUVs:
             actualCellId = closestCellId.get()
             cell = meanWarpedMesh.GetCell(actualCellId)
-
+            
             if cell and cell.GetNumberOfPoints() == 3:
                 weights = [0.0] * cell.GetNumberOfPoints()
                 closestPointOutput = [0.0, 0.0, 0.0]
                 pcoords_ignored = [0.0, 0.0, 0.0]
                 dist2_ignored = vtk.reference(0.0)
                 cell.EvaluatePosition(closestPoint, closestPointOutput, subId, pcoords_ignored, dist2_ignored, weights)
-
+                
                 cellPointIds = cell.GetPointIds()
                 uv0, uv1, uv2 = warpedUVs.GetTuple2(cellPointIds.GetId(0)), warpedUVs.GetTuple2(cellPointIds.GetId(1)), warpedUVs.GetTuple2(cellPointIds.GetId(2))
-
+                
                 u_new = weights[0] * uv0[0] + weights[1] * uv1[0] + weights[2] * uv2[0]
                 v_new = weights[0] * uv0[1] + weights[1] * uv1[1] + weights[2] * uv2[1]
                 newUVs.SetTuple2(i, u_new, v_new)
@@ -5065,7 +3604,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       baked[sid] = out_png
 
     return baked
-
+  
   def _calculate_average_texture(self, outTexturesDir):
     atlas_texture = os.path.join(outTexturesDir, "average_texture.png")
     if os.path.exists(atlas_texture):
@@ -5074,44 +3613,23 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     images = [imageio.imread(png) for png in pngs]
     average = np.mean(images, axis=0).astype(np.uint8)
     imageio.imwrite(atlas_texture, average)
-
+    
 
 
   def applyTextureToModel(self, modelNode, pngPath):
-    """Apply a texture image to a model node"""
-    if not modelNode or not os.path.exists(pngPath):
-      return False
-
-    # Ensure display node exists
-    if not modelNode.GetDisplayNode():
-      modelNode.CreateDefaultDisplayNodes()
-    
+    modelNode.CreateDefaultDisplayNodes()
     dn = modelNode.GetDisplayNode()
-    if not dn:
-      print(f"Error: Could not create display node for {modelNode.GetName()}")
-      return False
-    
-    try:
-      dn.SetBackfaceCulling(0)
-      dn.SetFrontfaceCulling(0)
-      dn.SetScalarVisibility(False)
-      try: 
-        dn.SetInterpolateTexture(1)
-      except Exception: 
-        pass
+    dn.SetBackfaceCulling(0); dn.SetFrontfaceCulling(0)
+    dn.SetScalarVisibility(False)
+    try: dn.SetInterpolateTexture(1)
+    except Exception: pass
 
-      reader = vtk.vtkPNGReader()
-      reader.SetFileName(pngPath)
-      reader.Update()
+    reader = vtk.vtkPNGReader()
+    reader.SetFileName(pngPath)
+    reader.Update()
 
-      # No flipping – Blender/Slicer UVs now match
-      dn.SetTextureImageDataConnection(reader.GetOutputPort())
-      print(f"Applied texture {os.path.basename(pngPath)} to {modelNode.GetName()}")
-      return True
-      
-    except Exception as e:
-      print(f"Error applying texture to {modelNode.GetName()}: {str(e)}")
-      return False
+    # No flipping – Blender/Slicer UVs now match
+    dn.SetTextureImageDataConnection(reader.GetOutputPort())
 
   def _median_landmark_to_surface_dist(self, modelNode, lmNode):
     locator = vtk.vtkStaticCellLocator()
@@ -5126,7 +3644,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         locator.FindClosestPoint(p, cp, cid, sid, d2)
         dists.append(d2.get()**0.5)
     return np.median(dists) if dists else float('inf')
-
+  
   def _load_model_with_cs(self, filePath, coordinateSystem='RAS'):
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
     cs = (coordinateSystem or 'RAS').upper()
@@ -5143,539 +3661,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       slicer.mrmlScene.RemoveNode(modelNode)
       raise RuntimeError(f"Failed to read model: {filePath}")
     return modelNode
-
-  ################################### Color Analysis Logic Methods ###################################
-
-  def createBeforeAfterComparison(self, originalDir, alignedDir):
-    """Create side-by-side comparison of specimens before and after DeCA alignment"""
-    try:
-      # Clear existing comparison models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      for node in modelNodes:
-        if 'comparison_' in node.GetName():
-          slicer.mrmlScene.RemoveNode(node)
-      
-      # Get model files
-      original_files = [f for f in os.listdir(originalDir) if f.lower().endswith(('.ply', '.obj', '.stl', '.vtk'))]
-      aligned_files = [f for f in os.listdir(alignedDir) if f.lower().endswith(('.ply', '.obj', '.stl', '.vtk'))]
-      
-      # Load up to 3 models for comparison
-      comparison_count = min(3, len(original_files), len(aligned_files))
-      
-      # Get spacing from UI control
-      spacing_factor = self.modelSpacingSlider.value
-      
-      for i in range(comparison_count):
-        # Load original model
-        original_path = os.path.join(originalDir, original_files[i])
-        original_model = slicer.util.loadModel(original_path)
-        original_model.SetName(f"comparison_original_{i+1}")
-        
-        # Load aligned model
-        aligned_path = os.path.join(alignedDir, aligned_files[i])
-        aligned_model = slicer.util.loadModel(aligned_path)
-        aligned_model.SetName(f"comparison_aligned_{i+1}")
-        
-        # Apply transforms to separate models spatially
-        # Original models on the left, aligned on the right
-        # Each pair separated vertically
-        
-        # Create transforms
-        original_transform = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLinearTransformNode')
-        original_transform.SetName(f"OriginalTransform_{i+1}")
-        aligned_transform = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLinearTransformNode')
-        aligned_transform.SetName(f"AlignedTransform_{i+1}")
-        
-        # Set transform matrices for positioning
-        original_matrix = vtk.vtkMatrix4x4()
-        aligned_matrix = vtk.vtkMatrix4x4()
-        
-        # Position original models on the left, aligned on the right
-        # Separate each pair vertically
-        y_offset = i * spacing_factor  # Vertical separation between pairs
-        x_offset_original = -spacing_factor * 0.7  # Left side for originals
-        x_offset_aligned = spacing_factor * 0.7    # Right side for aligned
-        
-        original_matrix.SetElement(0, 3, x_offset_original)  # X translation
-        original_matrix.SetElement(1, 3, y_offset)           # Y translation
-        original_matrix.SetElement(2, 3, 0)                  # Z translation
-        
-        aligned_matrix.SetElement(0, 3, x_offset_aligned)    # X translation
-        aligned_matrix.SetElement(1, 3, y_offset)            # Y translation
-        aligned_matrix.SetElement(2, 3, 0)                   # Z translation
-        
-        original_transform.SetMatrixTransformToParent(original_matrix)
-        aligned_transform.SetMatrixTransformToParent(aligned_matrix)
-        
-        # Apply transforms to models
-        original_model.SetAndObserveTransformNodeID(original_transform.GetID())
-        aligned_model.SetAndObserveTransformNodeID(aligned_transform.GetID())
-        
-        # Set colors to distinguish original (blue) vs aligned (green)
-        original_model.GetDisplayNode().SetColor(0.2, 0.4, 1.0)  # Blue for original
-        aligned_model.GetDisplayNode().SetColor(0.2, 1.0, 0.4)   # Green for aligned
-        
-        # Add labels to distinguish the models
-        original_model.GetDisplayNode().SetVisibility(True)
-        aligned_model.GetDisplayNode().SetVisibility(True)
-        
-        print(f"Positioned pair {i+1}: Original (blue) at ({x_offset_original:.0f}, {y_offset:.0f}, 0), "
-              f"Aligned (green) at ({x_offset_aligned:.0f}, {y_offset:.0f}, 0)")
-      
-      # Set up view layout based on user selection
-      layout_option = self.comparisonLayoutCombo.currentText
-      self.setupComparisonViewLayout(layout_option)
-      
-      # Reset view and fit all models
-      slicer.app.layoutManager().resetThreeDViews()
-      
-      # Center the view on all models
-      threeDWidget = slicer.app.layoutManager().threeDWidget(0)
-      threeDView = threeDWidget.threeDView()
-      threeDView.resetFocalPoint()
-      
-      print(f"Before/After comparison created with {comparison_count} specimen pairs")
-      print("Blue models = Original, Green models = Aligned")
-      print("Models are arranged left-to-right (original vs aligned) and top-to-bottom (different specimens)")
-      
-    except Exception as e:
-      print(f"Error in createBeforeAfterComparison: {str(e)}")
-      raise
-
-  def setupComparisonViewLayout(self, layout_option):
-    """Setup view layout based on user selection"""
-    try:
-      layoutManager = slicer.app.layoutManager()
-      
-      # Get available layout constants
-      layoutNode = slicer.vtkMRMLLayoutNode
-      
-      if layout_option == "Single View (All models)":
-        layoutManager.setLayout(layoutNode.SlicerLayoutOneUp3DView)
-        print("Using Single 3D View - all models in one view")
-        
-      elif layout_option == "Four-Up View":
-        layoutManager.setLayout(layoutNode.SlicerLayoutFourUpView)
-        print("Using Four-Up View layout")
-        
-      elif layout_option == "Side-by-Side View":
-        # Try different side-by-side layout options
-        try:
-          layoutManager.setLayout(layoutNode.SlicerLayoutSideBySideView)
-          print("Using Side-by-Side View layout")
-        except AttributeError:
-          try:
-            layoutManager.setLayout(layoutNode.SlicerLayoutDual3DView)
-            print("Using Dual 3D View layout")
-          except AttributeError:
-            # Fallback to Four-Up if side-by-side not available
-            layoutManager.setLayout(layoutNode.SlicerLayoutFourUpView)
-            print("Using Four-Up View layout (side-by-side not available)")
-        
-      elif layout_option == "Conventional View":
-        try:
-          layoutManager.setLayout(layoutNode.SlicerLayoutConventionalView)
-          print("Using Conventional View layout")
-        except AttributeError:
-          # Fallback to Four-Up if conventional not available
-          layoutManager.setLayout(layoutNode.SlicerLayoutFourUpView)
-          print("Using Four-Up View layout (conventional not available)")
-        
-      else:
-        # Default to single view
-        layoutManager.setLayout(layoutNode.SlicerLayoutOneUp3DView)
-        print("Using default Single 3D View")
-      
-    except Exception as e:
-      print(f"Error setting up comparison view layout: {str(e)}")
-      # Fallback to single view
-      try:
-        layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUp3DView)
-        print("Fallback: Using Single 3D View")
-      except Exception as fallback_error:
-        print(f"Even fallback failed: {fallback_error}")
-        pass
-
-  def createComparisonFromLoadedModels(self, spacing_factor, layout_option):
-    """Create comparison visualization from loaded DeCA models"""
-    try:
-      print(f"DEBUG: Starting comparison with spacing={spacing_factor}, layout={layout_option}")
-      
-      # Get loaded DeCA models
-      modelNodes = slicer.util.getNodesByClass('vtkMRMLModelNode')
-      atlas_models = [node for node in modelNodes if 'DeCA_Atlas' in node.GetName()]
-      specimen_models = [node for node in modelNodes if 'DeCA_Specimen_' in node.GetName()]
-      
-      print(f"DEBUG: Found {len(atlas_models)} atlas models, {len(specimen_models)} specimen models")
-      
-      if not atlas_models:
-        print("ERROR: No DeCA atlas model found")
-        return False
-        
-      if not specimen_models:
-        print("ERROR: No DeCA specimen models found")
-        return False
-      
-      # Clear existing comparison models
-      comparison_models = [node for node in modelNodes if 'comparison_' in node.GetName()]
-      print(f"DEBUG: Removing {len(comparison_models)} existing comparison models")
-      for node in comparison_models:
-        slicer.mrmlScene.RemoveNode(node)
-      
-      atlas_model = atlas_models[0]
-      print(f"DEBUG: Using atlas model: {atlas_model.GetName()}")
-      
-      # Create comparison by duplicating models with different positions and colors
-      comparison_count = min(3, len(specimen_models))  # Limit to 3 for clarity
-      print(f"DEBUG: Creating {comparison_count} comparison pairs")
-      
-      created_models = []
-      
-      for i in range(comparison_count):
-        specimen_model = specimen_models[i]
-        print(f"DEBUG: Processing specimen {i+1}: {specimen_model.GetName()}")
-        
-        # Create "original" version (specimen as if it were original)
-        original_copy = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
-        original_copy.SetName(f"comparison_original_{i+1}")
-        original_copy.SetAndObservePolyData(specimen_model.GetPolyData())
-        original_copy.CreateDefaultDisplayNodes()
-        
-        # Create "aligned" version (atlas positioned as aligned result)
-        aligned_copy = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
-        aligned_copy.SetName(f"comparison_aligned_{i+1}")
-        aligned_copy.SetAndObservePolyData(atlas_model.GetPolyData())
-        aligned_copy.CreateDefaultDisplayNodes()
-        
-        # Create transforms for positioning
-        original_transform = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLinearTransformNode')
-        original_transform.SetName(f"OriginalTransform_{i+1}")
-        aligned_transform = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLinearTransformNode')
-        aligned_transform.SetName(f"AlignedTransform_{i+1}")
-        
-        # Get model bounds to calculate appropriate spacing
-        bounds = specimen_model.GetPolyData().GetBounds()
-        model_width = bounds[1] - bounds[0]  # x range
-        model_height = bounds[3] - bounds[2]  # y range
-        model_depth = bounds[5] - bounds[4]  # z range
-        max_dimension = max(model_width, model_height, model_depth)
-        
-        print(f"DEBUG: Model {specimen_model.GetName()} bounds: {bounds}")
-        print(f"DEBUG: Model dimensions: {model_width:.2f} x {model_height:.2f} x {model_depth:.2f}, max: {max_dimension:.2f}")
-        
-        # Scale the spacing to be proportional to model size
-        # If models are very small (< 1 unit), use much smaller spacing
-        if max_dimension < 1.0:
-          # For small models, use very compact spacing
-          base_spacing = max(max_dimension * 3, 0.5)  # Only 3x model size, minimum 0.5 units
-          actual_spacing = max(base_spacing, spacing_factor * max_dimension * 0.01)  # Scale down user spacing significantly
-        else:
-          # For larger models, use the user-specified spacing
-          actual_spacing = max(spacing_factor, max_dimension * 1.5)
-        
-        # Position models
-        original_matrix = vtk.vtkMatrix4x4()
-        aligned_matrix = vtk.vtkMatrix4x4()
-        
-        y_offset = i * actual_spacing
-        # Make x-axis spacing even smaller for very small models
-        if max_dimension < 1.0:
-          x_offset_original = -actual_spacing * 0.8  # Closer together for small models
-          x_offset_aligned = actual_spacing * 0.8
-        else:
-          x_offset_original = -actual_spacing * 0.6
-          x_offset_aligned = actual_spacing * 0.6
-        
-        print(f"DEBUG: Positioning pair {i+1} - Original at ({x_offset_original:.1f}, {y_offset:.1f}, 0), Aligned at ({x_offset_aligned:.1f}, {y_offset:.1f}, 0)")
-        print(f"DEBUG: Using spacing: {actual_spacing:.1f}")
-        
-        original_matrix.SetElement(0, 3, x_offset_original)
-        original_matrix.SetElement(1, 3, y_offset)
-        original_matrix.SetElement(2, 3, 0)
-        
-        aligned_matrix.SetElement(0, 3, x_offset_aligned)
-        aligned_matrix.SetElement(1, 3, y_offset)
-        aligned_matrix.SetElement(2, 3, 0)
-        
-        original_transform.SetMatrixTransformToParent(original_matrix)
-        aligned_transform.SetMatrixTransformToParent(aligned_matrix)
-        
-        # Apply transforms
-        original_copy.SetAndObserveTransformNodeID(original_transform.GetID())
-        aligned_copy.SetAndObserveTransformNodeID(aligned_transform.GetID())
-        
-        # Set colors and visibility
-        original_display = original_copy.GetDisplayNode()
-        aligned_display = aligned_copy.GetDisplayNode()
-        
-        if original_display:
-          original_display.SetColor(0.2, 0.4, 1.0)  # Blue for "original"
-          original_display.SetVisibility(True)
-          original_display.SetOpacity(1.0)
-          original_display.SetBackfaceCulling(False)
-          print(f"DEBUG: Set original display properties for {original_copy.GetName()}")
-        else:
-          print(f"WARNING: No display node for {original_copy.GetName()}")
-          
-        if aligned_display:
-          aligned_display.SetColor(0.2, 1.0, 0.4)   # Green for "aligned"
-          aligned_display.SetVisibility(True)
-          aligned_display.SetOpacity(1.0)
-          aligned_display.SetBackfaceCulling(False)
-          print(f"DEBUG: Set aligned display properties for {aligned_copy.GetName()}")
-        else:
-          print(f"WARNING: No display node for {aligned_copy.GetName()}")
-        
-        created_models.extend([original_copy, aligned_copy])
-        print(f"DEBUG: Created comparison pair {i+1}: {specimen_model.GetName()} vs Atlas")
-      
-      print(f"DEBUG: Created {len(created_models)} comparison models total")
-      
-      # Set up view layout
-      print(f"DEBUG: Setting up view layout: {layout_option}")
-      self.setupComparisonViewLayout(layout_option)
-      
-      # Reset view and center on models
-      print("DEBUG: Resetting 3D views")
-      slicer.app.layoutManager().resetThreeDViews()
-      
-      # Calculate overall bounds of all comparison models for camera positioning
-      overall_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf'), float('inf'), float('-inf')]
-      for model in created_models:
-        if model.GetPolyData() and model.GetPolyData().GetNumberOfPoints() > 0:
-          bounds = model.GetPolyData().GetBounds()
-          # Update overall bounds
-          overall_bounds[0] = min(overall_bounds[0], bounds[0])  # min x
-          overall_bounds[1] = max(overall_bounds[1], bounds[1])  # max x
-          overall_bounds[2] = min(overall_bounds[2], bounds[2])  # min y
-          overall_bounds[3] = max(overall_bounds[3], bounds[3])  # max y
-          overall_bounds[4] = min(overall_bounds[4], bounds[4])  # min z
-          overall_bounds[5] = max(overall_bounds[5], bounds[5])  # max z
-      
-      print(f"DEBUG: Overall scene bounds: {overall_bounds}")
-      
-      # Try to center the view on all models and fit to view
-      try:
-        # Get all 3D widgets
-        layoutManager = slicer.app.layoutManager()
-        threeDWidgetCount = layoutManager.threeDViewCount
-        print(f"DEBUG: Found {threeDWidgetCount} 3D view widgets")
-        
-        for widgetIndex in range(threeDWidgetCount):
-          threeDWidget = layoutManager.threeDWidget(widgetIndex)
-          if threeDWidget:
-            threeDView = threeDWidget.threeDView()
-            
-            # Calculate center point of all models
-            center_x = (overall_bounds[0] + overall_bounds[1]) / 2
-            center_y = (overall_bounds[2] + overall_bounds[3]) / 2
-            center_z = (overall_bounds[4] + overall_bounds[5]) / 2
-            
-            # Calculate appropriate camera distance
-            scene_width = overall_bounds[1] - overall_bounds[0]
-            scene_height = overall_bounds[3] - overall_bounds[2] 
-            scene_depth = overall_bounds[5] - overall_bounds[4]
-            scene_size = max(scene_width, scene_height, scene_depth)
-            
-            # For very small models with wide spacing, ensure camera is far enough to see everything
-            min_camera_distance = max(scene_width, scene_height) * 2  # At least 2x the widest dimension
-            camera_distance = max(scene_size * 3, min_camera_distance, 2.0)  # Minimum 2 units away
-            
-            print(f"DEBUG: Scene center: ({center_x:.1f}, {center_y:.1f}, {center_z:.1f})")
-            print(f"DEBUG: Scene dimensions: {scene_width:.1f} x {scene_height:.1f} x {scene_depth:.1f}")
-            print(f"DEBUG: Scene size: {scene_size:.1f}, Min distance: {min_camera_distance:.1f}, Camera distance: {camera_distance:.1f}")
-            
-            # Set camera position
-            camera = threeDView.renderWindow().GetRenderers().GetFirstRenderer().GetActiveCamera()
-            camera.SetPosition(center_x, center_y - camera_distance, center_z + camera_distance * 0.5)
-            camera.SetFocalPoint(center_x, center_y, center_z)
-            camera.SetViewUp(0, 0, 1)
-            
-            # Reset and fit view
-            threeDView.resetFocalPoint()
-            threeDView.resetCamera()
-            print(f"DEBUG: Configured camera for view {widgetIndex}")
-            
-      except Exception as view_error:
-        print(f"DEBUG: Error configuring view: {view_error}")
-        import traceback
-        traceback.print_exc()
-      
-      # Force a scene update
-      slicer.app.processEvents()
-      
-      # Final fallback: if models still not visible, try simple fit all
-      try:
-        import time
-        time.sleep(0.5)  # Brief pause to let scene update
-        layoutManager = slicer.app.layoutManager()
-        for widgetIndex in range(layoutManager.threeDViewCount):
-          threeDWidget = layoutManager.threeDWidget(widgetIndex)
-          if threeDWidget:
-            threeDView = threeDWidget.threeDView()
-            # Try VTK's fit all functionality
-            renderer = threeDView.renderWindow().GetRenderers().GetFirstRenderer()
-            renderer.ResetCamera()
-            print(f"DEBUG: Applied fallback camera reset for view {widgetIndex}")
-      except Exception as fallback_error:
-        print(f"DEBUG: Fallback camera reset failed: {fallback_error}")
-      
-      print(f"SUCCESS: Comparison created with {comparison_count} pairs from loaded DeCA models")
-      print("Blue = Individual specimens, Green = Atlas (aligned reference)")
-      return True
-      
-    except Exception as e:
-      print(f"ERROR in createComparisonFromLoadedModels: {str(e)}")
-      import traceback
-      traceback.print_exc()
-      return False
-
-
-  def performColorClustering(self, modelNode, numClusters, method):
-    """Perform color clustering analysis on model"""
-    try:
-      polydata = modelNode.GetPolyData()
-      colorArray = polydata.GetPointData().GetScalars()
-      
-      if not colorArray:
-        print("Model has no color data for clustering")
-        return None
-      
-      # Convert colors to numpy array
-      colors = vtk_np.vtk_to_numpy(colorArray)
-      if colors.shape[1] < 3:
-        print("Color data must have at least 3 components (RGB)")
-        return None
-      
-      # Normalize colors to [0,1] if needed
-      if colors.max() > 1.0:
-        colors = colors / 255.0
-      
-      # Perform clustering
-      if method.startswith("K-means"):
-        init = 'k-means++' if method == "K-means++" else 'random'
-        kmeans = KMeans(n_clusters=numClusters, init=init, random_state=42)
-        labels = kmeans.fit_predict(colors[:, :3])
-        centroids = kmeans.cluster_centers_
-      elif method == "Hierarchical":
-        from sklearn.cluster import AgglomerativeClustering
-        clustering = AgglomerativeClustering(n_clusters=numClusters)
-        labels = clustering.fit_predict(colors[:, :3])
-        
-        # Calculate centroids manually for hierarchical clustering
-        centroids = []
-        for i in range(numClusters):
-          cluster_colors = colors[labels == i, :3]
-          if len(cluster_colors) > 0:
-            centroids.append(np.mean(cluster_colors, axis=0))
-          else:
-            centroids.append([0, 0, 0])
-        centroids = np.array(centroids)
-      
-      # Calculate cluster statistics
-      cluster_counts = np.bincount(labels, minlength=numClusters)
-      total_points = len(labels)
-      percentages = (cluster_counts / total_points) * 100
-      
-      # Create color-coded visualization
-      clusteredColorArray = vtk.vtkUnsignedCharArray()
-      clusteredColorArray.SetNumberOfComponents(3)
-      clusteredColorArray.SetNumberOfTuples(total_points)
-      clusteredColorArray.SetName("ClusterColors")
-      
-      # Assign cluster colors using a simple color scheme
-      cluster_colors_rgb = [
-        [255, 0, 0],    # Red
-        [0, 255, 0],    # Green
-        [0, 0, 255],    # Blue
-        [255, 255, 0],  # Yellow
-        [255, 0, 255],  # Magenta
-        [0, 255, 255],  # Cyan
-        [255, 128, 0],  # Orange
-        [128, 0, 255],  # Purple
-        [255, 192, 203], # Pink
-        [128, 128, 128]  # Gray
-      ]
-      
-      for i in range(total_points):
-        cluster_id = labels[i]
-        color = cluster_colors_rgb[cluster_id % len(cluster_colors_rgb)]
-        clusteredColorArray.SetTuple3(i, color[0], color[1], color[2])
-      
-      # Apply clustered colors to model
-      polydata.GetPointData().SetScalars(clusteredColorArray)
-      modelNode.Modified()
-      
-      results = {
-        'labels': labels,
-        'centroids': centroids,
-        'cluster_counts': cluster_counts,
-        'percentages': percentages,
-        'total_points': total_points,
-        'method': method
-      }
-      
-      print(f"Color clustering completed: {numClusters} clusters, {total_points} points")
-      return results
-      
-    except Exception as e:
-      print(f"Error in performColorClustering: {str(e)}")
-      return None
-
-  def generateColorDendrogram(self, modelNode, threshold):
-    """Generate hierarchical clustering dendrogram of colors"""
-    try:
-      polydata = modelNode.GetPolyData()
-      colorArray = polydata.GetPointData().GetScalars()
-      
-      if not colorArray:
-        print("Model has no color data for dendrogram")
-        return None
-      
-      # Convert colors to numpy and sample for performance
-      colors = vtk_np.vtk_to_numpy(colorArray)
-      if colors.shape[1] < 3:
-        print("Color data must have at least 3 components (RGB)")
-        return None
-      
-      # Normalize colors
-      if colors.max() > 1.0:
-        colors = colors / 255.0
-      
-      # Sample colors for dendrogram (max 1000 points for performance)
-      max_samples = 1000
-      if len(colors) > max_samples:
-        indices = np.random.choice(len(colors), max_samples, replace=False)
-        sampled_colors = colors[indices, :3]
-      else:
-        sampled_colors = colors[:, :3]
-      
-      # Compute pairwise distances
-      distances = pdist(sampled_colors, metric='euclidean')
-      
-      # Perform hierarchical clustering
-      linkage_matrix = linkage(distances, method='ward')
-      
-      # Create dendrogram plot
-      plt.figure(figsize=(12, 8))
-      dendrogram(linkage_matrix, truncate_mode='level', p=10)
-      plt.title('Color Hierarchy Dendrogram')
-      plt.xlabel('Sample Index')
-      plt.ylabel('Distance')
-      
-      # Save dendrogram
-      output_dir = os.path.expanduser("~/Desktop")
-      dendrogram_path = os.path.join(output_dir, "color_dendrogram.png")
-      plt.savefig(dendrogram_path, dpi=300, bbox_inches='tight')
-      plt.close()
-      
-      print(f"Generated color dendrogram saved to: {dendrogram_path}")
-      return dendrogram_path
-      
-    except Exception as e:
-      print(f"Error in generateColorDendrogram: {str(e)}")
-      return None
-
 
   def findBlenderExecutable(self):
     """
@@ -7055,3 +5040,113 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return {"success": False}
 
+class ColorTheme:
+    """Centralized color theme management for InterDeCA"""
+    
+    @staticmethod
+    def getTheme():
+        """Get color theme based on Slicer's current theme"""
+        # Check if Slicer is in dark mode
+        palette = qt.QApplication.palette()
+        isDarkMode = palette.color(qt.QPalette.Window).lightness() < 128
+        
+        if isDarkMode:
+            return ColorTheme.getDarkTheme()
+        else:
+            return ColorTheme.getLightTheme()
+    
+    @staticmethod
+    def getLightTheme():
+        return {
+            'primary': '#4CAF50',
+            'primary_hover': '#45A049',
+            'primary_pressed': '#3D8B40',
+            'secondary': '#87CEEB',
+            'secondary_hover': '#6BB6E8',
+            'secondary_pressed': '#4FA8D8',
+            'accent': '#9C27B0',
+            'accent_hover': '#8E24AA',
+            'accent_pressed': '#7B1FA2',
+            'danger': '#FF6B6B',
+            'danger_hover': '#FF5252',
+            'danger_pressed': '#E53935',
+            'neutral': '#607D8B',
+            'neutral_hover': '#546E7A',
+            'neutral_pressed': '#455A64',
+            'text_primary': '#2C3E50',
+            'text_secondary': 'palette(disabled-text)',
+            'text_on_primary': 'white',
+            'disabled_bg': '#CCCCCC',
+            'disabled_text': '#666666'
+        }
+    
+    @staticmethod
+    def getDarkTheme():
+        return {
+            'primary': '#66BB6A',
+            'primary_hover': '#5CB85C',
+            'primary_pressed': '#4CAF50',
+            'secondary': '#64B5F6',
+            'secondary_hover': '#42A5F5',
+            'secondary_pressed': '#2196F3',
+            'accent': '#BA68C8',
+            'accent_hover': '#AB47BC',
+            'accent_pressed': '#9C27B0',
+            'danger': '#EF5350',
+            'danger_hover': '#E53935',
+            'danger_pressed': '#D32F2F',
+            'neutral': '#78909C',
+            'neutral_hover': '#607D8B',
+            'neutral_pressed': '#546E7A',
+            'text_primary': '#FFFFFF',
+            'text_secondary': 'palette(disabled-text)',
+            'text_on_primary': 'white',
+            'disabled_bg': '#424242',
+            'disabled_text': '#9E9E9E'
+        }
+    
+    @staticmethod
+    def getButtonStyle(color_type='primary', disabled_style=True):
+        """Generate button stylesheet with theme colors"""
+        theme = ColorTheme.getTheme()
+        
+        style = f"""
+        QPushButton {{
+            background-color: {theme[color_type]};
+            color: {theme['text_on_primary']};
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            min-height: 20px;
+        }}
+        QPushButton:hover {{
+            background-color: {theme[color_type + '_hover']};
+        }}
+        QPushButton:pressed {{
+            background-color: {theme[color_type + '_pressed']};
+        }}"""
+        
+        if disabled_style:
+            style += f"""
+        QPushButton:disabled {{
+            background-color: {theme['disabled_bg']};
+            color: {theme['disabled_text']};
+        }}"""
+        
+        return style
+    
+    @staticmethod
+    def getLabelStyle(style_type='secondary'):
+        """Generate label stylesheet with theme colors"""
+        theme = ColorTheme.getTheme()
+        return f"QLabel {{ color: {theme['text_secondary']}; font-style: italic; }}"
+    
+    @staticmethod
+    def getProgressLabelStyle():
+        """Get progress label style"""
+        return """
+        QLabel { 
+            color: palette(link); 
+            font-weight: bold; 
+        }"""
