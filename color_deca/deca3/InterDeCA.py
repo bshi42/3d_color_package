@@ -1410,21 +1410,42 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
 
   def onGenerateAtlasButton(self):
+    """
+    Generates or loads an atlas model for DeCAL analysis.
+
+    Handles two workflows:
+    1. Loading existing atlas: Uses pre-computed atlas model and landmarks
+    2. Generating new atlas: Creates average shape from specimen collection
+
+    Outputs atlas files to the DeCA output directory for use in dense
+    correspondence analysis.
+    """
+    # Initializes the InterDeCA logic processor
     logic = InterDeCALogic()
-    #set up output directory
+
+    # Sets up the output directory structure with DeCAL-specific folders
     self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+
+    # Validates that directory creation was successful
     if self.folderNames == {}:
       self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
       return
+
+    # Stores paths to original data for reference during processing
     self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
     self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
+
+    # Determines whether to load existing atlas or generate new one
     if self.loadAtlasOptionDCL.checked:
+      # Loads existing atlas model from file
       try:
         atlasModelPath = self.DCLBaseModelSelector.currentPath
         self.atlasModel = slicer.util.loadModel(atlasModelPath)
       except:
         self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
         return
+
+      # Loads corresponding atlas landmarks
       try:
         atlasLMPath = self.DCLBaseLMSelector.currentPath
         self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
@@ -1433,34 +1454,60 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
         return
     else:
-      removeScale = True
+      # Generates new atlas from specimen collection using Procrustes alignment
+      removeScale = True  # Removes scale differences during alignment
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+
+    # Saves the atlas model to the output directory for later use
     atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
+
+    # Saves the atlas landmarks alongside the model
     atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+
+    # Enables the next step button for point number calculation
     self.getPointNumberButton.enabled = True
 
   def generateNewAtlas(self, removeScale, log):
+    """
+    Creates an unbiased atlas model from a collection of specimens.
+
+    Implements the following workflow:
+    1. Identifies specimen closest to mean shape using Procrustes analysis
+    2. Performs rigid alignment of all specimens to this template
+    3. Computes average shape from aligned specimens
+    4. Cleans up temporary files
+
+    Args:
+      removeScale: Boolean to normalize scale during alignment
+      log: Qt text widget for progress reporting
+
+    Returns:
+      tuple: (atlasModel, atlasLMs) - Generated atlas and average landmarks
+    """
+    # Initializes the InterDeCA logic for processing operations
     logic = InterDeCALogic()
 
-    # getClosestToMeanPath returns a filename, we need to extract the base subject ID
+    # Determines which specimen is closest to the mean shape configuration
+    # This specimen will serve as the initial template for alignment
     try:
       closestFileName = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
       if closestFileName is None:
         log.appendPlainText("Error: Could not determine closest sample to mean")
         return None, None
 
-      # Extract the base subject ID by removing landmark file extensions
+      # Extracts the subject ID by removing landmark file extensions
+      # Handles multiple extension formats (.fcsv, .mrk.json, etc.)
       subjectID = closestFileName
-      # Strip common landmark file extensions (.fcsv, .mrk, .json)
       fileNameBase = Path(subjectID)
       while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
         fileNameBase = fileNameBase.with_suffix('')
       subjectID = str(fileNameBase)
 
+      # Reports the selected template specimen for user verification
       log.appendPlainText(f"Closest sample to mean: {closestFileName}")
       log.appendPlainText(f"Using subject ID: {subjectID}")
     except Exception as e:
@@ -1500,9 +1547,23 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
 
   def onGetPointNumberButton(self):
+    """
+    Calculates the number of points in the subsampled atlas.
+
+    Uses the spacing tolerance value to downsample the atlas model and
+    reports the resulting point count. This helps users understand the
+    density of correspondence points before running DeCAL.
+    """
+    # Creates logic instance for point calculation
     logic = InterDeCALogic()
+
+    # Subsamples the atlas based on the specified spacing tolerance
     subsampledTemplate, pointNumber = logic.runCheckPoints(self.atlasModel, self.spacingTolerance.value)
+
+    # Reports the point count to help users assess correspondence density
     self.logInfoDCL.appendPlainText(f'The subsampled template has a total of {pointNumber} points.')
+
+    # Enables the DeCAL execution button now that point count is known
     self.DCLApplyButton.enabled = True
 
   def onTabChanged(self, index):
