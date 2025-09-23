@@ -153,7 +153,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     #
     self.DCBaseLMSelector = ctk.ctkPathLineEdit()
     self.DCBaseLMSelector.filters  = ctk.ctkPathLineEdit().Files
-    self.DCBaseLMSelector.nameFilters=["Point set (*.fcsv *.json *.mrk.json"]
+    self.DCBaseLMSelector.nameFilters=["Point set (*.fcsv *.json *.mrk.json)"]
     atlasOptionLayout.addRow("Atlas landmarks: ", self.DCBaseLMSelector)
 
     #
@@ -638,12 +638,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Radius control
     self.selectionRadiusSlider = ctk.ctkSliderWidget()
-    self.selectionRadiusSlider.minimum = 0.1
-    self.selectionRadiusSlider.maximum = 50.0
-    self.selectionRadiusSlider.singleStep = 0.1  # Set after min/max to avoid bounds issues
-    self.selectionRadiusSlider.value = 5.0
+    self.selectionRadiusSlider.minimum = 0.01
+    self.selectionRadiusSlider.maximum = 10.0
+    self.selectionRadiusSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
+    self.selectionRadiusSlider.value = 0.5
     try:
-        self.selectionRadiusSlider.decimals = 1
+        self.selectionRadiusSlider.decimals = 2
     except AttributeError:
         pass  # Some versions might not have this property
     self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
@@ -657,12 +657,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.pointIndexSpinBox.setToolTip("Index of the point to use for selection (0-based)")
     self.landmarkLayout.addRow("Point Index:", self.pointIndexSpinBox)
     
+    # Click to select landmark button
+    self.clickSelectLandmarkButton = qt.QPushButton("Click to Select Landmark")
+    self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
+    self.clickSelectLandmarkButton.enabled = False
+    self.clickSelectLandmarkButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.landmarkLayout.addRow("", self.clickSelectLandmarkButton)
+    
     # Apply landmark selection button
     self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
     self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
     self.applyLandmarkSelectionButton.enabled = False
     self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
+    
+    # Export landmark selection button
+    self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
+    self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
+    self.exportLandmarkSelectionButton.enabled = False
+    self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
     
     regionLayout.addRow(self.landmarkFrame)
     
@@ -731,6 +745,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
     self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
     self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
+    self.clickSelectLandmarkButton.connect('clicked(bool)', self.onClickSelectLandmark)
     self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
     
 
@@ -1373,6 +1389,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Update landmark selection button
     hasMarkup = bool(self.selectionMarkupSelector.currentNode())
     self.applyLandmarkSelectionButton.enabled = hasModel and hasMarkup
+    self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
+    self.clickSelectLandmarkButton.enabled = hasModel and hasMarkup
     
     # Update point index maximum based on markup points
     if hasMarkup:
@@ -1673,14 +1691,70 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       percentage = (numVertices / totalVertices) * 100 if totalVertices > 0 else 0
       self.selectionInfoLabel.setText(f"Selected: {numVertices}/{totalVertices} vertices ({percentage:.1f}%)")
       
-      # Enable clear button
+      # Enable clear and export buttons
       self.clearSelectionButton.enabled = True
+      self.exportLandmarkSelectionButton.enabled = True
       
       print(f"Landmark region selection completed: {numVertices} vertices selected")
       
     except Exception as e:
       slicer.util.errorDisplay(f"Error during landmark selection: {str(e)}")
       print(f"Landmark selection error: {e}")
+  
+  def onExportLandmarkSelection(self):
+    """Export the selected region as a new model"""
+    modelNode = self.regionMeshSelector.currentNode()
+    markupNode = self.selectionMarkupSelector.currentNode()
+    
+    if not (modelNode and markupNode):
+      slicer.util.errorDisplay("Please select both a mesh and markup points.")
+      return
+    
+    if markupNode.GetNumberOfControlPoints() == 0:
+      slicer.util.errorDisplay("No markup points found. Please add some points first.")
+      return
+    
+    try:
+      # Get the current selection parameters
+      method = self.selectionMethodCombo.currentText
+      radius = self.selectionRadiusSlider.value
+      
+      # Get selected vertices
+      if method == "Landmark + Radius":
+        pointIndex = self.pointIndexSpinBox.value
+        if pointIndex >= markupNode.GetNumberOfControlPoints():
+          slicer.util.errorDisplay(f"Point index {pointIndex} is out of range. Available points: 0-{markupNode.GetNumberOfControlPoints()-1}")
+          return
+        selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
+      else:  # Multiple Landmarks + Radius
+        selectedVertices = self.selectMeshRegionByMultiplePoints(modelNode, markupNode, radius)
+      
+      if not selectedVertices:
+        slicer.util.warningDisplay("No vertices were selected. Try adjusting the radius or landmark positions.")
+        return
+      
+      # Create new model from selected vertices
+      newModelNode = self.createModelFromSelectedVertices(modelNode, selectedVertices)
+      
+      if newModelNode:
+        # Enable clear button
+        self.clearSelectionButton.enabled = True
+        
+        # Update info
+        numVertices = len(selectedVertices)
+        self.selectionInfoLabel.setText(f"Exported model: {numVertices} vertices")
+        
+        slicer.util.infoDisplay(f"Successfully exported selected region!\n"
+                              f"New model: {newModelNode.GetName()}\n"
+                              f"Vertices: {numVertices}")
+        
+        print(f"Landmark selection exported: {numVertices} vertices to new model '{newModelNode.GetName()}'")
+      else:
+        slicer.util.errorDisplay("Failed to create model from selected vertices.")
+        
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error exporting landmark selection: {str(e)}")
+      print(f"Export landmark selection error: {e}")
   
   def onClearSelection(self):
     """Clear the current region selection"""
@@ -1689,7 +1763,130 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.clearRegionSelection(modelNode)
       self.selectionInfoLabel.setText("No region selected")
       self.clearSelectionButton.enabled = False
+      self.exportLandmarkSelectionButton.enabled = False
       print("Region selection cleared")
+  
+  def onClickSelectLandmark(self):
+    """Enable click-to-select mode for landmarks"""
+    if not hasattr(self, '_clickSelectMode') or not self._clickSelectMode:
+      # Enable click-to-select mode
+      self._clickSelectMode = True
+      self._setupClickSelectMode()
+      self.clickSelectLandmarkButton.setText("Cancel Click Selection")
+      self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it, or click this button to cancel")
+      slicer.util.infoDisplay("Click-to-select mode enabled. Click on a landmark point in the 3D view to select it.")
+    else:
+      # Disable click-to-select mode
+      self._disableClickSelectMode()
+  
+  def _setupClickSelectMode(self):
+    """Setup the click-to-select interaction"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if not markupNode:
+      slicer.util.errorDisplay("Please select markup points first.")
+      return
+    
+    # Store original interaction mode
+    self._originalInteractionMode = slicer.app.applicationLogic().GetInteractionNode().GetCurrentInteractionMode()
+    
+    # Enable interaction mode for clicking
+    slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.ViewTransform)
+    
+    # Connect to markup selection events using Slicer's built-in system
+    self._setupMarkupSelectionObserver()
+  
+  def _disableClickSelectMode(self):
+    """Disable click-to-select mode"""
+    self._clickSelectMode = False
+    self.clickSelectLandmarkButton.setText("Click to Select Landmark")
+    self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
+    
+    # Restore original interaction mode
+    if hasattr(self, '_originalInteractionMode'):
+      slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(self._originalInteractionMode)
+    
+    # Disconnect from markup selection observers
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if markupNode:
+      if hasattr(self, '_markupObserver'):
+        markupNode.RemoveObserver(self._markupObserver)
+      if hasattr(self, '_markupSelectionObserver'):
+        markupNode.RemoveObserver(self._markupSelectionObserver)
+  
+  def _setupMarkupSelectionObserver(self):
+    """Setup observer for markup point selection events"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if not markupNode:
+      return
+    
+    # Add observer for markup point selection events
+    # Use the correct event names for Slicer
+    self._markupObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onMarkupPointInteraction)
+    
+    # Also observe for point selection events
+    self._markupSelectionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self._onMarkupPointInteraction)
+  
+  
+  def _onMarkupPointInteraction(self, caller, event):
+    """Handle markup point interaction events"""
+    if not self._clickSelectMode:
+      return
+    
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if not markupNode:
+      return
+    
+    # Get the currently active/selected point index
+    activePointIndex = markupNode.GetActiveControlPoint()
+    
+    if activePointIndex >= 0:
+      self.pointIndexSpinBox.value = activePointIndex
+      slicer.util.infoDisplay(f"Selected landmark point {activePointIndex}")
+  
+  def _findClickedLandmark(self):
+    """Fallback method to find which landmark was clicked"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if not markupNode:
+      return
+    
+    # Get the 3D view and mouse position
+    threeDWidget = slicer.app.layoutManager().threeDWidget(0)
+    threeDView = threeDWidget.threeDView()
+    interactor = threeDView.interactor()
+    
+    # Get mouse position in display coordinates
+    mousePos = interactor.GetEventPosition()
+    
+    # Convert to world coordinates
+    renderer = threeDView.renderWindow().GetRenderers().GetFirstRenderer()
+    worldPos = [0, 0, 0, 0]
+    renderer.SetDisplayPoint(mousePos[0], mousePos[1], 0)
+    renderer.DisplayToWorld()
+    worldPos = renderer.GetWorldPoint()
+    
+    # Check each landmark point to see if click is near it
+    closestIndex = -1
+    minDistance = float('inf')
+    tolerance = 10.0  # 10 unit tolerance for landmark selection
+    
+    for i in range(markupNode.GetNumberOfControlPoints()):
+      landmarkPos = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(i, landmarkPos)
+      
+      # Calculate distance from click to landmark
+      distance = vtk.vtkMath.Distance2BetweenPoints(worldPos[:3], landmarkPos)
+      
+      if distance < minDistance:
+        minDistance = distance
+        closestIndex = i
+    
+    # If we found a close enough landmark, select it
+    if closestIndex >= 0 and minDistance < (tolerance * tolerance):
+      self.pointIndexSpinBox.value = closestIndex
+      slicer.util.infoDisplay(f"Selected landmark point {closestIndex}")
+    else:
+      # Show feedback that no landmark was found near the click
+      slicer.util.warningDisplay("No landmark point found near the clicked position. Try clicking closer to a landmark.")
   
   def selectMeshRegionByRadius(self, modelNode, markupNode, pointIndex, radius):
     """Select mesh vertices within radius of a specific markup point"""
@@ -1700,16 +1897,28 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Get mesh data
     polyData = modelNode.GetPolyData()
     points = polyData.GetPoints()
+    totalPoints = points.GetNumberOfPoints()
+    
+    # Calculate mesh bounds for debugging
+    bounds = polyData.GetBounds()
+    meshSize = max(bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4])
     
     # Find vertices within radius
     selectedVertices = []
     radiusSquared = radius * radius
     
-    for i in range(points.GetNumberOfPoints()):
+    for i in range(totalPoints):
       vertex = points.GetPoint(i)
       distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
       if distanceSquared <= radiusSquared:
         selectedVertices.append(i)
+    
+    # Debug information
+    print(f"Landmark selection debug:")
+    print(f"  Radius: {radius} units")
+    print(f"  Mesh size: {meshSize:.3f} units (max dimension)")
+    print(f"  Radius as % of mesh: {(radius/meshSize)*100:.2f}%")
+    print(f"  Selected: {len(selectedVertices)}/{totalPoints} vertices ({(len(selectedVertices)/totalPoints)*100:.1f}%)")
     
     return selectedVertices
   
@@ -1766,6 +1975,77 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFileColdToHotRainbow.txt')
     
     modelNode.Modified()
+  
+  def createModelFromSelectedVertices(self, modelNode, selectedVertices):
+    """Create a new model from selected vertices"""
+    try:
+      # Get the original mesh data
+      originalPolyData = modelNode.GetPolyData()
+      points = originalPolyData.GetPoints()
+      polys = originalPolyData.GetPolys()
+      
+      # Create new polydata
+      newPolyData = vtk.vtkPolyData()
+      newPoints = vtk.vtkPoints()
+      newPolys = vtk.vtkCellArray()
+      
+      # Create mapping from old vertex IDs to new vertex IDs
+      vertexMapping = {}
+      newVertexId = 0
+      
+      # Add selected vertices to new mesh
+      for vertexId in selectedVertices:
+        vertexMapping[vertexId] = newVertexId
+        point = points.GetPoint(vertexId)
+        newPoints.InsertNextPoint(point)
+        newVertexId += 1
+      
+      # Add faces that only contain selected vertices
+      polys.InitTraversal()
+      cell = vtk.vtkIdList()
+      while polys.GetNextCell(cell):
+        # Check if all vertices of this cell are selected
+        allVerticesSelected = True
+        for i in range(cell.GetNumberOfIds()):
+          if cell.GetId(i) not in vertexMapping:
+            allVerticesSelected = False
+            break
+        
+        # If all vertices are selected, add the face to new mesh
+        if allVerticesSelected:
+          newCell = vtk.vtkIdList()
+          for i in range(cell.GetNumberOfIds()):
+            newCell.InsertNextId(vertexMapping[cell.GetId(i)])
+          newPolys.InsertNextCell(newCell)
+      
+      # Set up the new polydata
+      newPolyData.SetPoints(newPoints)
+      newPolyData.SetPolys(newPolys)
+      
+      # Create new model node
+      newModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+      newModelNode.SetAndObservePolyData(newPolyData)
+      
+      # Set name based on original model
+      originalName = modelNode.GetName()
+      newModelNode.SetName(f"{originalName}_SelectedRegion")
+      
+      # Copy display properties from original model
+      originalDisplayNode = modelNode.GetDisplayNode()
+      if originalDisplayNode:
+        newDisplayNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
+        newDisplayNode.SetColor(originalDisplayNode.GetColor())
+        newDisplayNode.SetOpacity(originalDisplayNode.GetOpacity())
+        newModelNode.SetAndObserveDisplayNodeID(newDisplayNode.GetID())
+      
+      # Update the new model
+      newModelNode.Modified()
+      
+      return newModelNode
+      
+    except Exception as e:
+      print(f"Error creating model from selected vertices: {e}")
+      return None
   
   def clearRegionSelection(self, modelNode):
     """Clear the region selection visualization"""
