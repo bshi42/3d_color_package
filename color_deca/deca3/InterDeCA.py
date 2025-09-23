@@ -488,9 +488,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Interpolation slider
     self.interpolationSlider = ctk.ctkSliderWidget()
-    self.interpolationSlider.singleStep = 0.01
     self.interpolationSlider.minimum = 0.0
     self.interpolationSlider.maximum = 1.0
+    self.interpolationSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
     self.interpolationSlider.value = 0.0
     self.interpolationSlider.setToolTip("Interpolate between original model (0.0) and atlas model (1.0)")
     self.interpolationSlider.enabled = False
@@ -575,10 +575,40 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.segmentEditorLayout = qt.QFormLayout()
     self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
     
-    self.setupSegmentEditorButton = qt.QPushButton("Setup Segment Editor")
-    self.setupSegmentEditorButton.setToolTip("Convert model to segmentation and open Segment Editor")
+    # Existing segmentation selector for loading saved work
+    self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
+    self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
+    self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
+    self.existingSegmentationSelector.selectNodeUponCreation = False
+    self.existingSegmentationSelector.noneEnabled = True
+    self.existingSegmentationSelector.addEnabled = False
+    self.existingSegmentationSelector.removeEnabled = False
+    self.existingSegmentationSelector.showHidden = False
+    self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
+    self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
+    
+    self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
+    self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
+    self.loadSegmentationButton.enabled = False
+    self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.segmentEditorLayout.addRow(self.loadSegmentationButton)
+    
+    # Add a separator line
+    separator1 = qt.QFrame()
+    separator1.setFrameShape(qt.QFrame.HLine)
+    separator1.setFrameShadow(qt.QFrame.Sunken)
+    self.segmentEditorLayout.addRow(separator1)
+    
+    self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
+    self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
     self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
+    
+    # Add another separator line
+    separator2 = qt.QFrame()
+    separator2.setFrameShape(qt.QFrame.HLine)
+    separator2.setFrameShadow(qt.QFrame.Sunken)
+    self.segmentEditorLayout.addRow(separator2)
     
     self.exportSelectionButton = qt.QPushButton("Export Selected Region")
     self.exportSelectionButton.setToolTip("Export painted region back to a model")
@@ -610,7 +640,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.selectionRadiusSlider = ctk.ctkSliderWidget()
     self.selectionRadiusSlider.minimum = 0.1
     self.selectionRadiusSlider.maximum = 50.0
-    self.selectionRadiusSlider.singleStep = 0.1  
+    self.selectionRadiusSlider.singleStep = 0.1  # Set after min/max to avoid bounds issues
     self.selectionRadiusSlider.value = 5.0
     try:
         self.selectionRadiusSlider.decimals = 1
@@ -695,6 +725,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Region selection connections
     self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
     self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
+    self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
+    self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
     self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
     self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
     self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
@@ -1034,6 +1066,142 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Add vertical spacer so extra space goes below content
     recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
 
+  def onExistingSegmentationChanged(self):
+    """Handle selection of existing segmentation"""
+    segmentationNode = self.existingSegmentationSelector.currentNode()
+    self.loadSegmentationButton.enabled = (segmentationNode is not None)
+    
+  def onLoadSegmentation(self):
+    """Load and configure existing segmentation for editing"""
+    segmentationNode = self.existingSegmentationSelector.currentNode()
+    if not segmentationNode:
+      slicer.util.errorDisplay("Please select a segmentation to load.")
+      return
+    
+    try:
+      # Get the reference volume from the segmentation if it exists
+      referenceVolumeNode = segmentationNode.GetNodeReference("referenceImageGeometryRef")
+      
+      # If no reference volume, try to find one with matching name
+      if not referenceVolumeNode:
+        # Look for reference volume with similar name
+        segmentationName = segmentationNode.GetName()
+        possibleRefVolumeName = f"{segmentationName.replace('_Segmentation', '')}_ReferenceVolume"
+        referenceVolumeNode = slicer.util.getFirstNodeByName(possibleRefVolumeName)
+        
+        # If still no reference volume, create a minimal one from segmentation bounds
+        if not referenceVolumeNode:
+          bounds = [0, 0, 0, 0, 0, 0]
+          segmentationNode.GetBounds(bounds)
+          
+          referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+          referenceVolumeNode.SetName(f"{segmentationName}_ReferenceVolume")
+          
+          # Set up minimal volume geometry
+          spacing = [0.5, 0.5, 0.5]
+          imageSize = [
+            max(20, int((bounds[1] - bounds[0]) / spacing[0]) + 1),
+            max(20, int((bounds[3] - bounds[2]) / spacing[1]) + 1), 
+            max(20, int((bounds[5] - bounds[4]) / spacing[2]) + 1)
+          ]
+          
+          imageData = vtk.vtkImageData()
+          imageData.SetDimensions(imageSize)
+          imageData.SetSpacing(spacing)
+          imageData.SetOrigin(bounds[0], bounds[2], bounds[4])
+          imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+          imageData.GetPointData().GetScalars().Fill(100)
+          
+          referenceVolumeNode.SetAndObserveImageData(imageData)
+          
+          # Set reference geometry for the segmentation
+          segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
+      
+      # Configure segmentation display for 3D painting
+      segmentationDisplayNode = segmentationNode.GetDisplayNode()
+      if segmentationDisplayNode:
+        # Enable 3D display with proper opacity
+        segmentationDisplayNode.SetVisibility3D(True)
+        segmentationDisplayNode.SetOpacity3D(0.8)  # More opaque for better visibility
+        
+        # Enable surface representation for 3D painting
+        try:
+          # Use the segmentation logic to get the correct representation name
+          segmentationLogic = slicer.modules.segmentations.logic()
+          closedSurfaceReprName = segmentationLogic.GetSegmentationClosedSurfaceRepresentationName()
+          segmentationDisplayNode.SetPreferredDisplayRepresentationName3D(closedSurfaceReprName)
+        except:
+          # Fallback approach - try common representation names
+          try:
+            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
+          except:
+            # Final fallback
+            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Binary labelmap")
+        
+        # Enable slice fill for 2D views
+        segmentationDisplayNode.SetVisibility2DFill(True)
+        segmentationDisplayNode.SetVisibility2DOutline(True)
+        
+        # Ensure segments are visible by default
+        segmentationDisplayNode.SetAllSegmentsVisibility3D(True)
+        segmentationDisplayNode.SetAllSegmentsVisibility2DFill(True)
+        segmentationDisplayNode.SetAllSegmentsVisibility2DOutline(True)
+      
+      # Switch to Segment Editor module
+      slicer.util.selectModule("SegmentEditor")
+      
+      # Set up segment editor widget
+      segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
+      segmentEditorWidget.setSegmentationNode(segmentationNode)
+      segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)
+      
+      # Select the first editable segment or create one if none exists
+      segmentation = segmentationNode.GetSegmentation()
+      segmentIDs = vtk.vtkStringArray()
+      segmentation.GetSegmentIDs(segmentIDs)
+      
+      if segmentIDs.GetNumberOfValues() == 0:
+        # No segments exist, create one
+        segmentation.AddEmptySegment("LoadedRegion")
+        segmentEditorWidget.setCurrentSegmentID("LoadedRegion")
+      else:
+        # Use the first segment
+        firstSegmentID = segmentIDs.GetValue(0)
+        segmentEditorWidget.setCurrentSegmentID(firstSegmentID)
+      
+      # Hide the reference volume completely to avoid conflicts
+      if referenceVolumeNode.GetDisplayNode():
+        referenceVolumeNode.GetDisplayNode().SetVisibility(False)
+      
+      # Configure 3D view for painting
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager:
+        threeDWidget = layoutManager.threeDWidget(0)
+        if threeDWidget:
+          threeDView = threeDWidget.threeDView()
+          threeDViewNode = threeDView.mrmlViewNode()
+          if threeDViewNode:
+            # Set 3D view to perspective mode for better painting
+            try:
+              threeDViewNode.SetRenderMode(threeDViewNode.Perspective)
+            except:
+              # Fallback - just ensure the view is properly configured
+              pass
+      
+      # Enable export button
+      self.exportSelectionButton.enabled = True
+      self.currentSegmentationNode = segmentationNode
+      self.currentReferenceVolumeNode = referenceVolumeNode
+      
+      slicer.util.infoDisplay(f"Loaded segmentation '{segmentationNode.GetName()}' successfully!\n\n"
+                            "You can now continue editing the loaded segmentation.\n"
+                            "Use Paint, Erase, or other tools to modify your selection.\n\n"
+                            "When done, click 'Export Selected Region' to create a new model.")
+      
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error loading segmentation: {str(e)}")
+      print(f"Load segmentation error: {e}")
+
   def autoDetectBlender(self):
     """Automatically detect and set Blender executable path if not already set."""
     try:
@@ -1249,21 +1417,23 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
       referenceVolumeNode.SetName(f"{modelNode.GetName()}_ReferenceVolume")
       
-      # Set up the volume geometry
-      spacing = [1.0, 1.0, 1.0]  # 1mm spacing
+      # Set up the volume geometry with tighter bounds around the model
+      spacing = [0.2, 0.2, 0.2]  # Even finer spacing for better surface constraint
+      # Add small margin around model bounds
+      margin = 2.0  # 2mm margin
       imageSize = [
-        max(10, int((bounds[1] - bounds[0]) / spacing[0]) + 1),
-        max(10, int((bounds[3] - bounds[2]) / spacing[1]) + 1), 
-        max(10, int((bounds[5] - bounds[4]) / spacing[2]) + 1)
+        max(20, int((bounds[1] - bounds[0] + 2*margin) / spacing[0]) + 1),
+        max(20, int((bounds[3] - bounds[2] + 2*margin) / spacing[1]) + 1), 
+        max(20, int((bounds[5] - bounds[4] + 2*margin) / spacing[2]) + 1)
       ]
       
-      # Create the image data
+      # Create the image data with margin
       imageData = vtk.vtkImageData()
       imageData.SetDimensions(imageSize)
       imageData.SetSpacing(spacing)
-      imageData.SetOrigin(bounds[0], bounds[2], bounds[4])
+      imageData.SetOrigin(bounds[0] - margin, bounds[2] - margin, bounds[4] - margin)
       imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
-      imageData.GetPointData().GetScalars().Fill(100)  # Fill with non-zero values
+      imageData.GetPointData().GetScalars().Fill(0)  # Start with zeros for better surface constraint
       
       referenceVolumeNode.SetAndObserveImageData(imageData)
       
@@ -1280,6 +1450,64 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Create a new empty segment for selection
       segmentationNode.GetSegmentation().AddEmptySegment("SelectedRegion")
       
+      # CRITICAL: Create a surface mask to constrain painting to model surface
+      try:
+        # Get the model's polydata
+        modelPolyData = modelNode.GetPolyData()
+        if modelPolyData:
+          # Create a binary mask from the model surface
+          segmentationLogic = slicer.modules.segmentations.logic()
+          # This creates a proper surface constraint for painting
+          segmentationLogic.CreateBinaryLabelmapRepresentation(segmentationNode)
+          
+          # Set the segmentation to use the model as a constraint
+          segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
+      except Exception as e:
+        print(f"Warning: Could not create surface constraint: {e}")
+        # Continue anyway
+      
+      # Ensure the segmentation has both representations for 3D painting
+      segmentationLogic = slicer.modules.segmentations.logic()
+      try:
+        # Create closed surface representation for 3D painting
+        segmentationLogic.CreateClosedSurfaceRepresentation(segmentationNode)
+        # Ensure binary labelmap representation exists for volume painting
+        if not segmentationNode.GetSegmentation().ContainsRepresentation("Binary labelmap"):
+          segmentationLogic.CreateBinaryLabelmapRepresentation(segmentationNode)
+      except Exception as e:
+        print(f"Warning: Could not create segmentation representations: {e}")
+        # Continue anyway
+      
+      # Configure segmentation display for 3D painting
+      segmentationDisplayNode = segmentationNode.GetDisplayNode()
+      if segmentationDisplayNode:
+        # Enable 3D display with proper opacity
+        segmentationDisplayNode.SetVisibility3D(True)
+        segmentationDisplayNode.SetOpacity3D(0.8)  # More opaque for better visibility
+        
+        # Enable surface representation for 3D painting
+        try:
+          # Use the segmentation logic to get the correct representation name
+          segmentationLogic = slicer.modules.segmentations.logic()
+          closedSurfaceReprName = segmentationLogic.GetSegmentationClosedSurfaceRepresentationName()
+          segmentationDisplayNode.SetPreferredDisplayRepresentationName3D(closedSurfaceReprName)
+        except:
+          # Fallback approach - try common representation names
+          try:
+            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
+          except:
+            # Final fallback
+            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Binary labelmap")
+        
+        # Enable slice fill for 2D views
+        segmentationDisplayNode.SetVisibility2DFill(True)
+        segmentationDisplayNode.SetVisibility2DOutline(True)
+        
+        # Ensure segments are visible by default
+        segmentationDisplayNode.SetAllSegmentsVisibility3D(True)
+        segmentationDisplayNode.SetAllSegmentsVisibility2DFill(True)
+        segmentationDisplayNode.SetAllSegmentsVisibility2DOutline(True)
+      
       # Switch to Segment Editor module
       slicer.util.selectModule("SegmentEditor")
       
@@ -1291,17 +1519,76 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Select the new segment for editing
       segmentEditorWidget.setCurrentSegmentID("SelectedRegion")
       
-      # Hide the reference volume from display (we only need it for editing)
-      referenceVolumeNode.GetDisplayNode().SetVisibility(False)
+      # Configure segment editor for 3D painting
+      try:
+        # Enable 3D painting in segment editor
+        segmentEditorWidget.setActiveEffectByName("Paint")
+        paintEffect = segmentEditorWidget.activeEffect()
+        if paintEffect:
+          # Set sphere brush for better 3D painting
+          paintEffect.setParameter("BrushType", "Sphere")
+          # Enable 3D painting mode
+          paintEffect.setParameter("BrushSphere", "1")
+          # Set a reasonable brush size
+          paintEffect.setParameter("BrushAbsoluteDiameter", "3.0")  # Smaller brush for precision
+          # CRITICAL: Enable surface constraint to prevent overflow
+          paintEffect.setParameter("PaintOver", "0")  # Don't paint over existing segments
+          paintEffect.setParameter("Threshold", "0.5")  # Surface threshold for better constraint
+      except Exception as e:
+        print(f"Warning: Could not configure paint effect: {e}")
+        # Continue anyway
+      
+      # Configure the segment color and visibility
+      segmentation = segmentationNode.GetSegmentation()
+      selectedSegment = segmentation.GetSegment("SelectedRegion")
+      if selectedSegment and segmentationDisplayNode:
+        # Set a bright, visible color for the segment
+        selectedSegment.SetColor(1.0, 0.0, 0.0)  # Red color
+        # Ensure the segment is visible
+        try:
+          segmentationDisplayNode.SetSegmentVisibility3D("SelectedRegion", True)
+          segmentationDisplayNode.SetSegmentVisibility2DFill("SelectedRegion", True)
+          segmentationDisplayNode.SetSegmentVisibility2DOutline("SelectedRegion", True)
+        except Exception as e:
+          print(f"Warning: Could not set segment visibility: {e}")
+          # Continue anyway - the segment should still work
+      
+      # Keep reference volume visible but very transparent for 3D painting to work
+      if referenceVolumeNode.GetDisplayNode():
+        referenceVolumeNode.GetDisplayNode().SetVisibility(True)
+        referenceVolumeNode.GetDisplayNode().SetOpacity(0.01)  # Almost invisible but still there
+        # This is important: the reference volume needs to be visible for 3D painting to work properly
+      
+      # Configure 3D view for painting
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager:
+        threeDWidget = layoutManager.threeDWidget(0)
+        if threeDWidget:
+          threeDView = threeDWidget.threeDView()
+          threeDViewNode = threeDView.mrmlViewNode()
+          if threeDViewNode:
+            # Set 3D view to perspective mode for better painting
+            try:
+              threeDViewNode.SetRenderMode(threeDViewNode.Perspective)
+            except:
+              # Fallback - just ensure the view is properly configured
+              pass
+      
+      # Force update the segmentation display
+      try:
+        segmentationNode.Modified()
+        if segmentationDisplayNode:
+          segmentationDisplayNode.Modified()
+      except Exception as e:
+        print(f"Warning: Could not update segmentation display: {e}")
+        # Continue anyway
       
       # Enable export button
       self.exportSelectionButton.enabled = True
       self.currentSegmentationNode = segmentationNode
       self.currentReferenceVolumeNode = referenceVolumeNode
       
-      slicer.util.infoDisplay("Segment Editor is now set up!\n\n"
-                            "Use Paint, Scissors, or other tools to select the region you want.\n"
-                            "When done, click 'Export Selected Region' to create a new model.")
+     
       
     except Exception as e:
       slicer.util.errorDisplay(f"Error setting up Segment Editor: {str(e)}")
