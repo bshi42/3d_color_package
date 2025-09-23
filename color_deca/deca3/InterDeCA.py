@@ -498,7 +498,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
 
     self.previewTextureCombo = qt.QComboBox()
-    self.previewTextureCombo.setToolTip("Preview a baked atlas-space PNG on the atlas model.")
+    self.previewTextureCombo.setToolTip("Preview a xbaked atlas-space PNG on the atlas model.")
     visualizeWidgetLayout.addRow("Preview baked texture:", self.previewTextureCombo)
     self.previewTextureCombo.connect("currentIndexChanged(int)", self.onPreviewTextureSelected)
     
@@ -512,7 +512,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     landmarkControlLayout = qt.QHBoxLayout(landmarkControlWidget)
     landmarkControlLayout.setContentsMargins(0, 0, 0, 0)
     
-    self.landmarkLockButton = qt.QPushButton("🔒 Lock Landmarks")
+    self.landmarkLockButton = qt.QPushButton("Lock Landmarks")
     self.landmarkLockButton.setToolTip("Lock/unlock all landmarks to prevent accidental movement")
     self.landmarkLockButton.setStyleSheet("""
       QPushButton {
@@ -533,10 +533,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """)
     self.landmarkLockButton.connect('clicked(bool)', self.onToggleLandmarkLock)
     landmarkControlLayout.addWidget(self.landmarkLockButton)
-    
-    self.landmarkLockStatusLabel = qt.QLabel("Landmarks: Unlocked")
-    self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
-    landmarkControlLayout.addWidget(self.landmarkLockStatusLabel)
     
     visualizeWidgetLayout.addRow("Landmark Control:", landmarkControlWidget)
     
@@ -567,8 +563,118 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       QPushButton:pressed {
         background-color: #4FA8D8;
       }
-    """)
+      """)
     visualizeWidgetLayout.addRow(self.startVisualizationButton)
+
+    #
+    # --- Mesh Region Selection Section ---
+    #
+    self.regionSelectionWidget = ctk.ctkCollapsibleButton()
+    self.regionSelectionWidget.text = "Mesh Region Selection"
+    self.regionSelectionWidget.collapsed = True
+    visualizeWidgetLayout.addRow(self.regionSelectionWidget)
+    regionLayout = qt.QFormLayout(self.regionSelectionWidget)
+    
+    # Target mesh selector for region selection
+    self.regionMeshSelector = slicer.qMRMLNodeComboBox()
+    self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
+    self.regionMeshSelector.selectNodeUponCreation = False
+    self.regionMeshSelector.noneEnabled = True
+    self.regionMeshSelector.addEnabled = False
+    self.regionMeshSelector.removeEnabled = False
+    self.regionMeshSelector.showHidden = False
+    self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
+    regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
+    
+    # Selection method combo
+    self.selectionMethodCombo = qt.QComboBox()
+    self.selectionMethodCombo.addItems([
+        "Segment Editor (Paint/Scissors)", 
+        "Landmark + Radius",
+        "Multiple Landmarks + Radius"
+    ])
+    self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh")
+    regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
+    
+    # --- Segment Editor Method Controls ---
+    self.segmentEditorFrame = qt.QFrame()
+    self.segmentEditorLayout = qt.QFormLayout()
+    self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
+    
+    self.setupSegmentEditorButton = qt.QPushButton("Setup Segment Editor")
+    self.setupSegmentEditorButton.setToolTip("Convert model to segmentation and open Segment Editor")
+    self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
+    
+    self.exportSelectionButton = qt.QPushButton("Export Selected Region")
+    self.exportSelectionButton.setToolTip("Export painted region back to a model")
+    self.exportSelectionButton.enabled = False
+    self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.segmentEditorLayout.addRow(self.exportSelectionButton)
+    
+    regionLayout.addRow(self.segmentEditorFrame)
+    
+    # --- Landmark Method Controls ---
+    self.landmarkFrame = qt.QFrame()
+    self.landmarkLayout = qt.QFormLayout()
+    self.landmarkFrame.setLayout(self.landmarkLayout)
+    self.landmarkFrame.setVisible(False)  # Hidden by default
+    
+    # Markup selector for selection points
+    self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
+    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
+    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers")
+    self.selectionMarkupSelector.selectNodeUponCreation = False
+    self.selectionMarkupSelector.noneEnabled = True
+    self.selectionMarkupSelector.addEnabled = True
+    self.selectionMarkupSelector.removeEnabled = False
+    self.selectionMarkupSelector.showHidden = False
+    self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
+    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
+    
+    # Radius control
+    self.selectionRadiusSlider = ctk.ctkSliderWidget()
+    self.selectionRadiusSlider.minimum = 0.1
+    self.selectionRadiusSlider.maximum = 50.0
+    self.selectionRadiusSlider.singleStep = 0.1  
+    self.selectionRadiusSlider.value = 5.0
+    try:
+        self.selectionRadiusSlider.decimals = 1
+    except AttributeError:
+        pass  # Some versions might not have this property
+    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
+    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+    
+    # Point index selector (for single point mode)
+    self.pointIndexSpinBox = qt.QSpinBox()
+    self.pointIndexSpinBox.minimum = 0
+    self.pointIndexSpinBox.maximum = 999
+    self.pointIndexSpinBox.value = 0
+    self.pointIndexSpinBox.setToolTip("Index of the point to use for selection (0-based)")
+    self.landmarkLayout.addRow("Point Index:", self.pointIndexSpinBox)
+    
+    # Apply landmark selection button
+    self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
+    self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
+    self.applyLandmarkSelectionButton.enabled = False
+    self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
+    
+    regionLayout.addRow(self.landmarkFrame)
+    
+    # --- Common Controls ---
+    # Clear selection button
+    self.clearSelectionButton = qt.QPushButton("Clear Selection")
+    self.clearSelectionButton.setToolTip("Clear the current region selection")
+    self.clearSelectionButton.enabled = False
+    self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
+    regionLayout.addRow(self.clearSelectionButton)
+    
+    # Selection info label
+    self.selectionInfoLabel = qt.QLabel("No region selected")
+    self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
 
     self.lastBakedTexturesPath = None
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
@@ -585,6 +691,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
     self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
     self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
+    
+    # Region selection connections
+    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
+    self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
+    self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
     
 
     # Auto-detect Blender executable on startup
@@ -1077,6 +1192,309 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.resetProgressDC()
       self.applyButtonDC.enabled = True
       # Note: Actual cancellation logic would depend on the specific operation
+
+  # --- Region Selection Methods ---
+  
+  def onRegionSelectionInputChanged(self):
+    """Update button states when region selection inputs change"""
+    hasModel = bool(self.regionMeshSelector.currentNode())
+    
+    # Update segment editor button
+    self.setupSegmentEditorButton.enabled = hasModel
+    
+    # Update landmark selection button
+    hasMarkup = bool(self.selectionMarkupSelector.currentNode())
+    self.applyLandmarkSelectionButton.enabled = hasModel and hasMarkup
+    
+    # Update point index maximum based on markup points
+    if hasMarkup:
+      markupNode = self.selectionMarkupSelector.currentNode()
+      maxPoints = markupNode.GetNumberOfControlPoints()
+      self.pointIndexSpinBox.maximum = max(0, maxPoints - 1)
+    else:
+      self.pointIndexSpinBox.maximum = 0
+  
+  def onSelectionMethodChanged(self):
+    """Handle selection method change"""
+    method = self.selectionMethodCombo.currentText
+    
+    if method == "Segment Editor (Paint/Scissors)":
+      self.segmentEditorFrame.setVisible(True)
+      self.landmarkFrame.setVisible(False)
+    else:  # Landmark methods
+      self.segmentEditorFrame.setVisible(False)
+      self.landmarkFrame.setVisible(True)
+      
+      # Show/hide point index selector based on method
+      if method == "Landmark + Radius":
+        self.pointIndexSpinBox.enabled = True
+        self.pointIndexSpinBox.setToolTip("Index of the point to use for selection (0-based)")
+      else:  # Multiple Landmarks + Radius
+        self.pointIndexSpinBox.enabled = False
+        self.pointIndexSpinBox.setToolTip("All points will be used for selection")
+  
+  def onSetupSegmentEditor(self):
+    """Setup Segment Editor for region selection"""
+    modelNode = self.regionMeshSelector.currentNode()
+    if not modelNode:
+      slicer.util.errorDisplay("Please select a mesh first.")
+      return
+    
+    try:
+      # Create a reference volume from the model bounds to enable paint tools
+      bounds = [0, 0, 0, 0, 0, 0]
+      modelNode.GetBounds(bounds)
+      
+      # Create a small reference volume that covers the model
+      referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+      referenceVolumeNode.SetName(f"{modelNode.GetName()}_ReferenceVolume")
+      
+      # Set up the volume geometry
+      spacing = [1.0, 1.0, 1.0]  # 1mm spacing
+      imageSize = [
+        max(10, int((bounds[1] - bounds[0]) / spacing[0]) + 1),
+        max(10, int((bounds[3] - bounds[2]) / spacing[1]) + 1), 
+        max(10, int((bounds[5] - bounds[4]) / spacing[2]) + 1)
+      ]
+      
+      # Create the image data
+      imageData = vtk.vtkImageData()
+      imageData.SetDimensions(imageSize)
+      imageData.SetSpacing(spacing)
+      imageData.SetOrigin(bounds[0], bounds[2], bounds[4])
+      imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+      imageData.GetPointData().GetScalars().Fill(100)  # Fill with non-zero values
+      
+      referenceVolumeNode.SetAndObserveImageData(imageData)
+      
+      # Create segmentation from model
+      segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+      segmentationNode.SetName(f"{modelNode.GetName()}_Segmentation")
+      
+      # Set the reference geometry from our volume
+      segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
+      
+      # Import model to segmentation as the base segment
+      slicer.modules.segmentations.logic().ImportModelToSegmentationNode(modelNode, segmentationNode)
+      
+      # Create a new empty segment for selection
+      segmentationNode.GetSegmentation().AddEmptySegment("SelectedRegion")
+      
+      # Switch to Segment Editor module
+      slicer.util.selectModule("SegmentEditor")
+      
+      # Set up segment editor widget
+      segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
+      segmentEditorWidget.setSegmentationNode(segmentationNode)
+      segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)  # Set the reference volume
+      
+      # Select the new segment for editing
+      segmentEditorWidget.setCurrentSegmentID("SelectedRegion")
+      
+      # Hide the reference volume from display (we only need it for editing)
+      referenceVolumeNode.GetDisplayNode().SetVisibility(False)
+      
+      # Enable export button
+      self.exportSelectionButton.enabled = True
+      self.currentSegmentationNode = segmentationNode
+      self.currentReferenceVolumeNode = referenceVolumeNode
+      
+      slicer.util.infoDisplay("Segment Editor is now set up!\n\n"
+                            "Use Paint, Scissors, or other tools to select the region you want.\n"
+                            "When done, click 'Export Selected Region' to create a new model.")
+      
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error setting up Segment Editor: {str(e)}")
+      print(f"Segment Editor setup error: {e}")
+  
+  def onExportSelection(self):
+    """Export the painted region as a new model"""
+    if not hasattr(self, 'currentSegmentationNode') or not self.currentSegmentationNode:
+      slicer.util.errorDisplay("No segmentation found. Please setup Segment Editor first.")
+      return
+    
+    try:
+      # Export selected segment to model
+      shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+      exportFolderItemId = shNode.CreateFolderItem(shNode.GetSceneItemID(), "Selected Regions")
+      
+      slicer.modules.segmentations.logic().ExportAllSegmentsToModels(
+        self.currentSegmentationNode, exportFolderItemId)
+      
+      # Get the exported model
+      exportedModels = []
+      childIds = vtk.vtkIdList()
+      shNode.GetItemChildren(exportFolderItemId, childIds)
+      
+      for i in range(childIds.GetNumberOfIds()):
+        childId = childIds.GetId(i)
+        modelNode = shNode.GetItemDataNode(childId)
+        if modelNode and modelNode.IsA("vtkMRMLModelNode"):
+          exportedModels.append(modelNode)
+      
+      if exportedModels:
+        # Enable clear button
+        self.clearSelectionButton.enabled = True
+        
+        # Update info
+        modelNode = exportedModels[0]
+        numVertices = modelNode.GetPolyData().GetNumberOfPoints()
+        self.selectionInfoLabel.setText(f"Exported model: {numVertices} vertices")
+        
+        slicer.util.infoDisplay(f"Successfully exported selected region!\n"
+                              f"New model: {modelNode.GetName()}\n"
+                              f"Vertices: {numVertices}")
+      else:
+        slicer.util.warningDisplay("No segments were exported. Make sure you painted some regions.")
+        
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error exporting selection: {str(e)}")
+      print(f"Export selection error: {e}")
+  
+  def onApplyLandmarkSelection(self):
+    """Apply region selection using landmarks and radius"""
+    modelNode = self.regionMeshSelector.currentNode()
+    markupNode = self.selectionMarkupSelector.currentNode()
+    
+    if not (modelNode and markupNode):
+      slicer.util.errorDisplay("Please select both a mesh and markup points.")
+      return
+    
+    if markupNode.GetNumberOfControlPoints() == 0:
+      slicer.util.errorDisplay("No markup points found. Please add some points first.")
+      return
+    
+    try:
+      method = self.selectionMethodCombo.currentText
+      radius = self.selectionRadiusSlider.value
+      
+      if method == "Landmark + Radius":
+        pointIndex = self.pointIndexSpinBox.value
+        if pointIndex >= markupNode.GetNumberOfControlPoints():
+          slicer.util.errorDisplay(f"Point index {pointIndex} is out of range. Available points: 0-{markupNode.GetNumberOfControlPoints()-1}")
+          return
+        selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
+      else:  # Multiple Landmarks + Radius
+        selectedVertices = self.selectMeshRegionByMultiplePoints(modelNode, markupNode, radius)
+      
+      # Visualize the selection
+      self.visualizeRegionSelection(modelNode, selectedVertices)
+      
+      # Update info label
+      numVertices = len(selectedVertices)
+      totalVertices = modelNode.GetPolyData().GetNumberOfPoints()
+      percentage = (numVertices / totalVertices) * 100 if totalVertices > 0 else 0
+      self.selectionInfoLabel.setText(f"Selected: {numVertices}/{totalVertices} vertices ({percentage:.1f}%)")
+      
+      # Enable clear button
+      self.clearSelectionButton.enabled = True
+      
+      print(f"Landmark region selection completed: {numVertices} vertices selected")
+      
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error during landmark selection: {str(e)}")
+      print(f"Landmark selection error: {e}")
+  
+  def onClearSelection(self):
+    """Clear the current region selection"""
+    modelNode = self.regionMeshSelector.currentNode()
+    if modelNode:
+      self.clearRegionSelection(modelNode)
+      self.selectionInfoLabel.setText("No region selected")
+      self.clearSelectionButton.enabled = False
+      print("Region selection cleared")
+  
+  def selectMeshRegionByRadius(self, modelNode, markupNode, pointIndex, radius):
+    """Select mesh vertices within radius of a specific markup point"""
+    # Get the markup point position
+    point = [0, 0, 0]
+    markupNode.GetNthControlPointPosition(pointIndex, point)
+    
+    # Get mesh data
+    polyData = modelNode.GetPolyData()
+    points = polyData.GetPoints()
+    
+    # Find vertices within radius
+    selectedVertices = []
+    radiusSquared = radius * radius
+    
+    for i in range(points.GetNumberOfPoints()):
+      vertex = points.GetPoint(i)
+      distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
+      if distanceSquared <= radiusSquared:
+        selectedVertices.append(i)
+    
+    return selectedVertices
+  
+  def selectMeshRegionByMultiplePoints(self, modelNode, markupNode, radius):
+    """Select mesh vertices within radius of any markup point"""
+    # Get mesh data
+    polyData = modelNode.GetPolyData()
+    points = polyData.GetPoints()
+    selectedVertices = set()  # Use set to avoid duplicates
+    radiusSquared = radius * radius
+    
+    # Check each markup point
+    for pointIndex in range(markupNode.GetNumberOfControlPoints()):
+      # Get the markup point position
+      point = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(pointIndex, point)
+      
+      # Find vertices within radius of this point
+      for i in range(points.GetNumberOfPoints()):
+        vertex = points.GetPoint(i)
+        distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
+        if distanceSquared <= radiusSquared:
+          selectedVertices.add(i)
+    
+    return list(selectedVertices)
+  
+  def visualizeRegionSelection(self, modelNode, selectedVertices):
+    """Visualize the selected region by coloring vertices"""
+    polyData = modelNode.GetPolyData()
+    
+    # Create a scalar array for selection visualization
+    selectionArray = vtk.vtkIntArray()
+    selectionArray.SetName("RegionSelection")
+    selectionArray.SetNumberOfTuples(polyData.GetNumberOfPoints())
+    selectionArray.Fill(0)  # 0 = not selected
+    
+    # Mark selected vertices
+    for vertexId in selectedVertices:
+      selectionArray.SetValue(vertexId, 1)  # 1 = selected
+    
+    # Add array to mesh
+    polyData.GetPointData().AddArray(selectionArray)
+    polyData.GetPointData().SetActiveScalars("RegionSelection")
+    polyData.Modified()
+    
+    # Set up display
+    displayNode = modelNode.GetDisplayNode()
+    if displayNode:
+      displayNode.SetScalarVisibility(True)
+      displayNode.SetActiveScalarName("RegionSelection")
+      displayNode.SetScalarRange(0, 1)
+      
+      # Use a simple color map: gray for unselected, red for selected
+      displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFileColdToHotRainbow.txt')
+    
+    modelNode.Modified()
+  
+  def clearRegionSelection(self, modelNode):
+    """Clear the region selection visualization"""
+    polyData = modelNode.GetPolyData()
+    
+    # Remove the selection array
+    if polyData.GetPointData().GetArray("RegionSelection"):
+      polyData.GetPointData().RemoveArray("RegionSelection")
+      polyData.Modified()
+    
+    # Reset display
+    displayNode = modelNode.GetDisplayNode()
+    if displayNode:
+      displayNode.SetScalarVisibility(False)
+    
+    modelNode.Modified()
   
   def onStartVisualizationButton(self):
     """Start visualization by preparing the scene and showing models"""
@@ -1520,7 +1938,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Update the UI to reflect the current lock state"""
     try:
       if locked:
-        self.landmarkLockButton.setText("🔓 Unlock Landmarks")
+        self.landmarkLockButton.setText("Unlock Landmarks")
         self.landmarkLockButton.setStyleSheet("""
           QPushButton {
             background-color: #4CAF50;
@@ -1538,10 +1956,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
             background-color: #3d8b40;
           }
         """)
-        self.landmarkLockStatusLabel.setText("Landmarks: Locked")
-        self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(negative); font-weight: bold; }")
       else:
-        self.landmarkLockButton.setText("🔒 Lock Landmarks")
+        self.landmarkLockButton.setText("Lock Landmarks")
         self.landmarkLockButton.setStyleSheet("""
           QPushButton {
             background-color: #ff6b6b;
@@ -1559,8 +1975,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
             background-color: #e53935;
           }
         """)
-        self.landmarkLockStatusLabel.setText("Landmarks: Unlocked")
-        self.landmarkLockStatusLabel.setStyleSheet("QLabel { color: palette(positive); font-weight: bold; }")
     except Exception as e:
       print(f"Warning: Could not update landmark lock UI: {e}")
 
@@ -3152,10 +3566,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanTransform.SetBasisToR() # for 3D transform
 
     meanTransformFilter = vtk.vtkTransformPolyDataFilter()
-    meanTransformFilter.SetInputData(originalMesh)
-    meanTransformFilter.SetTransform(meanTransform)
-    meanTransformFilter.Update()
-    meanWarpedMesh = meanTransformFilter.GetOutput()
+    if originalMesh and originalMesh.GetNumberOfPoints() > 0:
+      meanTransformFilter.SetInputData(originalMesh)
+      meanTransformFilter.SetTransform(meanTransform)
+      meanTransformFilter.Update()
+      meanWarpedMesh = meanTransformFilter.GetOutput()
+    else:
+      print(f"Warning: Empty or invalid originalMesh for iteration {iteration}")
+      return baseMesh
 
     meanTransformBase = vtk.vtkThinPlateSplineTransform()
     meanTransformBase.SetSourceLandmarks(baseLandmarks)
@@ -3163,10 +3581,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanTransformBase.SetBasisToR() # for 3D transform
 
     meanTransformBaseFilter = vtk.vtkTransformPolyDataFilter()
-    meanTransformBaseFilter.SetInputData(baseMesh)
-    meanTransformBaseFilter.SetTransform(meanTransformBase)
-    meanTransformBaseFilter.Update()
-    meanWarpedBase = meanTransformBaseFilter.GetOutput() # Warped atlas
+    if baseMesh and baseMesh.GetNumberOfPoints() > 0:
+      meanTransformBaseFilter.SetInputData(baseMesh)
+      meanTransformBaseFilter.SetTransform(meanTransformBase)
+      meanTransformBaseFilter.Update()
+      meanWarpedBase = meanTransformBaseFilter.GetOutput() # Warped atlas
+    else:
+      print(f"Warning: Empty or invalid baseMesh for iteration {iteration}")
+      return baseMesh
 
     # --- BEGIN INTEGRATED RESAMPLING AND UV TRANSFER ---
 
@@ -3232,11 +3654,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     inverseTransform.SetBasisToR() # for 3D transform
 
     inverseTransformFilter = vtk.vtkTransformPolyDataFilter()
-    inverseTransformFilter.SetInputData(correspondingMesh)
-    inverseTransformFilter.SetTransform(inverseTransform)
-    inverseTransformFilter.Update()
-
-    return inverseTransformFilter.GetOutput()
+    if correspondingMesh and correspondingMesh.GetNumberOfPoints() > 0:
+      inverseTransformFilter.SetInputData(correspondingMesh)
+      inverseTransformFilter.SetTransform(inverseTransform)
+      inverseTransformFilter.Update()
+      return inverseTransformFilter.GetOutput()
+    else:
+      print(f"Warning: Empty correspondingMesh for iteration {iteration}, returning original")
+      return baseMesh
 
   # Use convertPointsToVTK from decaLogic to avoid duplication
   def convertPointsToVTK(self, points):
