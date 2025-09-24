@@ -2337,11 +2337,36 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         '/opt/blender/blender',
         '/snap/bin/blender',
         os.path.expanduser('~/blender/blender'),
-        os.path.expanduser('~/.local/bin/blender')
+        os.path.expanduser('~/.local/bin/blender'),
+        # Flatpak installation paths
+        '/var/lib/flatpak/exports/bin/org.blender.Blender',
+        os.path.expanduser('~/.local/share/flatpak/exports/bin/org.blender.Blender'),
+        # AppImage installations
+        os.path.expanduser('~/Applications/Blender.AppImage'),
+        os.path.expanduser('~/Downloads/Blender.AppImage'),
+        '/opt/Blender.AppImage',
+        # Distribution-specific paths
+        '/usr/share/blender/blender',  # Some distributions
+        '/usr/games/blender',          # Debian games partition
+        '/opt/blender-*/blender',      # Custom installations
       ]
-      # Check for snap installations
+      
+      # Check for snap installations with version numbers
       snap_paths = glob.glob('/snap/blender/*/blender')
       common_paths.extend(snap_paths)
+      
+      # Check for versioned installations
+      versioned_paths = glob.glob('/usr/bin/blender-*')
+      versioned_paths.extend(glob.glob('/usr/local/bin/blender-*'))
+      versioned_paths.extend(glob.glob('/opt/blender-*/blender'))
+      common_paths.extend(versioned_paths)
+      
+      # Check for user-installed versions
+      user_blender_dirs = glob.glob(os.path.expanduser('~/blender-*'))
+      for blender_dir in user_blender_dirs:
+        potential_path = os.path.join(blender_dir, 'blender')
+        if os.path.isfile(potential_path):
+          common_paths.append(potential_path)
     
     # Test each common path
     for path in common_paths:
@@ -2352,9 +2377,355 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     print("Blender executable not found in common locations")
     return None
 
+  def _tryInstallBlenderMacOS(self, log_callback):
+    """
+    Try to install Blender on macOS using Homebrew.
+    Returns True if successful, False otherwise.
+    """
+    import subprocess
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    try:
+      # Check if Homebrew is installed
+      result = subprocess.run(['which', 'brew'], capture_output=True, text=True)
+      if result.returncode != 0:
+        log("Homebrew not found. Trying to install Homebrew first...")
+        # Install Homebrew
+        install_brew_cmd = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        result = subprocess.run(install_brew_cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+          log("Failed to install Homebrew")
+          return False
+      
+      log("Installing Blender via Homebrew...")
+      result = subprocess.run(['brew', 'install', '--cask', 'blender'], capture_output=True, text=True, timeout=300)
+      
+      if result.returncode == 0:
+        log("Blender installed successfully via Homebrew")
+        return True
+      else:
+        log(f"Homebrew installation failed: {result.stderr}")
+        return False
+        
+    except subprocess.TimeoutExpired:
+      log("Homebrew installation timed out")
+      return False
+    except Exception as e:
+      log(f"Error during Homebrew installation: {e}")
+      return False
+
+  def _tryInstallBlenderLinux(self, log_callback):
+    """
+    Try to install Blender on Linux using various package managers.
+    Returns True if successful, False otherwise.
+    """
+    import subprocess
+    import shutil
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    # Detect distribution and get preferred package managers
+    distro_name, preferred_managers = self._detectLinuxDistribution()
+    log(f"Detected Linux distribution: {distro_name}")
+    log(f"Preferred package managers: {', '.join(preferred_managers)}")
+    
+    # Define all package managers with their commands
+    all_package_managers = {
+      'snap': {
+        'check': ['which', 'snap'],
+        'install': ['sudo', 'snap', 'install', 'blender', '--classic'],
+        'name': 'Snap'
+      },
+      'flatpak': {
+        'check': ['which', 'flatpak'],
+        'install': ['flatpak', 'install', '-y', 'flathub', 'org.blender.Blender'],
+        'name': 'Flatpak',
+        'setup': ['flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://flathub.org/repo/flathub.flatpakrepo']
+      },
+      'apt': {
+        'check': ['which', 'apt'],
+        'install': ['sudo', 'apt', 'update', '&&', 'sudo', 'apt', 'install', '-y', 'blender'],
+        'name': 'APT'
+      },
+      'dnf': {
+        'check': ['which', 'dnf'],
+        'install': ['sudo', 'dnf', 'install', '-y', 'blender'],
+        'name': 'DNF'
+      },
+      'yum': {
+        'check': ['which', 'yum'],
+        'install': ['sudo', 'yum', 'install', '-y', 'blender'],
+        'name': 'YUM'
+      },
+      'pacman': {
+        'check': ['which', 'pacman'],
+        'install': ['sudo', 'pacman', '-S', '--noconfirm', 'blender'],
+        'name': 'Pacman'
+      },
+      'zypper': {
+        'check': ['which', 'zypper'],
+        'install': ['sudo', 'zypper', 'install', '-y', 'blender'],
+        'name': 'Zypper'
+      }
+    }
+    
+    # Try preferred package managers first, then fall back to others
+    managers_to_try = []
+    for pm_name in preferred_managers:
+      if pm_name in all_package_managers:
+        managers_to_try.append(all_package_managers[pm_name])
+    
+    # Add remaining package managers as fallbacks
+    for pm_name, pm_info in all_package_managers.items():
+      if pm_name not in preferred_managers:
+        managers_to_try.append(pm_info)
+    
+    for pm in managers_to_try:
+      try:
+        # Check if package manager is available
+        result = subprocess.run(pm['check'], capture_output=True, text=True)
+        if result.returncode == 0:
+          log(f"Found {pm['name']} package manager. Attempting installation...")
+          
+          # Run setup command if needed (e.g., for Flatpak)
+          if 'setup' in pm:
+            log(f"Setting up {pm['name']}...")
+            setup_result = subprocess.run(pm['setup'], capture_output=True, text=True, timeout=60)
+            if setup_result.returncode != 0:
+              log(f"{pm['name']} setup failed, but continuing anyway: {setup_result.stderr}")
+          
+          # Handle shell commands with && properly
+          if isinstance(pm['install'], list) and '&&' in ' '.join(pm['install']):
+            cmd_str = ' '.join(pm['install'])
+            result = subprocess.run(cmd_str, shell=True, capture_output=True, text=True, timeout=300)
+          else:
+            result = subprocess.run(pm['install'], capture_output=True, text=True, timeout=300)
+          
+          if result.returncode == 0:
+            log(f"Blender installed successfully via {pm['name']}")
+            return True
+          else:
+            log(f"{pm['name']} installation failed: {result.stderr}")
+            continue
+            
+      except subprocess.TimeoutExpired:
+        log(f"{pm['name']} installation timed out")
+        continue
+      except Exception as e:
+        log(f"Error during {pm['name']} installation: {e}")
+        continue
+    
+    log("All package manager installations failed")
+    return False
+
+  def _detectLinuxDistribution(self):
+    """
+    Detect Linux distribution to prioritize appropriate package managers.
+    Returns a tuple of (distro_name, package_manager_priority)
+    """
+    import subprocess
+    
+    try:
+      # Try to read /etc/os-release
+      with open('/etc/os-release', 'r') as f:
+        lines = f.readlines()
+        distro_info = {}
+        for line in lines:
+          if '=' in line:
+            key, value = line.strip().split('=', 1)
+            distro_info[key] = value.strip('"')
+        
+        distro_id = distro_info.get('ID', '').lower()
+        distro_like = distro_info.get('ID_LIKE', '').lower()
+        
+        # Return appropriate package manager priority based on distribution
+        if 'ubuntu' in distro_id or 'debian' in distro_id or 'ubuntu' in distro_like:
+          return ('debian', ['snap', 'apt', 'flatpak'])  # Snap is preferred on Ubuntu
+        elif 'fedora' in distro_id or 'rhel' in distro_id or 'centos' in distro_id:
+          return ('fedora', ['dnf', 'flatpak', 'snap'])
+        elif 'arch' in distro_id or 'manjaro' in distro_id:
+          return ('arch', ['pacman', 'flatpak', 'snap'])
+        elif 'opensuse' in distro_id or 'suse' in distro_id:
+          return ('suse', ['zypper', 'flatpak', 'snap'])
+        elif 'alpine' in distro_id:
+          return ('alpine', ['flatpak', 'snap'])  # Alpine doesn't have Blender in main repos
+        else:
+          return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+          
+    except FileNotFoundError:
+      # Fallback to lsb_release or uname
+      try:
+        result = subprocess.run(['lsb_release', '-si'], capture_output=True, text=True)
+        if result.returncode == 0:
+          distro = result.stdout.strip().lower()
+          if 'ubuntu' in distro or 'debian' in distro:
+            return ('debian', ['snap', 'apt', 'flatpak'])
+          elif 'fedora' in distro or 'red hat' in distro:
+            return ('fedora', ['dnf', 'flatpak', 'snap'])
+        
+        # Final fallback
+        return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+        
+      except:
+        return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+
+  def _installBlenderMacOSDMG(self, download_urls, filename, install_dir, log_callback):
+    """
+    Handle macOS DMG file download and installation.
+    Returns the path to Blender executable if successful, None otherwise.
+    """
+    import subprocess
+    import tempfile
+    import urllib.request
+    import ssl
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    temp_dmg_path = None
+    
+    # Try each download URL until one works
+    for download_url in download_urls:
+      try:
+        log(f"Downloading macOS DMG from: {download_url}")
+        
+        # Create request with proper headers
+        request = urllib.request.Request(download_url)
+        request.add_header('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
+        
+        # Download with SSL context
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.dmg') as tmp_file:
+          with urllib.request.urlopen(request, context=ssl_context) as response:
+            content_type = response.headers.get('content-type', '').lower()
+            
+            if 'text/html' in content_type:
+              log("Got HTML response (likely error page), trying next URL...")
+              continue
+            
+            # Download in chunks
+            while True:
+              chunk = response.read(8192)
+              if not chunk:
+                break
+              tmp_file.write(chunk)
+          
+          temp_dmg_path = tmp_file.name
+          break
+          
+      except Exception as e:
+        log(f"Failed to download from {download_url}: {e}")
+        if temp_dmg_path and os.path.exists(temp_dmg_path):
+          os.unlink(temp_dmg_path)
+          temp_dmg_path = None
+        continue
+    
+    if not temp_dmg_path:
+      log("Failed to download DMG from any mirror")
+      return None
+    
+    try:
+      log("Mounting DMG file...")
+      
+      # Mount the DMG
+      mount_result = subprocess.run(
+        ['hdiutil', 'attach', temp_dmg_path, '-nobrowse', '-quiet'],
+        capture_output=True, text=True
+      )
+      
+      if mount_result.returncode != 0:
+        log(f"Failed to mount DMG: {mount_result.stderr}")
+        os.unlink(temp_dmg_path)
+        return None
+      
+      # Parse mount output to find the volume path
+      mount_point = None
+      for line in mount_result.stdout.split('\n'):
+        if '/Volumes/' in line:
+          mount_point = line.split()[-1]
+          break
+      
+      if not mount_point:
+        log("Could not determine mount point")
+        os.unlink(temp_dmg_path)
+        return None
+      
+      log(f"DMG mounted at: {mount_point}")
+      
+      # Find Blender.app in the mounted volume
+      blender_app_source = os.path.join(mount_point, 'Blender.app')
+      if not os.path.exists(blender_app_source):
+        # Try to find it with different names
+        for item in os.listdir(mount_point):
+          if item.endswith('.app') and 'blender' in item.lower():
+            blender_app_source = os.path.join(mount_point, item)
+            break
+      
+      if not os.path.exists(blender_app_source):
+        log("Could not find Blender.app in mounted DMG")
+        subprocess.run(['hdiutil', 'detach', mount_point, '-quiet'], capture_output=True)
+        os.unlink(temp_dmg_path)
+        return None
+      
+      # Copy Blender.app to Applications
+      blender_app_dest = '/Applications/Blender.app'
+      log(f"Installing Blender.app to {blender_app_dest}...")
+      
+      # Remove existing installation if present
+      if os.path.exists(blender_app_dest):
+        subprocess.run(['rm', '-rf', blender_app_dest], capture_output=True)
+      
+      # Copy the app bundle
+      copy_result = subprocess.run(['cp', '-R', blender_app_source, blender_app_dest], capture_output=True, text=True)
+      
+      # Unmount the DMG
+      subprocess.run(['hdiutil', 'detach', mount_point, '-quiet'], capture_output=True)
+      os.unlink(temp_dmg_path)
+      
+      if copy_result.returncode != 0:
+        log(f"Failed to copy Blender.app: {copy_result.stderr}")
+        return None
+      
+      # Return path to the executable
+      blender_executable = os.path.join(blender_app_dest, 'Contents', 'MacOS', 'Blender')
+      if os.path.exists(blender_executable):
+        log(f"Blender installed successfully at: {blender_executable}")
+        return blender_executable
+      else:
+        log("Blender executable not found in installed app bundle")
+        return None
+        
+    except Exception as e:
+      log(f"Error during DMG installation: {e}")
+      if temp_dmg_path and os.path.exists(temp_dmg_path):
+        os.unlink(temp_dmg_path)
+      return None
+
   def installBlender(self, log_callback=None):
     """
-    Automatically download and install Blender.
+    Automatically download and install Blender with enhanced cross-platform support.
+    
+    Features:
+    - macOS: Tries Homebrew first, falls back to DMG download and installation
+    - Linux: Detects distribution and uses appropriate package manager (snap, flatpak, apt, dnf, pacman, zypper)
+    - Windows: Direct download and extraction (existing functionality)
+    - Supports both x64 and ARM64 architectures where available
+    
     Returns the path to the installed Blender executable if successful, None otherwise.
     """
     import platform
@@ -2390,13 +2761,32 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         return None
     
     elif system == 'darwin':  # macOS
-      log("macOS installation not supported in automatic mode. Please install Blender manually from:")
-      log("https://www.blender.org/download/")
-      return None
+      # Try to install via Homebrew first, then fallback to direct download
+      if self._tryInstallBlenderMacOS(log):
+        return self.findBlenderExecutable()
+      
+      # If Homebrew fails, try direct download
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-macos-x64.dmg"
+        blender_exe = "Blender"  # macOS app bundle executable
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-macos-arm64.dmg"
+        blender_exe = "Blender"
+      else:
+        log("Unsupported macOS architecture")
+        return None
     
     elif system == 'linux':
+      # Try to install via package manager first
+      if self._tryInstallBlenderLinux(log):
+        return self.findBlenderExecutable()
+      
+      # If package manager fails, try direct download
       if 'amd64' in architecture or 'x86_64' in architecture:
         filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        blender_exe = "blender"
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-linux-arm64.tar.xz"
         blender_exe = "blender"
       else:
         log("Unsupported Linux architecture")
@@ -2414,16 +2804,40 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       f"https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/{filename}"
     ]
     
+    # Special handling for macOS DMG files
+    if system == 'darwin' and filename.endswith('.dmg'):
+      return self._installBlenderMacOSDMG(download_urls, filename, install_dir, log)
+    
+    # Special handling for Linux ARM64
+    if system == 'linux' and 'arm' in architecture:
+      # ARM64 Linux support was added in Blender 3.0+
+      if not any(url for url in download_urls if 'arm64' in filename):
+        log("ARM64 Linux binaries may not be available for this Blender version. Trying x64 compatibility...")
+        filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        download_urls = [url.replace('arm64', 'x64') for url in download_urls]
+    
     # Create installation directory
     install_dir = os.path.join(os.path.expanduser('~'), '.slicer-blender')
     os.makedirs(install_dir, exist_ok=True)
     
     # Check if already installed
-    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-x64")
-    if system == 'windows' and 'arm' in architecture:
-      expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-arm64")
+    arch_suffix = 'x64'
+    if 'arm' in architecture or 'aarch64' in architecture:
+      arch_suffix = 'arm64'
     
-    expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-{arch_suffix}")
+    
+    # For macOS, the executable is in a different location within the app bundle
+    if system == 'darwin':
+      expected_blender_path = '/Applications/Blender.app/Contents/MacOS/Blender'
+      # Also check for manually downloaded version
+      manual_blender_path = os.path.join(expected_blender_dir, 'Blender.app', 'Contents', 'MacOS', 'Blender')
+      if os.path.isfile(manual_blender_path):
+        log(f"Blender already installed at: {manual_blender_path}")
+        return manual_blender_path
+    else:
+      expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    
     if os.path.isfile(expected_blender_path):
       log(f"Blender already installed at: {expected_blender_path}")
       return expected_blender_path
