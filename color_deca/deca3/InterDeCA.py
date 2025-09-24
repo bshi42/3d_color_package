@@ -1,3 +1,22 @@
+"""
+InterDeCA (Interactive Dense Correspondence Analysis) module for 3D Slicer.
+
+Extends the original DeCA module with advanced color analysis capabilities,
+texture baking through Blender integration, and interactive visualization tools
+for studying color patterns in biological specimens.
+
+Key features:
+- Blender integration for UV mapping and texture baking
+- Color space analysis (RGB/HSV) with dimensionality reduction
+- Multi-texture clustering for comparative color analysis
+- Interactive shape interpolation and visualization
+- Face-level color quantization and pattern analysis
+
+Dependencies:
+- Optional: sklearn, umap-learn, scikit-image for advanced analysis
+- External: Blender for texture processing
+"""
+
 import os
 import unittest
 import vtk, qt, ctk, slicer
@@ -15,8 +34,31 @@ from pathlib import Path
 import shutil
 import imageio # slicer.util.pip_install('imageio')
 import glob
+import colorsys
 
-# Import functions from the deca module to avoid duplication
+# Attempts to import optional machine learning libraries
+try:
+    from sklearn.decomposition import PCA, FastICA
+    from sklearn.manifold import TSNE
+    from sklearn.cluster import KMeans, MiniBatchKMeans
+    import umap
+    SKLEARN_AVAILABLE = True
+    UMAP_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    UMAP_AVAILABLE = False
+    print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
+
+# Attempts to import scikit-image for color quantization
+try:
+    from skimage import color as skimage_color
+    from skimage.color import deltaE_ciede2000
+    SKIMAGE_AVAILABLE = True
+except ImportError:
+    SKIMAGE_AVAILABLE = False
+    print("Warning: scikit-image not available. Color quantization functionality will be limited.")
+
+# Imports functions from the original DeCA module to avoid code duplication
 import sys
 import os
 
@@ -25,52 +67,94 @@ try:
     print('Successfully imported DeCA module!')
     print(f'decaLogic class: {decaLogic}')
 except ImportError as e:
-    # Handle case where deca module is not available
+    # Handles case where DeCA module is not available
     print(f'Could not import DeCA module: {e}')
     decaLogic = None
-    
+
 print(f'Final decaLogic value: {decaLogic}')
 
 #
-# DeCA
+# InterDeCA
 #
 
 class InterDeCA(ScriptedLoadableModule):
-  """Uses ScriptedLoadableModule base class, available at:
+  """
+  Module class for Interactive Dense Correspondence Analysis (InterDeCA).
+
+  Extends DeCA functionality with color-based morphometric analysis tools,
+  providing workflows for texture processing, color pattern analysis,
+  and interactive visualization of biological specimens.
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def __init__(self, parent):
+    """
+    Initializes the InterDeCA module with metadata and configuration.
+
+    Args:
+      parent: Parent object from 3D Slicer framework
+    """
     ScriptedLoadableModule.__init__(self, parent)
-    self.parent.title = "InterDeCA" # TODO make this more human readable by adding spaces
+
+    # Sets module metadata for 3D Slicer's module browser
+    self.parent.title = "InterDeCA"  # Interactive Dense Correspondence Analysis
     self.parent.categories = ["SlicerMorph.DeCA Toolbox"]
-    self.parent.dependencies = []
-    self.parent.contributors = ["Sara Rolfe (SCRI)"] # replace with "Firstname Lastname (Organization)"
+    self.parent.dependencies = []  # Original DeCA module loaded separately
+    self.parent.contributors = ["Sara Rolfe (SCRI)"]
+
+    # Provides user-facing documentation
     self.parent.helpText = """
-      This module provides several flexible workflows for finding and analyzing dense correspondence points between models.
+      This module provides several flexible workflows for finding and analyzing dense correspondence points between models,
+      with enhanced support for color analysis and texture processing.
       """
     self.parent.helpText += self.getDefaultModuleDocumentationLink()
+
+    # Acknowledges funding sources
     self.parent.acknowledgementText = """This extension was developed by funding from National Institutes of Health (OD032627 and HD104435) to A. Murat Maga (SCRI)
-      """ # replace with organization, grant and thanks.
+      """
 
 #
-# DeCAWidget
+# InterDeCAWidget
 #
 
 class InterDeCAWidget(ScriptedLoadableModuleWidget):
-  """Uses ScriptedLoadableModuleWidget base class, available at:
+  """
+  GUI widget for the InterDeCA module.
+
+  Creates and manages an enhanced user interface with multiple tabs:
+  - DeCA: Standard dense correspondence with texture support
+  - DeCAL: Dense landmarking
+  - Visualize: Interactive results visualization with interpolation
+  - Colors EDA: Color pattern analysis with dimensionality reduction
+  - Recolor: Single texture application and quantization
+  - MultiRecolor: Multi-texture clustering analysis
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def setup(self):
+    """
+    Builds the module's user interface.
+
+    Creates a tabbed interface with six main workflows:
+    - DeCA: Dense correspondence with Blender integration
+    - DeCAL: Dense landmarking with subsampling
+    - Visualize: Heatmaps and shape interpolation
+    - Colors EDA: Statistical color analysis
+    - Recolor: Texture application and quantization
+    - MultiRecolor: Comparative multi-texture analysis
+    """
     ScriptedLoadableModuleWidget.setup(self)
 
-    # This variable will hold our temporary interpolation model
-    self.interpolatedModelNode = None
-    self.selectedOriginalModelNode = None
-    self.lastDeCAAlignedModelsPath = None
+    # Initializes variables for interpolation visualization
+    self.interpolatedModelNode = None  # Temporary model for interpolation
+    self.selectedOriginalModelNode = None  # Selected resampled model
+    self.lastDeCAAlignedModelsPath = None  # Path to aligned models
 
-    # Set up tabs to split workflow
+    # Sets up tabs to organize complex workflow
     tabsWidget = qt.QTabWidget()
     self.tabsWidget = tabsWidget
     DeCATab = qt.QWidget()
@@ -79,10 +163,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCALTabLayout = qt.QFormLayout(DeCALTab)
     visualizeTab = qt.QWidget()
     visualizeTabLayout = qt.QFormLayout(visualizeTab)
+    colorsEDATab = qt.QWidget()
+    colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
+    recolorTab = qt.QWidget()
+    recolorTabLayout = qt.QFormLayout(recolorTab)
+    multiRecolorTab = qt.QWidget()
+    multiRecolorTabLayout = qt.QFormLayout(multiRecolorTab)
 
     tabsWidget.addTab(DeCATab, "DeCA")
     tabsWidget.addTab(DeCALTab, "DeCAL")
     tabsWidget.addTab(visualizeTab, "Visualize Results")
+    tabsWidget.addTab(colorsEDATab, "Colors EDA")
+    tabsWidget.addTab(recolorTab, "Recolor")
+    tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
 
     self.layout.addWidget(tabsWidget)
 
@@ -179,6 +272,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCAWidgetLayout.addRow("Textures directory (png): ", self.textureDirectoryDC)
 
     # --- Blender integration ---
+    # Configures external Blender processing for UV mapping and texture baking
     self.blenderGroup = ctk.ctkCollapsibleButton()
     self.blenderGroup.text = "Blender (cleanup, UV, bake)"
     DeCAWidgetLayout.addRow(self.blenderGroup)
@@ -553,6 +647,516 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Auto-detect Blender executable on startup
     self.autoDetectBlender()
 
+    ################################### Colors EDA Tab ###################################
+
+    ################################### Phase 1: Data Sampling ###################################
+    # Data Sampling section
+    # Creates interface for sampling color data from textured models
+    dataSamplingWidget = ctk.ctkCollapsibleButton()
+    dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    dataSamplingWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f0f8ff; }")
+    dataSamplingWidgetLayout = qt.QFormLayout(dataSamplingWidget)
+    dataSamplingWidgetLayout.setVerticalSpacing(6)
+    dataSamplingWidgetLayout.setHorizontalSpacing(8)
+    dataSamplingWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    dataSamplingWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    dataSamplingWidget.text = "Phase 1: Data Sampling"  # First step: extract colors
+    colorsEDATabLayout.addRow(dataSamplingWidget)
+
+    # Atlas model selector for Colors EDA
+    self.colorsAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.colorsAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.colorsAtlasModelSelect.setToolTip("Select the atlas model for color analysis")
+    self.colorsAtlasModelSelect.selectNodeUponCreation = False
+    self.colorsAtlasModelSelect.noneEnabled = True
+    self.colorsAtlasModelSelect.addEnabled = False
+    self.colorsAtlasModelSelect.removeEnabled = False
+    self.colorsAtlasModelSelect.showHidden = False
+    self.colorsAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
+    dataSamplingWidgetLayout.addRow("Atlas Model: ", self.colorsAtlasModelSelect)
+
+    # Baked textures directory selector
+    self.bakedTexturesDirectorySelector = ctk.ctkPathLineEdit()
+    self.bakedTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
+    self.bakedTexturesDirectorySelector.setToolTip("Select directory containing baked atlas-space textures")
+    dataSamplingWidgetLayout.addRow("Textures Directory: ", self.bakedTexturesDirectorySelector)
+
+    # Random seed input
+    self.randomSeedSpin = qt.QSpinBox()
+    self.randomSeedSpin.setRange(0, 999999)
+    self.randomSeedSpin.setValue(42)  # Default seed
+    self.randomSeedSpin.setToolTip("Random seed for reproducible face sampling")
+    dataSamplingWidgetLayout.addRow("Random Seed: ", self.randomSeedSpin)
+
+    # Percentage of faces to sample
+    self.faceSamplePercentSpin = qt.QDoubleSpinBox()
+    self.faceSamplePercentSpin.setRange(1.0, 100.0)
+    self.faceSamplePercentSpin.setSingleStep(5.0)
+    self.faceSamplePercentSpin.setSuffix(" %")
+    self.faceSamplePercentSpin.setValue(100.0)  # Default to all faces
+    self.faceSamplePercentSpin.setToolTip("Percentage of faces to randomly sample from the atlas model")
+    dataSamplingWidgetLayout.addRow("Sample Percentage: ", self.faceSamplePercentSpin)
+
+    # Sample Data button
+    self.sampleDataButton = qt.QPushButton("Sample Data")
+    self.sampleDataButton.toolTip = "Sample faces and calculate color averages from textures"
+    self.sampleDataButton.enabled = False
+    dataSamplingWidgetLayout.addRow(self.sampleDataButton)
+
+    # Sampling progress and status
+    self.samplingProgressBar = qt.QProgressBar()
+    self.samplingProgressBar.setVisible(False)
+    dataSamplingWidgetLayout.addRow("Sampling Progress: ", self.samplingProgressBar)
+
+    self.samplingStatusLabel = qt.QLabel("No data sampled")
+    self.samplingStatusLabel.setStyleSheet("color: #666; font-style: italic;")
+    dataSamplingWidgetLayout.addRow("Status: ", self.samplingStatusLabel)
+
+    # Add visual separator between phases
+    separatorLine = qt.QFrame()
+    separatorLine.setFrameShape(qt.QFrame.HLine)
+    separatorLine.setFrameShadow(qt.QFrame.Sunken)
+    separatorLine.setStyleSheet("QFrame { color: #cccccc; margin: 10px 0px; }")
+    colorsEDATabLayout.addRow(separatorLine)
+
+    ################################### Phase 2: Analysis & Plotting ###################################
+    # Analysis section
+    # Creates interface for statistical analysis and visualization of color data
+    analysisWidget = ctk.ctkCollapsibleButton()
+    analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    analysisWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f8fff0; }")
+    analysisWidgetLayout = qt.QFormLayout(analysisWidget)
+    analysisWidgetLayout.setVerticalSpacing(6)
+    analysisWidgetLayout.setHorizontalSpacing(8)
+    analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    analysisWidget.text = "Phase 2: Analysis & Plotting"  # Second step: analyze patterns
+    analysisWidget.enabled = False  # Disabled until data is sampled
+    colorsEDATabLayout.addRow(analysisWidget)
+
+    # Color space selection - compact layout
+    self.colorSpaceWidget = qt.QWidget()
+    self.colorSpaceWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
+    self.colorSpaceWidget.setFixedHeight(25)  # Fixed height for consistency
+    self.colorSpaceLayout = qt.QHBoxLayout(self.colorSpaceWidget)
+    self.colorSpaceLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
+    self.colorSpaceLayout.setSpacing(15)  # Slightly more space between buttons
+
+    self.rgbRadio = qt.QRadioButton("RGB")
+    self.hsvRadio = qt.QRadioButton("HSV")
+    self.hsvRadio.setChecked(True)
+
+    self.colorSpaceButtonGroup = qt.QButtonGroup()
+    self.colorSpaceButtonGroup.addButton(self.rgbRadio)
+    self.colorSpaceButtonGroup.addButton(self.hsvRadio)
+    self.colorSpaceLayout.addWidget(self.rgbRadio)
+    self.colorSpaceLayout.addWidget(self.hsvRadio)
+    self.colorSpaceLayout.addStretch()  # Push buttons to the left
+
+    analysisWidgetLayout.addRow("Color Space:", self.colorSpaceWidget)
+
+    # Dimensionality reduction algorithm selection - compact layout
+    self.dimRedWidget = qt.QWidget()
+    self.dimRedWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
+    self.dimRedWidget.setFixedHeight(25)  # Fixed height for consistency
+    self.dimRedLayout = qt.QHBoxLayout(self.dimRedWidget)
+    self.dimRedLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
+    self.dimRedLayout.setSpacing(15)  # Slightly more space between buttons
+
+    self.pcaRadio = qt.QRadioButton("PCA")
+    self.pcaRadio.setChecked(True)
+    self.icaRadio = qt.QRadioButton("ICA")
+    self.umapRadio = qt.QRadioButton("UMAP")
+
+    self.dimRedButtonGroup = qt.QButtonGroup()
+    self.dimRedButtonGroup.addButton(self.pcaRadio)
+    self.dimRedButtonGroup.addButton(self.icaRadio)
+    self.dimRedButtonGroup.addButton(self.umapRadio)
+    self.dimRedLayout.addWidget(self.pcaRadio)
+    self.dimRedLayout.addWidget(self.icaRadio)
+    self.dimRedLayout.addWidget(self.umapRadio)
+    self.dimRedLayout.addStretch()  # Push buttons to the left
+
+    analysisWidgetLayout.addRow("Dimensionality Reduction:", self.dimRedWidget)
+
+    # Enable/disable based on availability
+    if not SKLEARN_AVAILABLE:
+        self.pcaRadio.setEnabled(False)
+        self.icaRadio.setEnabled(False)
+        self.pcaRadio.setToolTip("sklearn not available")
+        self.icaRadio.setToolTip("sklearn not available")
+    if not UMAP_AVAILABLE:
+        self.umapRadio.setEnabled(False)
+        self.umapRadio.setToolTip("umap-learn not available")
+
+    # View mode selection - 2D vs Channel views
+    self.viewModeWidget = qt.QWidget()
+    self.viewModeWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
+    self.viewModeWidget.setFixedHeight(25)
+    self.viewModeLayout = qt.QHBoxLayout(self.viewModeWidget)
+    self.viewModeLayout.setContentsMargins(0, 2, 0, 2)
+    self.viewModeLayout.setSpacing(15)
+
+    self.view2DRadio = qt.QRadioButton("2D (Dim Reduction)")
+    self.view2DRadio.setChecked(True)
+    self.viewChannelRadio = qt.QRadioButton("Channel Histograms")
+
+    self.viewModeButtonGroup = qt.QButtonGroup()
+    self.viewModeButtonGroup.addButton(self.view2DRadio)
+    self.viewModeButtonGroup.addButton(self.viewChannelRadio)
+    self.viewModeLayout.addWidget(self.view2DRadio)
+    self.viewModeLayout.addWidget(self.viewChannelRadio)
+    self.viewModeLayout.addStretch()
+
+    analysisWidgetLayout.addRow("View Mode:", self.viewModeWidget)
+
+    # Plot button (renamed from "Run Analysis")
+    self.plotButton = qt.QPushButton("Plot")
+    self.plotButton.toolTip = "Generate plots from sampled data using selected analysis settings"
+    self.plotButton.enabled = False
+    analysisWidgetLayout.addRow(self.plotButton)
+
+    # Analysis progress and log information
+    self.analysisProgressBar = qt.QProgressBar()
+    self.analysisProgressBar.setVisible(False)
+    analysisWidgetLayout.addRow("Analysis Progress: ", self.analysisProgressBar)
+
+    self.colorsEDALogInfo = qt.QPlainTextEdit()
+    self.colorsEDALogInfo.setPlaceholderText("Colors EDA log information")
+    self.colorsEDALogInfo.setReadOnly(True)
+    self.colorsEDALogInfo.setMaximumHeight(150)
+    analysisWidgetLayout.addRow(self.colorsEDALogInfo)
+
+    # Channel Histogram controls (rendered in the main plot viewer)
+    self.histCollapsible = ctk.ctkCollapsibleButton()
+    self.histCollapsible.text = "Channel Histogram Options"
+    self.histCollapsible.collapsed = False
+    self.histCollapsible.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    self.histLayout = qt.QFormLayout(self.histCollapsible)
+    self.histLayout.setContentsMargins(0, 0, 0, 0)
+    self.histLayout.setSpacing(4)
+
+    self.histChannelSelector = qt.QComboBox()
+    self.histChannelSelector.addItems(["Channel 1", "Channel 2", "Channel 3"])  # Labels updated after run
+    self.histChannelSelector.setEnabled(False)
+    self.histLayout.addRow("Channel:", self.histChannelSelector)
+
+    # Color-by-bin-average toggle
+    self.colorByBinAvgCheck = qt.QCheckBox("Color bars by bin average")
+    self.colorByBinAvgCheck.setChecked(False)
+    self.histLayout.addRow(self.colorByBinAvgCheck)
+
+    # HSV Options section
+    self.hsvOptionsLabel = qt.QLabel("HSV Options:")
+    self.hsvOptionsLabel.setStyleSheet("font-weight: bold; color: #666;")
+    self.histLayout.addRow(self.hsvOptionsLabel)
+
+    # Color enhancement option for 2D plots
+    self.enhanceColorsCheck = qt.QCheckBox("Enhance colors in 2D plot for visibility")
+    self.enhanceColorsCheck.setChecked(False)  # Default to actual colors
+    self.enhanceColorsCheck.setToolTip("When checked, boosts saturation/value for better visibility. When unchecked, uses actual colors from data.")
+    self.histLayout.addRow(self.enhanceColorsCheck)
+
+    # HSV Filtering section
+    self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
+    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666; margin-top: 10px;")
+    self.histLayout.addRow(self.hsvFilterLabel)
+
+    # Saturation cutoff (percent)
+    self.satCutoffSpin = qt.QDoubleSpinBox()
+    self.satCutoffSpin.setRange(0.0, 100.0)
+    self.satCutoffSpin.setSingleStep(5.0)
+    self.satCutoffSpin.setSuffix(" %")
+    self.satCutoffSpin.setValue(10.0)   # default from our earlier fix
+    self.satCutoffSpin.setToolTip("Minimum saturation threshold for HSV filtering")
+    self.histLayout.addRow("Saturation cutoff:", self.satCutoffSpin)
+
+    self.valueCutoffSpin = qt.QDoubleSpinBox()
+    self.valueCutoffSpin.setRange(0.0, 100.0)
+    self.valueCutoffSpin.setSingleStep(5.0)
+    self.valueCutoffSpin.setSuffix(" %")
+    self.valueCutoffSpin.setValue(10.0)   # default from our earlier fix
+    self.valueCutoffSpin.setToolTip("Minimum value/brightness threshold for HSV filtering")
+    self.histLayout.addRow("Value cutoff:", self.valueCutoffSpin)
+
+    # Note: Removed auto-refresh event hooks - now manual refresh via Plot button
+
+    # Keep references to created MRML nodes (tables/series/charts) for cleanup
+    self.histTableNodes = []
+    self.histSeriesNodes = []
+    self.histChartNodes = []
+
+    analysisWidgetLayout.addRow(self.histCollapsible)
+
+    # Store reference to analysis widget for enabling/disabling
+    self.analysisWidget = analysisWidget
+
+    # Connections for histogram controls
+    self.histChannelSelector.connect("currentIndexChanged(int)", self.onHistChannelChanged)
+
+    # Connections for Phase 1: Data Sampling
+    self.colorsAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onSamplingParameterChanged)
+    self.bakedTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onSamplingParameterChanged)
+    self.sampleDataButton.connect('clicked(bool)', self.onSampleDataButton)
+
+    # Connections for Phase 2: Analysis & Plotting
+    self.plotButton.connect('clicked(bool)', self.onPlotButton)
+    self.viewModeButtonGroup.connect('buttonClicked(QAbstractButton*)', self.onViewModeChanged)
+
+    # Initialize sampled data storage
+    self.sampledColorData = None
+    self.sampledSpecimenNames = None
+    self.sampledFaceIndices = None
+
+    # Add vertical spacer so extra space goes below content
+    colorsEDATabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
+
+    ################################### Recolor Tab ###################################
+    # Layout within the Recolor tab
+    recolorWidget = ctk.ctkCollapsibleButton()
+    recolorWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    recolorWidgetLayout = qt.QFormLayout(recolorWidget)
+    recolorWidgetLayout.setVerticalSpacing(4)
+    recolorWidgetLayout.setHorizontalSpacing(8)
+    recolorWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    recolorWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    recolorWidget.text = "Recolor Settings"
+    recolorTabLayout.addRow(recolorWidget)
+
+    # Atlas model selector for Recolor
+    self.recolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.recolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.recolorAtlasModelSelect.setToolTip("Select the atlas model for recoloring")
+    self.recolorAtlasModelSelect.selectNodeUponCreation = False
+    self.recolorAtlasModelSelect.noneEnabled = True
+    self.recolorAtlasModelSelect.addEnabled = False
+    self.recolorAtlasModelSelect.removeEnabled = False
+    self.recolorAtlasModelSelect.showHidden = False
+    self.recolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
+    recolorWidgetLayout.addRow("Atlas Model: ", self.recolorAtlasModelSelect)
+
+    # Textures directory selector
+    self.recolorTexturesDirectorySelector = ctk.ctkPathLineEdit()
+    self.recolorTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
+    self.recolorTexturesDirectorySelector.setToolTip("Select directory containing texture images")
+    recolorWidgetLayout.addRow("Textures Directory: ", self.recolorTexturesDirectorySelector)
+
+    # Texture selection dropdown
+    self.recolorTextureSelector = qt.QComboBox()
+    self.recolorTextureSelector.setToolTip("Select a texture to apply to the model")
+    self.recolorTextureSelector.enabled = False
+    recolorWidgetLayout.addRow("Select Texture: ", self.recolorTextureSelector)
+
+    # Average face color checkbox
+    self.averageFaceColorCheckbox = qt.QCheckBox()
+    self.averageFaceColorCheckbox.setChecked(False)
+    self.averageFaceColorCheckbox.setToolTip("If checked, each face will be colored with the average color from the texture instead of using the texture directly")
+    recolorWidgetLayout.addRow("Average Face Colors: ", self.averageFaceColorCheckbox)
+
+    # Quantize colors checkbox
+    self.quantizeColorsCheckbox = qt.QCheckBox()
+    self.quantizeColorsCheckbox.setChecked(False)
+    self.quantizeColorsCheckbox.setEnabled(False)  # Initially disabled
+    self.quantizeColorsCheckbox.setToolTip("If checked, quantize the average face colors using k-means clustering in CIE Lab color space")
+    recolorWidgetLayout.addRow("Quantize Colors: ", self.quantizeColorsCheckbox)
+
+    # Number of color clusters
+    self.numColorClustersSpin = qt.QSpinBox()
+    self.numColorClustersSpin.setRange(2, 64)
+    self.numColorClustersSpin.setValue(8)  # Default value
+    self.numColorClustersSpin.setEnabled(False)  # Initially disabled
+    self.numColorClustersSpin.setToolTip("Number of color clusters for quantization (2-64)")
+    recolorWidgetLayout.addRow("Number of Colors: ", self.numColorClustersSpin)
+
+    # High contrast palette checkbox
+    self.useHighContrastPaletteCheckbox = qt.QCheckBox()
+    self.useHighContrastPaletteCheckbox.setChecked(False)
+    self.useHighContrastPaletteCheckbox.setEnabled(False)  # Initially disabled
+    self.useHighContrastPaletteCheckbox.setToolTip("If checked, use a high contrast color palette instead of the quantized colors from the texture")
+    recolorWidgetLayout.addRow("High Contrast Palette: ", self.useHighContrastPaletteCheckbox)
+
+    # Apply texture button
+    self.applyRecolorButton = qt.QPushButton("Apply Texture")
+    self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
+    self.applyRecolorButton.enabled = False
+    recolorWidgetLayout.addRow(self.applyRecolorButton)
+
+    # Progress and log information for Recolor
+    self.recolorProgressBar = qt.QProgressBar()
+    self.recolorProgressBar.setVisible(False)
+    recolorWidgetLayout.addRow("Progress: ", self.recolorProgressBar)
+
+    self.recolorLogInfo = qt.QPlainTextEdit()
+    self.recolorLogInfo.setPlaceholderText("Recolor log information")
+    self.recolorLogInfo.setReadOnly(True)
+    self.recolorLogInfo.setMaximumHeight(150)
+    recolorWidgetLayout.addRow(self.recolorLogInfo)
+
+    # Connections for Recolor
+    self.recolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onRecolorParameterChanged)
+    self.recolorTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onRecolorTexturesDirectoryChanged)
+    self.recolorTextureSelector.connect("currentIndexChanged(int)", self.onRecolorParameterChanged)
+    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onAverageFaceColorToggled)
+    self.quantizeColorsCheckbox.connect("toggled(bool)", self.onQuantizeColorsToggled)
+    self.numColorClustersSpin.connect("valueChanged(int)", self.onRecolorParameterChanged)
+    self.useHighContrastPaletteCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
+    self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
+
+    # Add vertical spacer so extra space goes below content
+    recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
+
+    ################################### MultiRecolor Tab ###################################
+
+    # Step 1: Multi-texture clustering section
+    clusteringWidget = ctk.ctkCollapsibleButton()
+    clusteringWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    clusteringWidgetLayout = qt.QFormLayout(clusteringWidget)
+    clusteringWidgetLayout.setVerticalSpacing(4)
+    clusteringWidgetLayout.setHorizontalSpacing(8)
+    clusteringWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    clusteringWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    clusteringWidget.text = "Step 1: Multi-Texture Clustering"
+    multiRecolorTabLayout.addRow(clusteringWidget)
+
+    # Atlas model selector for MultiRecolor
+    self.multiRecolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.multiRecolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.multiRecolorAtlasModelSelect.setToolTip("Select the atlas model for multi-texture analysis")
+    self.multiRecolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
+    clusteringWidgetLayout.addRow("Atlas Model: ", self.multiRecolorAtlasModelSelect)
+
+    # Texture directory selector for MultiRecolor
+    self.multiRecolorTextureDirectorySelector = ctk.ctkPathLineEdit()
+    self.multiRecolorTextureDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
+    self.multiRecolorTextureDirectorySelector.setToolTip("Select directory containing texture images")
+    clusteringWidgetLayout.addRow("Texture Directory: ", self.multiRecolorTextureDirectorySelector)
+
+    # Number of clusters for multi-texture analysis
+    self.multiRecolorNumClustersSpin = qt.QSpinBox()
+    self.multiRecolorNumClustersSpin.setRange(2, 64)
+    self.multiRecolorNumClustersSpin.setValue(16)  # Default value for multi-texture analysis
+    self.multiRecolorNumClustersSpin.setToolTip("Number of color clusters for multi-texture analysis (2-64)")
+    clusteringWidgetLayout.addRow("Number of Clusters: ", self.multiRecolorNumClustersSpin)
+
+    # Cluster button
+    self.clusterButton = qt.QPushButton("Cluster")
+    self.clusterButton.setToolTip("Process all textures and create color clusters")
+    self.clusterButton.enabled = False
+    clusteringWidgetLayout.addRow(self.clusterButton)
+
+    # Progress bar for clustering
+    self.clusteringProgressBar = qt.QProgressBar()
+    self.clusteringProgressBar.setVisible(False)
+    clusteringWidgetLayout.addRow("Progress: ", self.clusteringProgressBar)
+
+    # Clustering log info
+    self.clusteringLogInfo = qt.QTextEdit()
+    self.clusteringLogInfo.setMaximumHeight(100)
+    self.clusteringLogInfo.setReadOnly(True)
+    clusteringWidgetLayout.addRow("Log: ", self.clusteringLogInfo)
+
+    # Step 2: Individual visualization section
+    individualWidget = ctk.ctkCollapsibleButton()
+    individualWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    individualWidgetLayout = qt.QFormLayout(individualWidget)
+    individualWidgetLayout.setVerticalSpacing(4)
+    individualWidgetLayout.setHorizontalSpacing(8)
+    individualWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    individualWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    individualWidget.text = "Step 2: Individual Visualization"
+    multiRecolorTabLayout.addRow(individualWidget)
+
+    # Texture selector dropdown
+    self.individualTextureSelector = qt.QComboBox()
+    self.individualTextureSelector.setToolTip("Select a texture to visualize with the clustered palette")
+    self.individualTextureSelector.enabled = False
+    individualWidgetLayout.addRow("Select Texture: ", self.individualTextureSelector)
+
+    # High contrast palette option for individual visualization
+    self.individualHighContrastCheckbox = qt.QCheckBox()
+    self.individualHighContrastCheckbox.setChecked(False)
+    self.individualHighContrastCheckbox.setEnabled(False)
+    self.individualHighContrastCheckbox.setToolTip("Use high contrast palette instead of clustered colors")
+    individualWidgetLayout.addRow("High Contrast Palette: ", self.individualHighContrastCheckbox)
+
+    # Apply texture button for individual visualization
+    self.applyIndividualTextureButton = qt.QPushButton("Apply Texture")
+    self.applyIndividualTextureButton.setToolTip("Apply selected texture with clustered palette")
+    self.applyIndividualTextureButton.enabled = False
+    individualWidgetLayout.addRow(self.applyIndividualTextureButton)
+
+    # Progress bar for individual visualization
+    self.individualProgressBar = qt.QProgressBar()
+    self.individualProgressBar.setVisible(False)
+    individualWidgetLayout.addRow("Progress: ", self.individualProgressBar)
+
+    # Individual visualization log info
+    self.individualLogInfo = qt.QTextEdit()
+    self.individualLogInfo.setMaximumHeight(80)
+    self.individualLogInfo.setReadOnly(True)
+    individualWidgetLayout.addRow("Log: ", self.individualLogInfo)
+
+    # Step 3: Population analysis section
+    populationWidget = ctk.ctkCollapsibleButton()
+    populationWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    populationWidgetLayout = qt.QFormLayout(populationWidget)
+    populationWidgetLayout.setVerticalSpacing(4)
+    populationWidgetLayout.setHorizontalSpacing(8)
+    populationWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
+    populationWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
+    populationWidget.text = "Step 3: Population Analysis"
+    multiRecolorTabLayout.addRow(populationWidget)
+
+    # Dimensionality reduction method selection
+    self.dimReductionMethodGroup = qt.QButtonGroup()
+    self.pcaRadioButton = qt.QRadioButton("PCA")
+    self.pcaRadioButton.setChecked(True)  # Default selection
+    self.umapRadioButton = qt.QRadioButton("UMAP")
+    self.dimReductionMethodGroup.addButton(self.pcaRadioButton, 0)
+    self.dimReductionMethodGroup.addButton(self.umapRadioButton, 1)
+
+    dimReductionLayout = qt.QHBoxLayout()
+    dimReductionLayout.addWidget(self.pcaRadioButton)
+    dimReductionLayout.addWidget(self.umapRadioButton)
+    dimReductionWidget = qt.QWidget()
+    dimReductionWidget.setLayout(dimReductionLayout)
+    populationWidgetLayout.addRow("Dimensionality Reduction: ", dimReductionWidget)
+
+    # Compare textures button
+    self.compareTexturesButton = qt.QPushButton("Compare Textures")
+    self.compareTexturesButton.setToolTip("Analyze all textures and create population comparison plot")
+    self.compareTexturesButton.enabled = False
+    populationWidgetLayout.addRow(self.compareTexturesButton)
+
+    # Progress bar for population analysis
+    self.populationProgressBar = qt.QProgressBar()
+    self.populationProgressBar.setVisible(False)
+    populationWidgetLayout.addRow("Progress: ", self.populationProgressBar)
+
+    # Population analysis log info
+    self.populationLogInfo = qt.QTextEdit()
+    self.populationLogInfo.setMaximumHeight(80)
+    self.populationLogInfo.setReadOnly(True)
+    populationWidgetLayout.addRow("Log: ", self.populationLogInfo)
+
+    # Connect MultiRecolor UI events
+    self.multiRecolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorTextureDirectorySelector.connect("currentPathChanged(QString)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorNumClustersSpin.connect("valueChanged(int)", self.onMultiRecolorParameterChanged)
+    self.clusterButton.connect('clicked(bool)', self.onClusterButton)
+    self.individualTextureSelector.connect("currentTextChanged(const QString &)", self.onIndividualTextureChanged)
+    self.applyIndividualTextureButton.connect('clicked(bool)', self.onApplyIndividualTextureButton)
+    self.compareTexturesButton.connect('clicked(bool)', self.onCompareTexturesButton)
+
+    # Add vertical spacer so extra space goes below content
+    multiRecolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
+
+    # Initialize MultiRecolor state variables
+    self.multiRecolorClusterCenters = None
+    self.multiRecolorFaceAreas = None
+    self.multiRecolorTextureFiles = []
+    self.faceAreasCache = {}  # Cache face areas by model node ID
+
   def autoDetectBlender(self):
     """Automatically detect and set Blender executable path if not already set."""
     try:
@@ -580,12 +1184,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
       os.makedirs(alignedModelFolderDC)
       resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels") # <-- ADD THIS LINE
-      os.makedirs(resampledModelFolderDC)  
+      os.makedirs(resampledModelFolderDC)
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
-      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC) 
+      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC)
       if not loadAtlasOption:
         tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
         os.makedirs(tempLMFolderDC)
@@ -726,11 +1330,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if atlasNode and originalNode:
         atlasPolyData = atlasNode.GetPolyData()
         originalPolyData = originalNode.GetPolyData()
-        
+
         if not (atlasPolyData and originalPolyData):
             self.interpolationSlider.enabled = False
             return
-            
+
         atlasPointCount = atlasPolyData.GetNumberOfPoints()
         originalPointCount = originalPolyData.GetNumberOfPoints()
 
@@ -745,7 +1349,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
             print(errorMsg) # Also print to Python console for easy copy/paste
             self.interpolationSlider.enabled = False
             return
-            
+
         self.interpolationSlider.enabled = True
         # Trigger an initial update
         self.onInterpolationSliderChanged(self.interpolationSlider.value)
@@ -806,21 +1410,42 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
 
   def onGenerateAtlasButton(self):
+    """
+    Generates or loads an atlas model for DeCAL analysis.
+
+    Handles two workflows:
+    1. Loading existing atlas: Uses pre-computed atlas model and landmarks
+    2. Generating new atlas: Creates average shape from specimen collection
+
+    Outputs atlas files to the DeCA output directory for use in dense
+    correspondence analysis.
+    """
+    # Initializes the InterDeCA logic processor
     logic = InterDeCALogic()
-    #set up output directory
+
+    # Sets up the output directory structure with DeCAL-specific folders
     self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+
+    # Validates that directory creation was successful
     if self.folderNames == {}:
       self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
       return
+
+    # Stores paths to original data for reference during processing
     self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
     self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
+
+    # Determines whether to load existing atlas or generate new one
     if self.loadAtlasOptionDCL.checked:
+      # Loads existing atlas model from file
       try:
         atlasModelPath = self.DCLBaseModelSelector.currentPath
         self.atlasModel = slicer.util.loadModel(atlasModelPath)
       except:
         self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
         return
+
+      # Loads corresponding atlas landmarks
       try:
         atlasLMPath = self.DCLBaseLMSelector.currentPath
         self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
@@ -829,34 +1454,60 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
         return
     else:
-      removeScale = True
+      # Generates new atlas from specimen collection using Procrustes alignment
+      removeScale = True  # Removes scale differences during alignment
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+
+    # Saves the atlas model to the output directory for later use
     atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
+
+    # Saves the atlas landmarks alongside the model
     atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+
+    # Enables the next step button for point number calculation
     self.getPointNumberButton.enabled = True
 
   def generateNewAtlas(self, removeScale, log):
+    """
+    Creates an unbiased atlas model from a collection of specimens.
+
+    Implements the following workflow:
+    1. Identifies specimen closest to mean shape using Procrustes analysis
+    2. Performs rigid alignment of all specimens to this template
+    3. Computes average shape from aligned specimens
+    4. Cleans up temporary files
+
+    Args:
+      removeScale: Boolean to normalize scale during alignment
+      log: Qt text widget for progress reporting
+
+    Returns:
+      tuple: (atlasModel, atlasLMs) - Generated atlas and average landmarks
+    """
+    # Initializes the InterDeCA logic for processing operations
     logic = InterDeCALogic()
 
-    # getClosestToMeanPath returns a filename, we need to extract the base subject ID
+    # Determines which specimen is closest to the mean shape configuration
+    # This specimen will serve as the initial template for alignment
     try:
       closestFileName = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
       if closestFileName is None:
         log.appendPlainText("Error: Could not determine closest sample to mean")
         return None, None
-      
-      # Extract the base subject ID by removing landmark file extensions
+
+      # Extracts the subject ID by removing landmark file extensions
+      # Handles multiple extension formats (.fcsv, .mrk.json, etc.)
       subjectID = closestFileName
-      # Strip common landmark file extensions (.fcsv, .mrk, .json)
       fileNameBase = Path(subjectID)
       while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
         fileNameBase = fileNameBase.with_suffix('')
       subjectID = str(fileNameBase)
-      
+
+      # Reports the selected template specimen for user verification
       log.appendPlainText(f"Closest sample to mean: {closestFileName}")
       log.appendPlainText(f"Using subject ID: {subjectID}")
     except Exception as e:
@@ -896,14 +1547,28 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
 
   def onGetPointNumberButton(self):
+    """
+    Calculates the number of points in the subsampled atlas.
+
+    Uses the spacing tolerance value to downsample the atlas model and
+    reports the resulting point count. This helps users understand the
+    density of correspondence points before running DeCAL.
+    """
+    # Creates logic instance for point calculation
     logic = InterDeCALogic()
+
+    # Subsamples the atlas based on the specified spacing tolerance
     subsampledTemplate, pointNumber = logic.runCheckPoints(self.atlasModel, self.spacingTolerance.value)
+
+    # Reports the point count to help users assess correspondence density
     self.logInfoDCL.appendPlainText(f'The subsampled template has a total of {pointNumber} points.')
+
+    # Enables the DeCAL execution button now that point count is known
     self.DCLApplyButton.enabled = True
 
   def onTabChanged(self, index):
     if self.tabsWidget.tabText(index) == "Visualize Results":
-      self._hideMarkupsForVisualization(remove=False) 
+      self._hideMarkupsForVisualization(remove=False)
       self.updateBakedPreviewList()
       self._ensureModelsAreVisible()
 
@@ -971,12 +1636,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     merge_dist     = float(self.blMergeDistSpin.value)
     smart_angle    = float(self.blSmartAngleSpin.value)
     island_margin  = float(self.blIslandMarginSpin.value)
-    
+
     # Auto-detect/install Blender if path is not set or invalid
     if not (blender_exe and os.path.isfile(blender_exe) and os.access(blender_exe, os.X_OK)):
       self.logInfoDC.appendPlainText("Blender path not set or invalid. Attempting automatic detection/installation...")
       blender_exe = logic.getBlenderExecutable(lambda msg: self.logInfoDC.appendPlainText(msg))
-      
+
       if blender_exe:
         # Update the UI field with the found/installed path
         self.blenderExeEdit.setCurrentPath(blender_exe)
@@ -1120,6 +1785,946 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         if dn: dn.SetVisibility(True)
       except Exception:
         pass
+
+  ################################### Colors EDA Functions ###################################
+
+  def onSamplingParameterChanged(self):
+    """Enable/disable the sample data button based on parameter selection"""
+    atlasSelected = bool(self.colorsAtlasModelSelect.currentNode())
+    texturesSelected = bool(self.bakedTexturesDirectorySelector.currentPath and
+                           os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
+    self.sampleDataButton.enabled = atlasSelected and texturesSelected
+
+  def onSampleDataButton(self):
+    """Sample faces and calculate color averages from textures"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.samplingProgressBar.setVisible(True)
+      self.samplingProgressBar.setValue(0)
+
+      # Get parameters
+      atlasModel = self.colorsAtlasModelSelect.currentNode()
+      texturesDir = self.bakedTexturesDirectorySelector.currentPath
+      randomSeed = int(self.randomSeedSpin.value)
+      samplePercent = float(self.faceSamplePercentSpin.value)
+
+      self.samplingStatusLabel.setText("Sampling in progress...")
+      self.samplingStatusLabel.setStyleSheet("color: #0066cc; font-style: italic;")
+
+      # Run the sampling
+      logic = InterDeCALogic()
+      result = logic.sampleColorData(
+        atlasModel, texturesDir, randomSeed, samplePercent,
+        progressCallback=self.updateSamplingProgress,
+        logCallback=self.logSamplingMessage
+      )
+
+      if result and result.get('success'):
+        # Store the sampled data
+        self.sampledColorData = result['colorData']
+        self.sampledSpecimenNames = result['specimenNames']
+        self.sampledFaceIndices = result['faceIndices']
+
+        # Update status
+        nSpecimens = len(self.sampledSpecimenNames)
+        nFaces = len(self.sampledFaceIndices)
+        self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
+        self.samplingStatusLabel.setStyleSheet("color: #006600; font-weight: bold;")
+
+        # Enable analysis phase
+        self.analysisWidget.enabled = True
+        self.plotButton.enabled = True
+
+        self.colorsEDALogInfo.appendPlainText(f"Data sampling completed successfully!")
+        self.colorsEDALogInfo.appendPlainText(f"Sampled {nFaces} faces ({samplePercent:.1f}%) from {nSpecimens} specimens")
+      else:
+        self.samplingStatusLabel.setText("Sampling failed")
+        self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+        self.colorsEDALogInfo.appendPlainText("Data sampling failed - check log for details")
+
+      self.samplingProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.samplingProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.samplingStatusLabel.setText("Sampling failed")
+      self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+      self.colorsEDALogInfo.appendPlainText(f"Error during sampling: {str(e)}")
+      slicer.util.errorDisplay(f"Data sampling failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateSamplingProgress(self, value):
+    """Update sampling progress bar"""
+    self.samplingProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logSamplingMessage(self, message):
+    """Log message during sampling"""
+    self.colorsEDALogInfo.appendPlainText(message)
+    slicer.app.processEvents()
+
+  def _ensureMainPlotViewNode(self):
+    """Get the main plot view node for displaying charts"""
+    try:
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      if plotWidget:
+        return plotWidget.mrmlPlotViewNode()
+      return None
+    except Exception:
+      return None
+
+  def _refreshCurrentHistogram(self):
+    """Re-render the histogram/scatter view using current UI options."""
+    if not hasattr(self, '_lastColorData') or not hasattr(self, '_lastColorSpace'):
+        return
+    if not self.viewChannelRadio.isChecked():
+        return  # only relevant to histogram view
+    try:
+        chan = int(self.histChannelSelector.currentIndex)
+    except Exception:
+        chan = 0
+    try:
+        self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, chan)
+    except Exception as e:
+        try: self.colorsEDALogInfo.appendPlainText(f"Refresh failed: {e}")
+        except: pass
+
+
+  def onPlotButton(self):
+    """Generate plots from sampled data using selected analysis settings"""
+    try:
+      # Check if we have sampled data
+      if self.sampledColorData is None:
+        slicer.util.errorDisplay("No sampled data available. Please run 'Sample Data' first.")
+        return
+
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.analysisProgressBar.setVisible(True)
+      self.analysisProgressBar.setValue(0)
+
+      # Get analysis parameters
+      colorSpace = "HSV" if self.hsvRadio.isChecked() else "RGB"
+
+      if self.pcaRadio.isChecked():
+        dimRedAlgo = "PCA"
+      elif self.icaRadio.isChecked():
+        dimRedAlgo = "ICA"
+      else:
+        dimRedAlgo = "UMAP"
+
+      # Get HSV cutoff parameters for dimensionality reduction
+      satCutoff = float(self.satCutoffSpin.value)
+      valueCutoff = float(self.valueCutoffSpin.value)
+      enhanceColors = bool(self.enhanceColorsCheck.isChecked())
+
+      self.colorsEDALogInfo.appendPlainText(f"Starting analysis on sampled data...")
+      self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
+      self.colorsEDALogInfo.appendPlainText(f"Dimensionality reduction: {dimRedAlgo}")
+
+      # Run the analysis on pre-sampled data
+      logic = InterDeCALogic()
+      result = logic.runColorsEDAFromSampledData(
+        self.sampledColorData, self.sampledSpecimenNames, colorSpace, dimRedAlgo,
+        progressCallback=self.updateAnalysisProgress,
+        logCallback=self.logAnalysisMessage,
+        satCutoff=satCutoff,
+        valueCutoff=valueCutoff,
+        enhanceColors=enhanceColors
+      )
+
+      if result and isinstance(result, dict) and result.get('success'):
+        self.colorsEDALogInfo.appendPlainText("Analysis completed successfully!")
+        # Save color data and enable histogram selector
+        if 'colorData' in result:
+          self._lastColorData = result['colorData']  # Full dataset
+          self._lastColorSpace = colorSpace
+          self._refreshHistogramChannelOptions(colorSpace)
+          # Default to first channel
+          self.histChannelSelector.setCurrentIndex(0)
+
+          # Store the cutoff values used for this analysis
+          self._lastSatCutoff = satCutoff
+          self._lastValueCutoff = valueCutoff
+
+          # Store the 2D plot chart node for view switching
+          if 'chartNode' in result and result['chartNode']:
+            self._last2DPlotChartNode = result['chartNode']
+
+          # Show appropriate view based on radio button selection
+          if self.view2DRadio.isChecked():
+            self.colorsEDALogInfo.appendPlainText("Results plotted in 2D viewer")
+          else:
+            self.colorsEDALogInfo.appendPlainText("Channel histogram view enabled")
+            try:
+              self._refreshCurrentHistogram()
+            except Exception as e:
+              self.colorsEDALogInfo.appendPlainText(f"Failed to show histogram: {e}")
+      else:
+        self.colorsEDALogInfo.appendPlainText("Analysis failed - check log for details")
+
+      self.analysisProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.analysisProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.colorsEDALogInfo.appendPlainText(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Analysis failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateAnalysisProgress(self, value):
+    """Update analysis progress bar"""
+    self.analysisProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logAnalysisMessage(self, message):
+    """Log message during analysis"""
+    self.colorsEDALogInfo.appendPlainText(message)
+    slicer.app.processEvents()
+
+  # Legacy function names kept for compatibility with existing logic methods
+  def updateColorsEDAProgress(self, value):
+    """Update progress bar (legacy compatibility)"""
+    self.analysisProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logColorsEDAMessage(self, message):
+    """Log message to the Colors EDA log (legacy compatibility)"""
+    self.colorsEDALogInfo.appendPlainText(message)
+    slicer.app.processEvents()
+
+  def _clearHistogramNodes(self):
+    """Remove previously created MRML nodes for histograms to keep scene clean."""
+    try:
+      for n in getattr(self, 'histSeriesNodes', []):
+        if n:
+          slicer.mrmlScene.RemoveNode(n)
+      for n in getattr(self, 'histTableNodes', []):
+        if n:
+          slicer.mrmlScene.RemoveNode(n)
+      for n in getattr(self, 'histChartNodes', []):
+        if n:
+          slicer.mrmlScene.RemoveNode(n)
+    except Exception as e:
+      print(f"Histogram cleanup warning: {e}")
+    self.histSeriesNodes = []
+    self.histTableNodes = []
+    self.histChartNodes = []
+
+  def _createDensityHistogramPlot(self, data, bins, value_range, title, x_label, color=(0.4, 0.4, 0.4)):
+    """Create a density histogram (bars) and return the chart node."""
+    # Compute density histogram (ignore NaNs)
+    data = np.asarray(data)
+    data = data[np.isfinite(data)]
+    if data.size == 0:
+      raise ValueError("Empty data for density plot")
+    density, edges = np.histogram(data, bins=bins, range=value_range, density=True)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+
+    # Create table with X (bin centers) and Y (density)
+    xArray = vtk.vtkFloatArray(); xArray.SetName("Value")
+    xArray.SetNumberOfTuples(len(centers))
+    yArray = vtk.vtkFloatArray(); yArray.SetName("Density")
+    yArray.SetNumberOfTuples(len(density))
+    for i in range(len(centers)):
+      xArray.SetValue(i, float(centers[i]))
+      yArray.SetValue(i, float(density[i]))
+
+    tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+    tableNode.AddColumn(xArray)
+    tableNode.AddColumn(yArray)
+
+    seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+    seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+    seriesNode.SetXColumnName("Value")
+    seriesNode.SetYColumnName("Density")
+    seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeBar)
+    try:
+      seriesNode.SetColor(*color)
+    except Exception:
+      pass
+
+    chartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+    chartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
+    chartNode.SetTitle(title)
+    chartNode.SetXAxisTitle(x_label)
+    chartNode.SetYAxisTitle("Density")
+    chartNode.SetLegendVisibility(False)
+
+    # Track nodes for cleanup
+    self.histTableNodes.append(tableNode)
+    self.histSeriesNodes.append(seriesNode)
+    self.histChartNodes.append(chartNode)
+
+    return chartNode
+
+  def _ensureMainPlotViewNode(self):
+    """Get the main plot view node used by the module (same pane as scatter)."""
+    try:
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      return plotWidget.mrmlPlotViewNode()
+    except Exception:
+      return None
+
+  def _refreshHistogramChannelOptions(self, colorSpace):
+    labels = ["R", "G", "B"] if colorSpace != "HSV" else ["Hue", "Saturation", "Value"]
+    self.histChannelSelector.blockSignals(True)
+    self.histChannelSelector.clear()
+    self.histChannelSelector.addItems(labels)
+    self.histChannelSelector.setEnabled(True)
+    self.histChannelSelector.blockSignals(False)
+
+  def onViewModeChanged(self, button):
+    """Handle view mode radio button changes"""
+    try:
+      if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace'):
+        if self.viewChannelRadio.isChecked():
+          # Switch to channel histogram view
+          self._refreshCurrentHistogram()
+        elif self.view2DRadio.isChecked():
+          # Switch to 2D dimensionality reduction view
+          if hasattr(self, '_last2DPlotChartNode') and self._last2DPlotChartNode:
+            plotViewNode = self._ensureMainPlotViewNode()
+            if plotViewNode:
+              plotViewNode.SetPlotChartNodeID(self._last2DPlotChartNode.GetID())
+              try:
+                self.colorsEDALogInfo.appendPlainText("Switched to 2D dimensionality reduction view")
+              except Exception:
+                pass
+            else:
+              try:
+                self.colorsEDALogInfo.appendPlainText("Warning: Could not access plot view")
+              except Exception:
+                pass
+          else:
+            try:
+              self.colorsEDALogInfo.appendPlainText("Warning: No 2D plot available. Run analysis first.")
+            except Exception:
+              pass
+    except Exception as e:
+      msg = f"Failed to switch view mode: {e}"
+      print(msg)
+      try:
+        self.colorsEDALogInfo.appendPlainText(msg)
+      except Exception:
+        pass
+
+  def onHistChannelChanged(self, index):
+    try:
+      if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace') and self.viewChannelRadio.isChecked():
+        # self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, int(index))
+        self._refreshCurrentHistogram()
+    except Exception as e:
+      msg = f"Failed to update histogram: {e}"
+      print(msg)
+      try:
+        self.colorsEDALogInfo.appendPlainText(msg)
+      except Exception:
+        pass
+
+  def _createHueHistogramDensityChart(self, hue_degrees, bins=72, sat=None, val=None,
+                                    color_by_bin_average=False, line_width=12):
+    """
+    Build a vertical-segment hue histogram (density). When color_by_bin_average=True,
+    each segment is colored by the mean RGB of samples that fell into that bin;
+    otherwise colored by the bin center hue.
+
+    Args:
+        hue_degrees: array of hue values in degrees [0,360)
+        bins: number of bins
+        sat: optional array of saturation values (0..100) aligned with hue_degrees
+        val: optional array of value/brightness (0..100) aligned with hue_degrees
+        color_by_bin_average: bool
+    """
+    self._clearHistogramNodes()
+
+    hue_degrees = np.asarray(hue_degrees)
+    hue_degrees = hue_degrees[np.isfinite(hue_degrees)]
+    if hue_degrees.size == 0:
+        raise ValueError("Empty hue data for histogram")
+
+    # Histogram (density) + edges
+    density, edges = np.histogram(hue_degrees, bins=bins, range=(0.0, 360.0), density=True)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+
+    # Precompute bin indices per sample for coloring-by-average if needed
+    bin_colors = None
+    if color_by_bin_average and sat is not None and val is not None:
+        sat = np.asarray(sat) / 100.0
+        val = np.asarray(val) / 100.0
+        # map each sample to a bin index
+        bin_idx = np.clip(np.digitize(hue_degrees, edges, right=False) - 1, 0, bins - 1)
+
+        # accumulate RGB sums & counts per bin (reconstruct RGB from HSV)
+        sum_rgb = np.zeros((bins, 3), dtype=np.float64)
+        counts  = np.zeros(bins, dtype=np.int64)
+
+        # hue in [0,1] for colorsys
+        h01 = (hue_degrees % 360.0) / 360.0
+        for i in range(h01.size):
+            r, g, b = colorsys.hsv_to_rgb(float(h01[i]), float(sat[i]), float(val[i]))
+            k = bin_idx[i]
+            sum_rgb[k, 0] += r; sum_rgb[k, 1] += g; sum_rgb[k, 2] += b
+            counts[k] += 1
+
+        # mean RGB per bin; fallback to pure bin hue color if bin empty
+        bin_colors = np.zeros((bins, 3), dtype=np.float32)
+        for k in range(bins):
+            if counts[k] > 0:
+                bin_colors[k] = (sum_rgb[k] / counts[k]).astype(np.float32)
+            else:
+                # fallback: color by the bin center hue (full sat/value)
+                r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, 1.0, 1.0)
+                bin_colors[k] = (r, g, b)
+
+    # Build chart and vertical-segment “bars”
+    chartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+    chartNode.SetTitle("Histogram: Hue (density)")
+    chartNode.SetXAxisTitle("Hue (degrees)")
+    chartNode.SetYAxisTitle("Density")
+    chartNode.SetLegendVisibility(False)
+    self.histChartNodes.append(chartNode)
+
+    for i, (c, d) in enumerate(zip(centers, density)):
+        x = vtk.vtkFloatArray(); x.SetName("Hue"); x.SetNumberOfTuples(2); x.SetValue(0, float(c)); x.SetValue(1, float(c))
+        y = vtk.vtkFloatArray(); y.SetName("Density"); y.SetNumberOfTuples(2); y.SetValue(0, 0.0); y.SetValue(1, float(d))
+
+        t = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+        t.AddColumn(x); t.AddColumn(y)
+        self.histTableNodes.append(t)
+
+        s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+        s.SetAndObserveTableNodeID(t.GetID())
+        s.SetXColumnName("Hue"); s.SetYColumnName("Density")
+        s.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+        s.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleSolid)
+        s.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleNone)
+        s.SetLineWidth(line_width)  # thicker “bar”; tweak in UI if you want
+
+        if color_by_bin_average and bin_colors is not None:
+            r, g, b = bin_colors[i]
+        else:
+            r, g, b = colorsys.hsv_to_rgb(float(c) / 360.0, 1.0, 1.0)
+        try:
+            s.SetColor(float(r), float(g), float(b))
+        except Exception:
+            pass
+
+        chartNode.AddAndObservePlotSeriesNodeID(s.GetID())
+        self.histSeriesNodes.append(s)
+
+    return chartNode
+
+
+
+  def _plotHistogramInMainView(self, colorData, colorSpace, channelIndex):
+    """Render selected channel histogram in the same plotting viewer pane."""
+    if colorData is None or len(colorData) == 0:
+      raise ValueError("No color data available for histogram")
+
+    plotViewNode = self._ensureMainPlotViewNode()
+    if plotViewNode is None:
+      raise RuntimeError("No plot view available to show histogram")
+
+    # Branch: special handling for Hue to color bars
+    if colorSpace == "HSV" and channelIndex == 0:
+      hue_deg = np.mod(np.degrees(np.arctan2(colorData[:, 1], colorData[:, 0])), 360.0)
+      sat = colorData[:, 2]  # 0..100
+      val = colorData[:, 3]  # 0..100
+
+      # read UI
+      sat_thresh = float(self.satCutoffSpin.value) if hasattr(self, "satCutoffSpin") else 10.0
+      val_thresh = float(self.valueCutoffSpin.value) if hasattr(self, "valueCutoffSpin") else 10.0
+      by_bin_avg = bool(self.colorByBinAvgCheck.isChecked()) if hasattr(self, "colorByBinAvgCheck") else False
+
+      # mask low saturation before binning
+      mask = np.isfinite(hue_deg) & np.isfinite(sat) & np.isfinite(val) & (sat >= sat_thresh) & (val >= val_thresh)
+      hue_deg, sat, val = hue_deg[mask], sat[mask], val[mask]
+
+      chartNode = self._createHueHistogramDensityChart(
+          hue_degrees=hue_deg,
+          bins=72,
+          sat=sat,
+          val=val,
+          color_by_bin_average=by_bin_avg,
+          line_width=12
+      )
+      plotViewNode.SetPlotChartNodeID(chartNode.GetID())
+      return
+
+    # Default density histograms for other channels
+    if colorSpace == "HSV":
+      if channelIndex == 1:
+        data = colorData[:, 2]; rng = (0.0, 100.0); title = "Histogram: Saturation (density)"; xlabel = "Saturation (0-100)"
+      else:
+        data = colorData[:, 3]; rng = (0.0, 100.0); title = "Histogram: Value (density)"; xlabel = "Value (0-100)"
+    else:
+      data = colorData[:, channelIndex]
+      rng = (0.0, 255.0); names = ["R", "G", "B"]; xlabel = f"{names[channelIndex]} (0-255)"; title = f"Histogram: {names[channelIndex]} (density)"
+
+    chartNode = self._createDensityHistogramPlot(data, bins=50, value_range=rng, title=title, x_label=xlabel)
+    plotViewNode.SetPlotChartNodeID(chartNode.GetID())
+
+  ################################### Recolor Functions ###################################
+
+  def onRecolorParameterChanged(self):
+    """Enable/disable the apply button based on parameter selection"""
+    atlasSelected = bool(self.recolorAtlasModelSelect.currentNode())
+    textureSelected = bool(self.recolorTextureSelector.currentText and
+                          self.recolorTextureSelector.currentIndex >= 0)
+    self.applyRecolorButton.enabled = atlasSelected and textureSelected
+
+  def onAverageFaceColorToggled(self, checked):
+    """Handle toggling of the average face color checkbox"""
+    # Enable/disable quantization controls based on averaging checkbox
+    self.quantizeColorsCheckbox.setEnabled(checked)
+    quantizationEnabled = checked and self.quantizeColorsCheckbox.isChecked()
+    self.numColorClustersSpin.setEnabled(quantizationEnabled)
+    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
+
+    # If averaging is disabled, also disable quantization and high contrast palette
+    if not checked:
+      self.quantizeColorsCheckbox.setChecked(False)
+      self.useHighContrastPaletteCheckbox.setChecked(False)
+
+    # Update the apply button state
+    self.onRecolorParameterChanged()
+
+  def onQuantizeColorsToggled(self, checked):
+    """Handle toggling of the quantize colors checkbox"""
+    # Enable/disable the number of clusters spin box and high contrast palette checkbox
+    quantizationEnabled = checked and self.averageFaceColorCheckbox.isChecked()
+    self.numColorClustersSpin.setEnabled(quantizationEnabled)
+    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
+
+    # If quantization is disabled, also disable high contrast palette
+    if not checked:
+      self.useHighContrastPaletteCheckbox.setChecked(False)
+
+    # Update the apply button state
+    self.onRecolorParameterChanged()
+
+  def onRecolorTexturesDirectoryChanged(self, directory):
+    """Update texture selector when directory changes"""
+    self.recolorTextureSelector.clear()
+    self.recolorTextureSelector.enabled = False
+
+    if not os.path.isdir(directory):
+      self.onRecolorParameterChanged()
+      return
+
+    # Find texture files in the directory
+    textureExtensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']
+    textureFiles = []
+
+    try:
+      for filename in sorted(os.listdir(directory)):
+        if any(filename.lower().endswith(ext) for ext in textureExtensions):
+          textureFiles.append(filename)
+    except Exception as e:
+      self.recolorLogInfo.appendPlainText(f"Error reading directory: {e}")
+      return
+
+    if textureFiles:
+      self.recolorTextureSelector.addItems(textureFiles)
+      self.recolorTextureSelector.enabled = True
+      self.recolorLogInfo.appendPlainText(f"Found {len(textureFiles)} texture files")
+    else:
+      self.recolorLogInfo.appendPlainText("No texture files found in directory")
+
+    self.onRecolorParameterChanged()
+
+  def onApplyRecolorButton(self):
+    """Apply the selected texture to the atlas model"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.recolorProgressBar.setVisible(True)
+      self.recolorProgressBar.setValue(0)
+
+      # Get parameters
+      atlasModel = self.recolorAtlasModelSelect.currentNode()
+      texturesDir = self.recolorTexturesDirectorySelector.currentPath
+      selectedTexture = self.recolorTextureSelector.currentText
+      useAverageFaceColors = self.averageFaceColorCheckbox.isChecked()
+      useQuantization = self.quantizeColorsCheckbox.isChecked()
+      numClusters = self.numColorClustersSpin.value
+      useHighContrastPalette = self.useHighContrastPaletteCheckbox.isChecked()
+
+      if not atlasModel:
+        self.recolorLogInfo.appendPlainText("Error: No atlas model selected")
+        return
+
+      if not selectedTexture:
+        self.recolorLogInfo.appendPlainText("Error: No texture selected")
+        return
+
+      texturePath = os.path.join(texturesDir, selectedTexture)
+      if not os.path.exists(texturePath):
+        self.recolorLogInfo.appendPlainText(f"Error: Texture file not found: {texturePath}")
+        return
+
+      self.recolorLogInfo.appendPlainText(f"Applying texture: {selectedTexture}")
+      self.recolorLogInfo.appendPlainText(f"Average face colors: {'Yes' if useAverageFaceColors else 'No'}")
+      if useAverageFaceColors and useQuantization:
+        paletteType = "High contrast palette" if useHighContrastPalette else "Quantized colors"
+        self.recolorLogInfo.appendPlainText(f"Color quantization: Yes ({numClusters} clusters, {paletteType})")
+      else:
+        self.recolorLogInfo.appendPlainText("Color quantization: No")
+
+      logic = InterDeCALogic()
+
+      if useAverageFaceColors:
+        if useQuantization:
+          # Apply quantized face colors
+          self.recolorLogInfo.appendPlainText("Applying quantized face colors...")
+          success = logic.applyQuantizedFaceColorsFromTexture(
+            atlasModel, texturePath, numClusters, useHighContrastPalette,
+            progressCallback=self.updateRecolorProgress,
+            logCallback=self.logRecolorMessage
+          )
+        else:
+          # Try the main face coloring method first
+          self.recolorLogInfo.appendPlainText("Trying face-based coloring method...")
+          success = logic.applyAverageFaceColorsFromTexture(
+            atlasModel, texturePath,
+            progressCallback=self.updateRecolorProgress,
+            logCallback=self.logRecolorMessage
+          )
+
+          # If that doesn't work, try the alternative point-based method
+          if not success:
+            self.recolorLogInfo.appendPlainText("Face-based method failed, trying point-based method...")
+            success = logic.applyAverageFaceColorsFromTextureAlternative(
+              atlasModel, texturePath,
+              progressCallback=self.updateRecolorProgress,
+              logCallback=self.logRecolorMessage
+            )
+      else:
+        # Apply texture directly
+        success = logic.applyTextureToModel(atlasModel, texturePath)
+        self.recolorLogInfo.appendPlainText("Texture applied successfully")
+        success = True
+
+      if success:
+        self.recolorLogInfo.appendPlainText("Recoloring completed successfully")
+      else:
+        self.recolorLogInfo.appendPlainText("Recoloring failed - check log for details")
+
+      self.recolorProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.recolorProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.recolorLogInfo.appendPlainText(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Recolor failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateRecolorProgress(self, value):
+    """Update progress bar for recolor operations"""
+    self.recolorProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logRecolorMessage(self, message):
+    """Log message to the Recolor log"""
+    self.recolorLogInfo.appendPlainText(message)
+    slicer.app.processEvents()
+
+  ################################### MultiRecolor Event Handlers ###################################
+
+  def onMultiRecolorParameterChanged(self):
+    """Enable/disable buttons based on MultiRecolor parameter selection"""
+    atlasSelected = bool(self.multiRecolorAtlasModelSelect.currentNode())
+    textureDirectorySelected = bool(self.multiRecolorTextureDirectorySelector.currentPath and
+                                   os.path.isdir(self.multiRecolorTextureDirectorySelector.currentPath))
+
+    # Enable cluster button if atlas and texture directory are selected
+    self.clusterButton.enabled = atlasSelected and textureDirectorySelected
+
+    # Update texture file list when directory changes
+    if textureDirectorySelected:
+      self.updateMultiRecolorTextureList()
+
+  def updateMultiRecolorTextureList(self):
+    """Update the list of texture files for MultiRecolor"""
+    textureDir = self.multiRecolorTextureDirectorySelector.currentPath
+    if not textureDir or not os.path.exists(textureDir):
+      self.multiRecolorTextureFiles = []
+      return
+
+    # Find all image files in the directory
+    imageExtensions = ['.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp']
+    textureFiles = []
+
+    for filename in os.listdir(textureDir):
+      if any(filename.lower().endswith(ext) for ext in imageExtensions):
+        textureFiles.append(filename)
+
+    self.multiRecolorTextureFiles = sorted(textureFiles)
+    self.clusteringLogInfo.append(f"Found {len(self.multiRecolorTextureFiles)} texture files")
+
+    # Update individual texture selector
+    self.individualTextureSelector.clear()
+    self.individualTextureSelector.addItems(self.multiRecolorTextureFiles)
+
+  def onClusterButton(self):
+    """Handle Step 1: Multi-texture clustering"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.clusteringProgressBar.setVisible(True)
+      self.clusteringProgressBar.setValue(0)
+      self.clusteringLogInfo.clear()
+
+      atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
+      textureDir = self.multiRecolorTextureDirectorySelector.currentPath
+      numClusters = self.multiRecolorNumClustersSpin.value
+
+      if not atlasModel:
+        self.clusteringLogInfo.append("Error: No atlas model selected")
+        return
+
+      if not textureDir or not os.path.exists(textureDir):
+        self.clusteringLogInfo.append("Error: Invalid texture directory")
+        return
+
+      if not self.multiRecolorTextureFiles:
+        self.clusteringLogInfo.append("Error: No texture files found")
+        return
+
+      self.clusteringLogInfo.append(f"Starting multi-texture clustering with {numClusters} clusters...")
+      self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+
+      logic = InterDeCALogic()
+
+      # Get cached face areas
+      cachedFaceAreas = self.getCachedFaceAreas(atlasModel)
+      if cachedFaceAreas is None:
+        self.clusteringLogInfo.append("Error: Failed to get face areas")
+        return
+
+      # Run the multi-texture clustering
+      result = logic.performMultiTextureClustering(
+        atlasModel, textureDir, self.multiRecolorTextureFiles, numClusters,
+        cachedFaceAreas,  # Pass cached face areas
+        progressCallback=self.updateClusteringProgress,
+        logCallback=self.logClusteringMessage
+      )
+
+      if result.get("success", False):
+        self.multiRecolorClusterCenters = result["cluster_centers"]
+        self.multiRecolorFaceAreas = cachedFaceAreas  # Use cached areas
+
+        self.clusteringLogInfo.append("Multi-texture clustering completed successfully!")
+        self.clusteringLogInfo.append(f"Created {len(self.multiRecolorClusterCenters)} color clusters")
+
+        # Enable Step 2 controls
+        self.individualTextureSelector.setEnabled(True)
+        self.onIndividualTextureChanged()  # Update button states
+
+        # Enable Step 3 controls
+        self.compareTexturesButton.enabled = True
+
+      else:
+        self.clusteringLogInfo.append("Multi-texture clustering failed - check log for details")
+
+      self.clusteringProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.clusteringProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.clusteringLogInfo.append(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Multi-texture clustering failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def onIndividualTextureChanged(self):
+    """Handle texture selection change in Step 2"""
+    textureSelected = bool(self.individualTextureSelector.currentText)
+    clustersAvailable = self.multiRecolorClusterCenters is not None
+
+    # Enable apply button and high contrast option if texture is selected and clusters are available
+    self.applyIndividualTextureButton.enabled = textureSelected and clustersAvailable
+    self.individualHighContrastCheckbox.setEnabled(textureSelected and clustersAvailable)
+
+  def onApplyIndividualTextureButton(self):
+    """Handle Step 2: Individual texture visualization"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.individualProgressBar.setVisible(True)
+      self.individualProgressBar.setValue(0)
+      self.individualLogInfo.clear()
+
+      atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
+      textureDir = self.multiRecolorTextureDirectorySelector.currentPath
+      selectedTexture = self.individualTextureSelector.currentText
+      useHighContrast = self.individualHighContrastCheckbox.isChecked()
+
+      if not atlasModel:
+        self.individualLogInfo.append("Error: No atlas model selected")
+        return
+
+      if not selectedTexture:
+        self.individualLogInfo.append("Error: No texture selected")
+        return
+
+      if self.multiRecolorClusterCenters is None:
+        self.individualLogInfo.append("Error: No cluster centers available. Run clustering first.")
+        return
+
+      texturePath = os.path.join(textureDir, selectedTexture)
+      if not os.path.exists(texturePath):
+        self.individualLogInfo.append(f"Error: Texture file not found: {texturePath}")
+        return
+
+      self.individualLogInfo.append(f"Applying texture: {selectedTexture}")
+      paletteType = "High contrast palette" if useHighContrast else "Clustered colors"
+      self.individualLogInfo.append(f"Using: {paletteType}")
+
+      logic = InterDeCALogic()
+
+      # Apply the texture with the clustered palette
+      success = logic.applyIndividualTextureWithClusteredPalette(
+        atlasModel, texturePath, self.multiRecolorClusterCenters,
+        useHighContrast, self.multiRecolorFaceAreas,
+        progressCallback=self.updateIndividualProgress,
+        logCallback=self.logIndividualMessage
+      )
+
+      if success:
+        self.individualLogInfo.append("Individual texture visualization completed successfully!")
+      else:
+        self.individualLogInfo.append("Individual texture visualization failed - check log for details")
+
+      self.individualProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.individualProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.individualLogInfo.append(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Individual texture visualization failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def onCompareTexturesButton(self):
+    """Handle Step 3: Population analysis"""
+    try:
+      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+      self.populationProgressBar.setVisible(True)
+      self.populationProgressBar.setValue(0)
+      self.populationLogInfo.clear()
+
+      atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
+      textureDir = self.multiRecolorTextureDirectorySelector.currentPath
+
+      if not atlasModel:
+        self.populationLogInfo.append("Error: No atlas model selected")
+        return
+
+      if self.multiRecolorClusterCenters is None:
+        self.populationLogInfo.append("Error: No cluster centers available. Run clustering first.")
+        return
+
+      if not self.multiRecolorTextureFiles:
+        self.populationLogInfo.append("Error: No texture files found")
+        return
+
+      # Get selected dimensionality reduction method
+      dimReductionMethod = "PCA" if self.pcaRadioButton.isChecked() else "UMAP"
+
+      self.populationLogInfo.append(f"Starting population analysis with {dimReductionMethod}...")
+      self.populationLogInfo.append(f"Analyzing {len(self.multiRecolorTextureFiles)} textures...")
+
+      logic = InterDeCALogic()
+
+      # Perform population analysis
+      result = logic.performPopulationAnalysis(
+        atlasModel, textureDir, self.multiRecolorTextureFiles,
+        self.multiRecolorClusterCenters, self.multiRecolorFaceAreas,
+        dimReductionMethod,
+        progressCallback=self.updatePopulationProgress,
+        logCallback=self.logPopulationMessage
+      )
+
+      if result.get("success", False):
+        self.populationLogInfo.append("Population analysis completed successfully!")
+        self.populationLogInfo.append(f"Created {dimReductionMethod} plot with {len(self.multiRecolorTextureFiles)} texture points")
+      else:
+        self.populationLogInfo.append("Population analysis failed - check log for details")
+
+      self.populationProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+
+    except Exception as e:
+      self.populationProgressBar.setVisible(False)
+      qt.QApplication.restoreOverrideCursor()
+      self.populationLogInfo.append(f"Error: {str(e)}")
+      slicer.util.errorDisplay(f"Population analysis failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateClusteringProgress(self, value):
+    """Update progress bar for clustering operations"""
+    self.clusteringProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logClusteringMessage(self, message):
+    """Log message to the clustering log"""
+    self.clusteringLogInfo.append(message)
+    slicer.app.processEvents()
+
+  def updateIndividualProgress(self, value):
+    """Update progress bar for individual visualization operations"""
+    self.individualProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logIndividualMessage(self, message):
+    """Log message to the individual visualization log"""
+    self.individualLogInfo.append(message)
+    slicer.app.processEvents()
+
+  def updatePopulationProgress(self, value):
+    """Update progress bar for population analysis operations"""
+    self.populationProgressBar.setValue(int(value))
+    slicer.app.processEvents()
+
+  def logPopulationMessage(self, message):
+    """Log message to the population analysis log"""
+    self.populationLogInfo.append(message)
+    slicer.app.processEvents()
+
+  def getCachedFaceAreas(self, modelNode):
+    """Get cached face areas for a model node, or calculate and cache them"""
+    modelId = modelNode.GetID()
+
+    if modelId not in self.faceAreasCache:
+      self.clusteringLogInfo.append("Calculating and caching face areas...")
+      logic = InterDeCALogic()
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        self.clusteringLogInfo.append("Error: No polydata in model node")
+        return None
+
+      faceAreas = logic._calculateFaceAreas(polyData)
+      if faceAreas is not None:
+        self.faceAreasCache[modelId] = faceAreas
+        self.clusteringLogInfo.append(f"Cached face areas for {polyData.GetNumberOfCells()} faces")
+      else:
+        self.clusteringLogInfo.append("Warning: Failed to calculate face areas")
+        return None
+    else:
+      self.clusteringLogInfo.append("Using cached face areas")
+
+    return self.faceAreasCache[modelId]
+
+
 #
 # DeCALogic
 #
@@ -1814,7 +3419,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         # Find the closest point on the warped SUBJECT's surface
         closestPoint, closestCellId, subId, dist2 = [0.0, 0.0, 0.0], vtk.reference(0), vtk.reference(0), vtk.reference(0.0)
         cellLocator.FindClosestPoint(point, closestPoint, closestCellId, subId, dist2)
-        
+
         # This new point is the resampled POSITION
         correspondingPoints.InsertPoint(i, closestPoint)
 
@@ -1822,17 +3427,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         if warpedUVs:
             actualCellId = closestCellId.get()
             cell = meanWarpedMesh.GetCell(actualCellId)
-            
+
             if cell and cell.GetNumberOfPoints() == 3:
                 weights = [0.0] * cell.GetNumberOfPoints()
                 closestPointOutput = [0.0, 0.0, 0.0]
                 pcoords_ignored = [0.0, 0.0, 0.0]
                 dist2_ignored = vtk.reference(0.0)
                 cell.EvaluatePosition(closestPoint, closestPointOutput, subId, pcoords_ignored, dist2_ignored, weights)
-                
+
                 cellPointIds = cell.GetPointIds()
                 uv0, uv1, uv2 = warpedUVs.GetTuple2(cellPointIds.GetId(0)), warpedUVs.GetTuple2(cellPointIds.GetId(1)), warpedUVs.GetTuple2(cellPointIds.GetId(2))
-                
+
                 u_new = weights[0] * uv0[0] + weights[1] * uv1[0] + weights[2] * uv2[0]
                 v_new = weights[0] * uv0[1] + weights[1] * uv1[1] + weights[2] * uv2[1]
                 newUVs.SetTuple2(i, u_new, v_new)
@@ -1981,7 +3586,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
   def _save_model_with_cs(self, modelNode, filePath, coordinateSystem='RAS'):
     if modelNode is None:
       raise ValueError(f"Model node is None, cannot save to {filePath}")
-    
+
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
     storage.SetFileName(filePath)
     cs = (coordinateSystem or 'RAS').upper()
@@ -2227,7 +3832,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       baked[sid] = out_png
 
     return baked
-  
+
   def _calculate_average_texture(self, outTexturesDir):
     atlas_texture = os.path.join(outTexturesDir, "average_texture.png")
     if os.path.exists(atlas_texture):
@@ -2236,7 +3841,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     images = [imageio.imread(png) for png in pngs]
     average = np.mean(images, axis=0).astype(np.uint8)
     imageio.imwrite(atlas_texture, average)
-    
+
 
 
   def applyTextureToModel(self, modelNode, pngPath):
@@ -2267,7 +3872,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         locator.FindClosestPoint(p, cp, cid, sid, d2)
         dists.append(d2.get()**0.5)
     return np.median(dists) if dists else float('inf')
-  
+
   def _load_model_with_cs(self, filePath, coordinateSystem='RAS'):
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
     cs = (coordinateSystem or 'RAS').upper()
@@ -2293,21 +3898,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     import platform
     import subprocess
     import shutil
-    
+
     system = platform.system().lower()
-    
+
     # First, try to find Blender in PATH
     blender_names = ['blender', 'blender.exe'] if system == 'windows' else ['blender']
-    
+
     for name in blender_names:
       path = shutil.which(name)
       if path and os.path.isfile(path):
         print(f"Found Blender in PATH: {path}")
         return path
-    
+
     # Try common installation locations based on OS
     common_paths = []
-    
+
     if system == 'windows':
       # Windows common locations
       program_files = [
@@ -2319,7 +3924,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         blender_dirs = glob.glob(os.path.join(pf, 'Blender Foundation', 'Blender*'))
         for blender_dir in blender_dirs:
           common_paths.append(os.path.join(blender_dir, 'blender.exe'))
-    
+
     elif system == 'darwin':  # macOS
       common_paths = [
         '/Applications/Blender.app/Contents/MacOS/Blender',
@@ -2329,7 +3934,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       # Check for various Blender versions in Applications
       blender_apps = glob.glob('/Applications/Blender*.app/Contents/MacOS/Blender')
       common_paths.extend(blender_apps)
-    
+
     else:  # Linux and other Unix-like systems
       common_paths = [
         '/usr/bin/blender',
@@ -2367,13 +3972,13 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         potential_path = os.path.join(blender_dir, 'blender')
         if os.path.isfile(potential_path):
           common_paths.append(potential_path)
-    
+
     # Test each common path
     for path in common_paths:
       if os.path.isfile(path) and os.access(path, os.X_OK):
         print(f"Found Blender at: {path}")
         return path
-    
+
     print("Blender executable not found in common locations")
     return None
 
@@ -2736,19 +4341,19 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     import urllib.request
     import urllib.parse
     import ssl
-    
+
     def log(message):
       if log_callback:
         log_callback(message)
       else:
         print(message)
-    
+
     system = platform.system().lower()
     architecture = platform.machine().lower()
-    
+
     # Use current stable version URLs from blender.org
     blender_version = "4.5.3"
-    
+
     if system == 'windows':
       if 'amd64' in architecture or 'x86_64' in architecture:
         filename = f"blender-{blender_version}-windows-x64.zip"
@@ -2759,7 +4364,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       else:
         log("Unsupported Windows architecture")
         return None
-    
+
     elif system == 'darwin':  # macOS
       # Try to install via Homebrew first, then fallback to direct download
       if self._tryInstallBlenderMacOS(log):
@@ -2791,11 +4396,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       else:
         log("Unsupported Linux architecture")
         return None
-    
+
     else:
       log(f"Unsupported operating system: {system}")
       return None
-    
+
     # Try multiple download URLs in order of preference
     download_urls = [
       f"https://www.blender.org/download/release/Blender4.5/{filename}",
@@ -2819,7 +4424,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # Create installation directory
     install_dir = os.path.join(os.path.expanduser('~'), '.slicer-blender')
     os.makedirs(install_dir, exist_ok=True)
-    
+
     # Check if already installed
     arch_suffix = 'x64'
     if 'arm' in architecture or 'aarch64' in architecture:
@@ -2841,77 +4446,77 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     if os.path.isfile(expected_blender_path):
       log(f"Blender already installed at: {expected_blender_path}")
       return expected_blender_path
-    
+
     log(f"Downloading Blender {blender_version}...")
-    
+
     # Try each download URL until one works
     temp_path = None
     for download_url in download_urls:
       try:
         log(f"Trying URL: {download_url}")
-        
+
         # Create request with proper headers
         request = urllib.request.Request(download_url)
         request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        
+
         # Download with SSL context to handle certificate issues
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp_file:
           with urllib.request.urlopen(request, context=ssl_context) as response:
             # Check if we got a valid response
             content_type = response.headers.get('content-type', '').lower()
             content_length = response.headers.get('content-length', '0')
-            
+
             log(f"Content-Type: {content_type}")
             log(f"Content-Length: {content_length}")
-            
+
             # Check if response looks like an error page
             if 'text/html' in content_type:
               log("Got HTML response (likely error page), trying next URL...")
               continue
-              
+
             # Download in chunks to show progress for large files
             total_size = int(content_length) if content_length.isdigit() else 0
             downloaded = 0
             chunk_size = 8192
-            
+
             while True:
               chunk = response.read(chunk_size)
               if not chunk:
                 break
               tmp_file.write(chunk)
               downloaded += len(chunk)
-              
+
               if total_size > 0:
                 progress = (downloaded / total_size) * 100
                 if downloaded % (chunk_size * 100) == 0:  # Log every 100 chunks
                   log(f"Download progress: {progress:.1f}%")
-          
+
           temp_path = tmp_file.name
           log(f"Downloaded {downloaded} bytes to {temp_path}")
           break  # Success, exit the URL loop
-          
+
       except Exception as e:
         log(f"Failed to download from {download_url}: {e}")
         if temp_path and os.path.exists(temp_path):
           os.unlink(temp_path)
           temp_path = None
         continue
-    
+
     if not temp_path:
       log("Failed to download from any mirror")
       return None
-    
+
     try:
       log("Download completed. Extracting...")
-      
+
       # Verify file size before extraction
       file_size = os.path.getsize(temp_path)
       log(f"Downloaded file size: {file_size} bytes")
-      
+
       if file_size < 1000000:  # Less than 1MB is suspicious
         log("Downloaded file is too small, likely an error page")
         with open(temp_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -2919,7 +4524,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           log(f"File content preview: {content}")
         os.unlink(temp_path)
         return None
-      
+
       # Extract based on file type
       if filename.endswith('.zip'):
         try:
@@ -2937,10 +4542,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           log("Invalid tar.xz file downloaded")
           os.unlink(temp_path)
           return None
-      
+
       # Clean up temporary file
       os.unlink(temp_path)
-      
+
       # Find the extracted Blender executable
       blender_path = expected_blender_path
       if not os.path.isfile(blender_path):
@@ -2951,12 +4556,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             blender_path = os.path.join(root, blender_exe)
             log(f"Found blender at: {blender_path}")
             break
-      
+
       if os.path.isfile(blender_path):
         # Make executable on Unix-like systems
         if system != 'windows':
           os.chmod(blender_path, 0o755)
-        
+
         log(f"Blender installed successfully at: {blender_path}")
         return blender_path
       else:
@@ -2967,7 +4572,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           for file in files[:10]:  # Limit output
             log(f"  {os.path.join(root, file)}")
         return None
-    
+
     except Exception as e:
       log(f"Failed to extract/install Blender: {e}")
       if temp_path and os.path.exists(temp_path):
@@ -2984,17 +4589,2135 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         log_callback(message)
       else:
         print(message)
-    
+
     # First try to find existing installation
     blender_path = self.findBlenderExecutable()
     if blender_path:
       return blender_path
-    
+
     # If not found, try to install automatically
     log("Blender not found. Attempting automatic installation...")
     blender_path = self.installBlender(log_callback)
     if blender_path:
       return blender_path
-    
+
     log("Failed to automatically install Blender. Please install manually.")
     return None
+  def runColorsEDA(self, atlasModel, texturesDir, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0, enhanceColors=False):
+    """
+    Run color analysis with dimensionality reduction on face-averaged colors
+
+    Args:
+        atlasModel: VTK model node of the atlas
+        texturesDir: Directory containing baked atlas-space PNG textures
+        colorSpace: "RGB" or "HSV"
+        dimRedAlgo: "PCA", "ICA", or "UMAP"
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+        satCutoff: Minimum saturation threshold for HSV filtering (0-100)
+        valueCutoff: Minimum value/brightness threshold for HSV filtering (0-100)
+        enhanceColors: Whether to enhance colors for visibility in 2D plots
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback("Initializing color analysis...")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Check dependencies
+      if dimRedAlgo in ["PCA", "ICA"] and not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for PCA/ICA")
+        return False
+
+      if dimRedAlgo == "UMAP" and not UMAP_AVAILABLE:
+        if logCallback:
+          logCallback("Error: umap-learn not available for UMAP")
+        return False
+
+      # Get atlas polydata
+      atlasPolyData = atlasModel.GetPolyData()
+      if not atlasPolyData:
+        if logCallback:
+          logCallback("Error: Atlas model has no polydata")
+        return False
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Get list of texture files
+      textureFiles = []
+      if os.path.isdir(texturesDir):
+        for f in os.listdir(texturesDir):
+          if f.lower().endswith('.png') and not f.lower().startswith('average_texture'):
+            textureFiles.append(os.path.join(texturesDir, f))
+
+      if not textureFiles:
+        if logCallback:
+          logCallback(f"Error: No PNG files found in {texturesDir}")
+        return False
+
+      if logCallback:
+        logCallback(f"Found {len(textureFiles)} texture files")
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Calculate face-averaged colors for each texture
+      allFaceColors = []
+      specimenNames = []
+
+      for i, texturePath in enumerate(textureFiles):
+        if logCallback:
+          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {os.path.basename(texturePath)}")
+
+        # Load texture image
+        try:
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            if logCallback:
+              logCallback(f"Warning: Skipping {os.path.basename(texturePath)} - invalid format")
+            continue
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Could not load {os.path.basename(texturePath)}: {e}")
+          continue
+
+        # Calculate face-averaged colors
+        faceColors = self._calculateFaceAverageColors(atlasPolyData, textureImage, colorSpace)
+        if faceColors is not None:
+          allFaceColors.append(faceColors)
+          specimenNames.append(os.path.splitext(os.path.basename(texturePath))[0])
+
+        if progressCallback:
+          progressCallback(15 + int(60 * (i + 1) / len(textureFiles)))
+
+      if not allFaceColors:
+        if logCallback:
+          logCallback("Error: No valid textures processed")
+        return False
+
+      if logCallback:
+        logCallback(f"Successfully processed {len(allFaceColors)} textures")
+
+      # Concatenate all face colors into a single array
+      # Shape: (N_faces * N_specimens, 3 or 4) - 4 for HSV with hue as 2D vector
+      allFaceColors = np.array(allFaceColors)  # Shape: (N_specimens, N_faces, 3 or 4)
+      nSpecimens, nFaces, nChannels = allFaceColors.shape
+
+      # Reshape to (N_faces * N_specimens, 3 or 4)
+      colorData = allFaceColors.reshape(-1, nChannels)
+
+      if logCallback:
+        logCallback(f"Full color data shape: {colorData.shape}")
+
+      if progressCallback:
+        progressCallback(80)
+
+      # Apply dimensionality reduction with optional HSV filtering
+      if logCallback:
+        logCallback(f"Applying {dimRedAlgo} dimensionality reduction...")
+
+      # Filter data for dimensionality reduction if in HSV mode
+      dimRedData = colorData
+      if colorSpace == "HSV":
+        # Extract saturation and value channels (indices 2 and 3)
+        sat = colorData[:, 2]  # 0..100
+        val = colorData[:, 3]  # 0..100
+
+        # Create mask for saturation and value cutoffs
+        mask = (sat >= satCutoff) & (val >= valueCutoff)
+        dimRedData = colorData[mask]
+
+        if logCallback:
+          logCallback(f"HSV filtering: {np.sum(mask)}/{len(mask)} samples passed cutoffs (sat>={satCutoff}, val>={valueCutoff})")
+          logCallback(f"Filtered data shape for dim reduction: {dimRedData.shape}")
+
+      reducedData = self._applyDimensionalityReduction(dimRedData, dimRedAlgo)
+
+      if reducedData is None:
+        if logCallback:
+          logCallback(f"Error: {dimRedAlgo} failed")
+        return False
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Plot results in 2D viewer
+      # For HSV with filtering, we need to adjust the specimen information
+      if colorSpace == "HSV" and dimRedData.shape[0] != colorData.shape[0]:
+        # Calculate how many faces per specimen passed the filter
+        filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+      else:
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+
+      if progressCallback:
+        progressCallback(100)
+
+      # Return result details for downstream UI updates (e.g., histograms)
+      # Always return the FULL color data for histogram use, not the filtered data
+      if plotResult and isinstance(plotResult, dict):
+        return {
+          "success": True,
+          "colorData": colorData,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "chartNode": plotResult.get("chartNode"),
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+      else:
+        return {
+          "success": bool(plotResult),
+          "colorData": colorData,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in runColorsEDA: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def sampleColorData(self, atlasModel, texturesDir, randomSeed, samplePercent, progressCallback=None, logCallback=None):
+    """
+    Sample faces and calculate color averages from textures
+
+    Args:
+        atlasModel: VTK model node of the atlas
+        texturesDir: Directory containing baked atlas-space PNG textures
+        randomSeed: Random seed for reproducible sampling
+        samplePercent: Percentage of faces to sample (1-100)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict: Result with success flag, colorData, specimenNames, and faceIndices
+    """
+    try:
+      if logCallback:
+        logCallback("Starting face sampling...")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Get atlas polydata
+      atlasPolyData = atlasModel.GetPolyData()
+      if not atlasPolyData:
+        if logCallback:
+          logCallback("Error: Atlas model has no polydata")
+        return {"success": False}
+
+      # Get total number of faces
+      nTotalFaces = atlasPolyData.GetNumberOfCells()
+      if logCallback:
+        logCallback(f"Atlas model has {nTotalFaces} faces")
+
+      # Calculate number of faces to sample
+      nSampleFaces = max(1, int(nTotalFaces * samplePercent / 100.0))
+      if logCallback:
+        logCallback(f"Sampling {nSampleFaces} faces ({samplePercent:.1f}%)")
+
+      # Set random seed and sample face indices
+      np.random.seed(randomSeed)
+      if samplePercent >= 100.0:
+        # Use all faces
+        sampledFaceIndices = np.arange(nTotalFaces)
+      else:
+        # Randomly sample faces
+        sampledFaceIndices = np.random.choice(nTotalFaces, size=nSampleFaces, replace=False)
+        sampledFaceIndices = np.sort(sampledFaceIndices)  # Sort for consistent processing
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Get list of texture files
+      textureFiles = []
+      if os.path.isdir(texturesDir):
+        for f in os.listdir(texturesDir):
+          if f.lower().endswith('.png') and not f.lower().startswith('average_texture'):
+            textureFiles.append(os.path.join(texturesDir, f))
+
+      if not textureFiles:
+        if logCallback:
+          logCallback(f"Error: No PNG files found in {texturesDir}")
+        return {"success": False}
+
+      if logCallback:
+        logCallback(f"Found {len(textureFiles)} texture files")
+
+      # Process each texture and calculate face colors for sampled faces only
+      allFaceColors = []
+      specimenNames = []
+
+      for i, texturePath in enumerate(textureFiles):
+        if logCallback:
+          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {os.path.basename(texturePath)}")
+
+        # Load texture image
+        try:
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            if logCallback:
+              logCallback(f"Warning: Skipping {os.path.basename(texturePath)} - invalid format")
+            continue
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Could not load {os.path.basename(texturePath)}: {e}")
+          continue
+
+        # Calculate face-averaged colors for sampled faces only
+        faceColors = self._calculateSampledFaceAverageColors(atlasPolyData, textureImage, sampledFaceIndices, "RGB")
+        if faceColors is not None:
+          allFaceColors.append(faceColors)
+          specimenNames.append(os.path.splitext(os.path.basename(texturePath))[0])
+
+        if progressCallback:
+          progressCallback(15 + int(80 * (i + 1) / len(textureFiles)))
+
+      if not allFaceColors:
+        if logCallback:
+          logCallback("Error: No valid textures processed")
+        return {"success": False}
+
+      # Convert to numpy array
+      allFaceColors = np.array(allFaceColors)  # Shape: (N_specimens, N_sampled_faces, 3)
+
+      if logCallback:
+        logCallback(f"Successfully sampled data from {len(allFaceColors)} specimens")
+        logCallback(f"Sampled color data shape: {allFaceColors.shape}")
+
+      if progressCallback:
+        progressCallback(100)
+
+      return {
+        "success": True,
+        "colorData": allFaceColors,
+        "specimenNames": specimenNames,
+        "faceIndices": sampledFaceIndices
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in sampleColorData: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  def _calculateFaceAverageColors(self, polyData, textureImage, colorSpace):
+    """
+    Calculate average color for each face of the mesh using texture coordinates
+
+    Args:
+        polyData: VTK polydata of the atlas model
+        textureImage: numpy array of the texture image (H, W, C)
+        colorSpace: "RGB" or "HSV"
+
+    Returns:
+        numpy array of shape (N_faces, 3) for RGB or (N_faces, 4) for HSV
+        HSV returns [hue_cos, hue_sin, saturation, value] to handle circular hue
+    """
+    try:
+      # Get texture coordinates
+      tcoords = polyData.GetPointData().GetTCoords()
+      if not tcoords:
+        return None
+
+      tcoords_np = vtk_np.vtk_to_numpy(tcoords)
+
+      # Get face connectivity
+      polys = polyData.GetPolys()
+      nFaces = polys.GetNumberOfCells()
+
+      # Get texture image dimensions
+      height, width = textureImage.shape[:2]
+
+      faceColors = []
+
+      # Process each face individually using VTK's cell iterator
+      for faceIdx in range(nFaces):
+        # Get the cell (face) points
+        cell = polyData.GetCell(faceIdx)
+        nPoints = cell.GetNumberOfPoints()
+
+        # Get vertex indices for this face
+        vertexIndices = []
+        for ptIdx in range(nPoints):
+          vertexIndices.append(cell.GetPointId(ptIdx))
+
+        # Get texture coordinates for these vertices
+        faceTexCoords = tcoords_np[vertexIndices]
+
+        # Convert texture coordinates to pixel coordinates
+        # Flip V coordinate (1 - v) to handle texture inversion
+        faceTexCoords_flipped = faceTexCoords.copy()
+        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
+
+        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
+        pixelCoords = pixelCoords.astype(int)
+
+        # Sample colors at these pixel locations
+        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
+
+        # Calculate average color for this face
+        avgColor = np.mean(facePixelColors, axis=0)
+
+        # Convert color space if needed
+        if colorSpace == "HSV":
+          # Convert RGB to HSV
+          rgb_normalized = avgColor / 255.0
+          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
+          # Convert hue to 2D vector (cos, sin) to handle circular nature
+          hue_radians = hsv[0] * 2 * np.pi  # Convert to radians
+          hue_cos = np.cos(hue_radians)
+          hue_sin = np.sin(hue_radians)
+          # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+          avgColor = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
+
+        faceColors.append(avgColor)
+
+      return np.array(faceColors)
+
+    except Exception as e:
+      print(f"Error calculating face colors: {e}")
+      return None
+
+  def _calculateSampledFaceAverageColors(self, polyData, textureImage, faceIndices, colorSpace):
+    """
+    Calculate average color for specific faces of the mesh using texture coordinates
+
+    Args:
+        polyData: VTK polydata of the atlas model
+        textureImage: numpy array of the texture image (H, W, C)
+        faceIndices: numpy array of face indices to process
+        colorSpace: "RGB" or "HSV"
+
+    Returns:
+        numpy array of shape (N_sampled_faces, 3) for RGB or (N_sampled_faces, 4) for HSV
+    """
+    try:
+      # Get texture coordinates
+      tcoords = polyData.GetPointData().GetTCoords()
+      if not tcoords:
+        return None
+
+      tcoords_np = vtk_np.vtk_to_numpy(tcoords)
+
+      # Get texture image dimensions
+      height, width = textureImage.shape[:2]
+
+      faceColors = []
+
+      # Process only the specified face indices
+      for faceIdx in faceIndices:
+        # Get the cell (face) points
+        cell = polyData.GetCell(int(faceIdx))
+        nPoints = cell.GetNumberOfPoints()
+
+        # Get vertex indices for this face
+        vertexIndices = []
+        for ptIdx in range(nPoints):
+          vertexIndices.append(cell.GetPointId(ptIdx))
+
+        # Get texture coordinates for these vertices
+        faceTexCoords = tcoords_np[vertexIndices]
+
+        # Convert texture coordinates to pixel coordinates
+        # Flip V coordinate (1 - v) to handle texture inversion
+        faceTexCoords_flipped = faceTexCoords.copy()
+        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
+
+        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
+        pixelCoords = pixelCoords.astype(int)
+
+        # Sample colors at these pixel locations
+        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
+
+        # Calculate average color for this face
+        avgColor = np.mean(facePixelColors, axis=0)
+
+        # Convert color space if needed
+        if colorSpace == "HSV":
+          # Convert RGB to HSV
+          rgb_normalized = avgColor / 255.0
+          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
+          # Convert hue to 2D vector (cos, sin) to handle circular nature
+          hue_radians = hsv[0] * 2 * np.pi  # Convert to radians
+          hue_cos = np.cos(hue_radians)
+          hue_sin = np.sin(hue_radians)
+          # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+          avgColor = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
+
+        faceColors.append(avgColor)
+
+      return np.array(faceColors)
+
+    except Exception as e:
+      print(f"Error calculating sampled face colors: {e}")
+      return None
+
+  def applyAverageFaceColorsFromTexture(self, modelNode, texturePath, progressCallback=None, logCallback=None):
+    """
+    Apply average face colors from a texture to a model
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture: {os.path.basename(texturePath)}")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if logCallback:
+        logCallback("Calculating face average colors...")
+
+      if progressCallback:
+        progressCallback(50)
+
+      # Calculate face average colors
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Calculated colors for {len(faceColors)} faces")
+        logCallback(f"Sample colors: {faceColors[:3] if len(faceColors) > 0 else 'None'}")
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Apply colors to faces as cell data
+      nFaces = polyData.GetNumberOfCells()
+      if len(faceColors) != nFaces:
+        if logCallback:
+          logCallback(f"Error: Color count mismatch. Expected {nFaces}, got {len(faceColors)}")
+        return False
+
+      if logCallback:
+        logCallback(f"Applying colors to {nFaces} faces")
+
+      # Create VTK color array for RGB colors
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("FaceColors")
+      colorArray.SetNumberOfTuples(nFaces)
+
+      if logCallback:
+        logCallback("Creating color array...")
+
+      for i, color in enumerate(faceColors):
+        # Ensure color values are in 0-255 range
+        color_255 = np.clip(color, 0, 255).astype(np.uint8)
+        colorArray.SetTuple3(i, int(color_255[0]), int(color_255[1]), int(color_255[2]))
+
+      if logCallback:
+        logCallback(f"Color array created with {colorArray.GetNumberOfTuples()} tuples")
+
+      # Add color array to cell data
+      polyData.GetCellData().SetScalars(colorArray)
+      polyData.Modified()
+
+      if logCallback:
+        logCallback("Color array added to cell data")
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Update display to show colors
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        if logCallback:
+          logCallback("Configuring display node...")
+
+        # Turn off texture first
+        displayNode.SetTextureImageDataConnection(None)
+
+        # Enable scalar visibility and set to use RGB colors directly
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("FaceColors")
+
+        # Set to use cell data (not point data)
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.CELL)
+
+        # Use RGB color mode instead of lookup table
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+
+        # Clear any existing color node to use direct RGB values
+        # displayNode.SetAndObserveColorNodeID(None)  # This causes errors, skip it
+
+        # Force update
+        displayNode.Modified()
+
+        if logCallback:
+          logCallback("Display node configured for face colors")
+      else:
+        if logCallback:
+          logCallback("Warning: No display node found")
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback(f"Successfully applied average face colors from {len(faceColors)} faces")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in applyAverageFaceColorsFromTexture: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def applyAverageFaceColorsFromTextureAlternative(self, modelNode, texturePath, progressCallback=None, logCallback=None):
+    """
+    Alternative method for applying average face colors using point data interpolation
+    This method converts face colors to point colors which might display better in Slicer
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture (alternative method): {os.path.basename(texturePath)}")
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      # Calculate face average colors
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Converting {len(faceColors)} face colors to point colors...")
+
+      # Convert face colors to point colors by averaging adjacent face colors
+      nPoints = polyData.GetNumberOfPoints()
+      nFaces = polyData.GetNumberOfCells()
+
+      pointColors = np.zeros((nPoints, 3))
+      pointCounts = np.zeros(nPoints)
+
+      # For each face, add its color to all its vertices
+      for faceIdx in range(nFaces):
+        cell = polyData.GetCell(faceIdx)
+        nCellPoints = cell.GetNumberOfPoints()
+
+        for ptIdx in range(nCellPoints):
+          pointId = cell.GetPointId(ptIdx)
+          pointColors[pointId] += faceColors[faceIdx]
+          pointCounts[pointId] += 1
+
+      # Average the colors for each point
+      for ptIdx in range(nPoints):
+        if pointCounts[ptIdx] > 0:
+          pointColors[ptIdx] /= pointCounts[ptIdx]
+
+      # Create VTK color array for point data
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("PointColors")
+      colorArray.SetNumberOfTuples(nPoints)
+
+      for i, color in enumerate(pointColors):
+        color_255 = np.clip(color, 0, 255).astype(np.uint8)
+        colorArray.SetTuple3(i, int(color_255[0]), int(color_255[1]), int(color_255[2]))
+
+      # Add color array to point data
+      polyData.GetPointData().SetScalars(colorArray)
+      polyData.Modified()
+
+      # Update display
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        displayNode.SetTextureImageDataConnection(None)
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("PointColors")
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.POINT)
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+        # displayNode.SetAndObserveColorNodeID(None)  # This causes errors, skip it
+        displayNode.Modified()
+
+      if logCallback:
+        logCallback("Successfully applied average face colors using point data method")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in alternative face coloring: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def _applyDimensionalityReduction(self, colorData, algorithm):
+    """
+    Apply dimensionality reduction to color data
+
+    Args:
+        colorData: numpy array of shape (N_samples, 3) for RGB or (N_samples, 4) for HSV
+        algorithm: "PCA", "ICA", or "UMAP"
+
+    Returns:
+        numpy array of shape (N_samples, 2) with reduced dimensions
+    """
+    try:
+      if algorithm == "PCA":
+        from sklearn.decomposition import PCA
+        reducer = PCA(n_components=2)
+        return reducer.fit_transform(colorData)
+
+      elif algorithm == "ICA":
+        from sklearn.decomposition import FastICA
+        reducer = FastICA(n_components=2, random_state=42)
+        return reducer.fit_transform(colorData)
+
+      elif algorithm == "UMAP":
+        import umap
+        reducer = umap.UMAP(n_components=2, random_state=42)
+        return reducer.fit_transform(colorData)
+
+      else:
+        print(f"Unknown algorithm: {algorithm}")
+        return None
+
+    except Exception as e:
+      print(f"Error in dimensionality reduction: {e}")
+      return None
+
+  def _plotColorsEDAResults(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False):
+    """
+    Plot the dimensionality reduction results in a 2D viewer
+
+    Args:
+        reducedData: numpy array of shape (N_samples, 2)
+        specimenNames: list of specimen names
+        nFaces: number of faces per specimen
+        colorSpace: "RGB" or "HSV"
+        algorithm: "PCA", "ICA", or "UMAP"
+        originalColorData: numpy array of original color data for hue-based coloring (optional)
+        enhanceColors: whether to enhance colors for visibility
+
+    Returns:
+        dict: {"success": bool, "chartNode": node} if successful
+    """
+    try:
+      # Create enhanced plot with color information when HSV data is available
+      if colorSpace == "HSV" and originalColorData is not None and originalColorData.shape[1] >= 4:
+        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors)
+
+      # Standard single-series plot for RGB or when no color data available
+      return self._createStandardPlot(reducedData, algorithm, colorSpace)
+
+      # Create plot chart
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+
+      # Set title based on whether hue coloring is used
+      if colorArray is not None:
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors (Hue-Colored)")
+      else:
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
+
+      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+
+      # Show in plot view
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      plotViewNode = plotWidget.mrmlPlotViewNode()
+      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+      # Return both success status and chart node for UI to store
+      return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+      print(f"Error plotting results: {e}")
+      return {"success": False, "chartNode": None}
+
+  def _createStandardPlot(self, reducedData, algorithm, colorSpace):
+    """Create a standard single-series scatter plot"""
+    try:
+      # Create a scatter plot node
+      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+      plotSeriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}")
+
+      # Create arrays for the plot data
+      xArray = vtk.vtkFloatArray()
+      xArray.SetName(f"{algorithm}_Component_1")
+      xArray.SetNumberOfTuples(reducedData.shape[0])
+
+      yArray = vtk.vtkFloatArray()
+      yArray.SetName(f"{algorithm}_Component_2")
+      yArray.SetNumberOfTuples(reducedData.shape[0])
+
+      # Fill arrays with data
+      for i in range(reducedData.shape[0]):
+        xArray.SetValue(i, reducedData[i, 0])
+        yArray.SetValue(i, reducedData[i, 1])
+
+      # Create table for the plot
+      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}")
+      tableNode.AddColumn(xArray)
+      tableNode.AddColumn(yArray)
+
+      # Set up the plot series
+      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+      plotSeriesNode.SetXColumnName(xArray.GetName())
+      plotSeriesNode.SetYColumnName(yArray.GetName())
+      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+      plotSeriesNode.SetMarkerSize(6)
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+
+      # Create plot chart
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+      plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
+      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+
+      # Show in plot view
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      plotViewNode = plotWidget.mrmlPlotViewNode()
+      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+      return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+      print(f"Error creating standard plot: {e}")
+      return {"success": False, "chartNode": None}
+
+  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False):
+    """
+    Render colored scatter by quantizing hue into bins and creating one series per bin.
+    This avoids the 'single color per series' limitation in Slicer plots.
+    """
+    try:
+        import colorsys
+
+        # 1) Compute hue (deg), sat, val from your 4D HSV repr
+        hue_cos = originalColorData[:, 0]
+        hue_sin = originalColorData[:, 1]
+        hue_deg = (np.degrees(np.arctan2(hue_sin, hue_cos)) + 360.0) % 360.0  # [0,360)
+        sat = np.clip(originalColorData[:, 2] / 100.0, 0.0, 1.0)
+        val = np.clip(originalColorData[:, 3] / 100.0, 0.0, 1.0)
+
+        # 2) Optional visibility boost
+        if enhanceColors:
+            sat = np.maximum(sat, 0.7)
+            val = np.maximum(val, 0.8)
+
+        min_hue = 0.0
+        max_hue = 360.0
+        min_hue = np.minimum(min_hue, np.min(hue_deg))
+        max_hue = np.maximum(max_hue, np.max(hue_deg))
+
+        # 3) Bin hues
+        n_bins = 36  # 10° per bin; bump to 72 if you want finer gradation
+        edges = np.linspace(min_hue, max_hue, n_bins + 1, endpoint=True)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        bin_idx = np.clip(np.digitize(hue_deg, edges, right=False) - 1, 0, n_bins - 1)
+
+        # 4) Make a chart and populate one series per bin
+        plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+        plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors"
+                               + (" (Enhanced Colors)" if enhanceColors else " (Actual Colors)"))
+        plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+        plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+        plotChartNode.SetLegendVisibility(False)
+
+        # Build series for occupied bins only (keeps node count tight)
+        for k in range(n_bins):
+            mask = (bin_idx == k)
+            if not np.any(mask):
+                continue
+
+            X = reducedData[mask, 0]
+            Y = reducedData[mask, 1]
+
+            # Representative color for the bin: use bin center hue and the mean sat/val of points in the bin
+            mean_sat = float(np.mean(sat[mask]))
+            mean_val = float(np.mean(val[mask]))
+            r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, mean_sat, mean_val)
+
+            # Build table
+            xArray = vtk.vtkFloatArray(); xArray.SetName(f"{algorithm}_Component_1"); xArray.SetNumberOfTuples(X.shape[0])
+            yArray = vtk.vtkFloatArray(); yArray.SetName(f"{algorithm}_Component_2"); yArray.SetNumberOfTuples(Y.shape[0])
+            for i in range(X.shape[0]):
+                xArray.SetValue(i, float(X[i])); yArray.SetValue(i, float(Y[i]))
+
+            tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+            tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}_bin{k:02d}")
+            tableNode.AddColumn(xArray); tableNode.AddColumn(yArray)
+
+            seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+            seriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}_bin{k:02d}")
+            seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+            seriesNode.SetXColumnName(xArray.GetName())
+            seriesNode.SetYColumnName(yArray.GetName())
+            seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+            seriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+            seriesNode.SetMarkerSize(6)
+            seriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+            seriesNode.SetColor(float(r), float(g), float(b))
+
+            plotChartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
+
+        # Show chart
+        layoutManager = slicer.app.layoutManager()
+        plotWidget = layoutManager.plotWidget(0)
+        plotViewNode = plotWidget.mrmlPlotViewNode()
+        plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+        return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+        print(f"Error creating binned colored scatter: {e}")
+        import traceback; traceback.print_exc()
+        return {"success": False, "chartNode": None}
+
+  def runColorsEDAFromSampledData(self, sampledColorData, specimenNames, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0, enhanceColors=False):
+    """
+    Run color analysis with dimensionality reduction on pre-sampled color data
+
+    Args:
+        sampledColorData: numpy array of shape (N_specimens, N_sampled_faces, 3)
+        specimenNames: list of specimen names
+        colorSpace: "RGB" or "HSV"
+        dimRedAlgo: "PCA", "ICA", or "UMAP"
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+        satCutoff: Minimum saturation threshold for HSV filtering (0-100)
+        valueCutoff: Minimum value/brightness threshold for HSV filtering (0-100)
+        enhanceColors: Whether to enhance colors for visibility in 2D plots
+
+    Returns:
+        dict: Result with success flag, colorData, colorSpace, and chartNode
+    """
+    try:
+      if logCallback:
+        logCallback("Starting analysis on sampled data...")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Check dependencies
+      if dimRedAlgo in ["PCA", "ICA"] and not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for PCA/ICA")
+        return {"success": False}
+
+      if dimRedAlgo == "UMAP" and not UMAP_AVAILABLE:
+        if logCallback:
+          logCallback("Error: umap-learn not available for UMAP")
+        return {"success": False}
+
+      # Convert sampled data to the format expected by analysis
+      nSpecimens, nSampledFaces, nChannels = sampledColorData.shape
+
+      # Convert color space if needed
+      if colorSpace == "HSV":
+        if logCallback:
+          logCallback("Converting RGB sampled data to HSV...")
+
+        # Convert each specimen's data from RGB to HSV
+        hsvColorData = []
+        for specIdx in range(nSpecimens):
+          specRgbData = sampledColorData[specIdx]  # Shape: (N_sampled_faces, 3)
+          specHsvData = []
+
+          for faceIdx in range(nSampledFaces):
+            rgb = specRgbData[faceIdx] / 255.0  # Normalize to 0-1
+            hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+            # Convert hue to 2D vector (cos, sin) to handle circular nature
+            hue_radians = hsv[0] * 2 * np.pi
+            hue_cos = np.cos(hue_radians)
+            hue_sin = np.sin(hue_radians)
+            # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+            hsv_vec = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
+            specHsvData.append(hsv_vec)
+
+          hsvColorData.append(np.array(specHsvData))
+
+        colorData = np.array(hsvColorData)  # Shape: (N_specimens, N_sampled_faces, 4)
+        nChannels = 4
+      else:
+        colorData = sampledColorData
+
+      # Reshape to (N_sampled_faces * N_specimens, nChannels)
+      colorDataFlat = colorData.reshape(-1, nChannels)
+
+      if logCallback:
+        logCallback(f"Color data shape: {colorDataFlat.shape}")
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Apply dimensionality reduction with optional HSV filtering
+      if logCallback:
+        logCallback(f"Applying {dimRedAlgo} dimensionality reduction...")
+
+      # Filter data for dimensionality reduction if in HSV mode
+      dimRedData = colorDataFlat
+      if colorSpace == "HSV":
+        # Extract saturation and value channels (indices 2 and 3)
+        sat = colorDataFlat[:, 2]  # 0..100
+        val = colorDataFlat[:, 3]  # 0..100
+
+        # Create mask for saturation and value cutoffs
+        mask = (sat >= satCutoff) & (val >= valueCutoff)
+        dimRedData = colorDataFlat[mask]
+
+        if logCallback:
+          logCallback(f"HSV filtering: {np.sum(mask)}/{len(mask)} samples passed cutoffs (sat>={satCutoff}, val>={valueCutoff})")
+          logCallback(f"Filtered data shape for dim reduction: {dimRedData.shape}")
+
+      reducedData = self._applyDimensionalityReduction(dimRedData, dimRedAlgo)
+
+      if reducedData is None:
+        if logCallback:
+          logCallback(f"Error: {dimRedAlgo} failed")
+        return {"success": False}
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Plot results in 2D viewer
+      # For HSV with filtering, we need to adjust the specimen information
+      if colorSpace == "HSV" and dimRedData.shape[0] != colorDataFlat.shape[0]:
+        # Calculate how many faces per specimen passed the filter
+        filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+      else:
+        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nSampledFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+
+      if progressCallback:
+        progressCallback(100)
+
+      # Return result details for downstream UI updates (e.g., histograms)
+      # Always return the FULL color data for histogram use, not the filtered data
+      if plotResult and isinstance(plotResult, dict):
+        return {
+          "success": True,
+          "colorData": colorDataFlat,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "chartNode": plotResult.get("chartNode"),
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+      else:
+        return {
+          "success": bool(plotResult),
+          "colorData": colorDataFlat,  # Full dataset for histograms
+          "colorSpace": colorSpace,
+          "satCutoff": satCutoff,
+          "valueCutoff": valueCutoff
+        }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in runColorsEDAFromSampledData: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  ################################### Color Quantization Functions ###################################
+
+  def rgb_to_lab(self, rgb):
+    """
+    Convert RGB color to CIE Lab color space using scikit-image
+
+    Args:
+        rgb: numpy array of shape (..., 3) with RGB values in range [0, 255]
+
+    Returns:
+        numpy array of shape (..., 3) with Lab values
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for color space conversion")
+
+    # Normalize RGB to [0, 1] for scikit-image
+    rgb_normalized = np.array(rgb, dtype=np.float64) / 255.0
+
+    # Use scikit-image for accurate RGB to Lab conversion
+    lab = skimage_color.rgb2lab(rgb_normalized)
+
+    return lab
+
+  def delta_e_2000(self, lab1, lab2):
+    """
+    Calculate ΔE2000 color difference between two Lab colors using scikit-image
+
+    Args:
+        lab1, lab2: numpy arrays of shape (..., 3) with Lab values
+
+    Returns:
+        numpy array of ΔE2000 values
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for ΔE2000 calculation")
+
+    # Use scikit-image's optimized ΔE2000 implementation
+    return deltaE_ciede2000(lab1, lab2)
+
+  def generate_high_contrast_palette(self, n_colors, logCallback=None):
+    """
+    Generate a high contrast color palette with up to 64 distinguishable colors
+
+    Args:
+        n_colors: Number of colors to generate (2-64)
+        logCallback: Optional callback for logging messages
+
+    Returns:
+        numpy array of shape (n_colors, 3) with RGB values in range [0, 255]
+    """
+    if logCallback:
+      logCallback(f"Generating high contrast palette with {n_colors} colors")
+
+    # Clamp to valid range
+    n_colors = max(2, min(64, n_colors))
+
+    # Base high contrast colors (carefully chosen for maximum distinguishability)
+    base_colors = [
+      [255, 0, 0],     # Red
+      [0, 255, 0],     # Green
+      [0, 0, 255],     # Blue
+      [255, 255, 0],   # Yellow
+      [255, 0, 255],   # Magenta
+      [0, 255, 255],   # Cyan
+      [255, 128, 0],   # Orange
+      [128, 0, 255],   # Purple
+      [0, 128, 255],   # Light Blue
+      [255, 0, 128],   # Pink
+      [128, 255, 0],   # Lime
+      [0, 255, 128],   # Spring Green
+      [255, 255, 255], # White
+      [0, 0, 0],       # Black
+      [128, 128, 128], # Gray
+      [192, 192, 192], # Light Gray
+      [64, 64, 64],    # Dark Gray
+      [128, 64, 0],    # Brown
+      [64, 128, 0],    # Olive
+      [0, 64, 128],    # Navy
+      [128, 0, 64],    # Maroon
+      [64, 0, 128],    # Indigo
+      [0, 128, 64],    # Teal
+      [255, 192, 128], # Peach
+      [128, 255, 192], # Mint
+      [192, 128, 255], # Lavender
+      [255, 128, 192], # Rose
+      [128, 192, 255], # Sky Blue
+      [192, 255, 128], # Pale Green
+      [255, 64, 64],   # Bright Red
+      [64, 255, 64],   # Bright Green
+      [64, 64, 255],   # Bright Blue
+    ]
+
+    if n_colors <= len(base_colors):
+      # Use the first n_colors from our base palette
+      return np.array(base_colors[:n_colors], dtype=np.uint8)
+
+    # For more than 32 colors, generate additional colors using HSV space
+    colors = base_colors.copy()
+
+    # Generate additional colors by varying hue, saturation, and value systematically
+    remaining = n_colors - len(colors)
+
+    # Use HSV space to generate well-spaced colors
+    for i in range(remaining):
+      # Calculate hue with golden ratio spacing for good distribution
+      golden_ratio = (1 + 5**0.5) / 2
+      hue = (i * 360 / golden_ratio) % 360
+
+      # Alternate between high and medium saturation/value for contrast
+      if i % 4 == 0:
+        sat, val = 1.0, 0.9  # Bright colors
+      elif i % 4 == 1:
+        sat, val = 0.7, 1.0  # Pastel colors
+      elif i % 4 == 2:
+        sat, val = 1.0, 0.6  # Dark colors
+      else:
+        sat, val = 0.5, 0.8  # Muted colors
+
+      # Convert HSV to RGB
+      rgb = colorsys.hsv_to_rgb(hue/360.0, sat, val)
+      rgb_255 = [int(c * 255) for c in rgb]
+      colors.append(rgb_255)
+
+    if logCallback:
+      logCallback(f"Generated {len(colors)} high contrast colors")
+
+    return np.array(colors[:n_colors], dtype=np.uint8)
+
+  def quantize_colors_lab_kmeans(self, rgb_colors, n_clusters, use_high_contrast=False, progressCallback=None, logCallback=None):
+    """
+    Quantize colors using k-means clustering in CIE Lab color space with ΔE2000 distance
+
+    Args:
+        rgb_colors: numpy array of shape (N, 3) with RGB values in range [0, 255]
+        n_clusters: number of color clusters (2-64)
+        use_high_contrast: if True, use high contrast palette instead of quantized colors
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict with 'success', 'quantized_colors', 'cluster_centers', 'labels'
+    """
+    try:
+      if logCallback:
+        logCallback(f"Starting color quantization with {n_clusters} clusters...")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Check if required libraries are available
+      if not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for k-means clustering")
+        return {"success": False}
+
+      if not SKIMAGE_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scikit-image not available for color space conversion")
+        return {"success": False}
+
+      # Convert RGB to Lab
+      if logCallback:
+        logCallback("Converting RGB to CIE Lab color space...")
+
+      lab_colors = self.rgb_to_lab(rgb_colors)
+
+      if progressCallback:
+        progressCallback(30)
+
+      # Perform k-means clustering in Lab space
+      if logCallback:
+        logCallback(f"Performing k-means clustering with {n_clusters} clusters...")
+
+      kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+      cluster_labels = kmeans.fit_predict(lab_colors)
+      cluster_centers_lab = kmeans.cluster_centers_
+
+      if progressCallback:
+        progressCallback(70)
+
+      # Convert cluster centers back to RGB or use high contrast palette
+      if use_high_contrast:
+        if logCallback:
+          logCallback("Using high contrast palette instead of quantized colors...")
+
+        # Generate high contrast palette
+        cluster_centers_rgb = self.generate_high_contrast_palette(n_clusters, logCallback)
+
+        # Create quantized colors by mapping each original color to its assigned high contrast color
+        quantized_colors = cluster_centers_rgb[cluster_labels]
+      else:
+        if logCallback:
+          logCallback("Converting cluster centers back to RGB...")
+
+        cluster_centers_rgb = self.lab_to_rgb(cluster_centers_lab)
+
+        # Create quantized colors by mapping each original color to its cluster center
+        quantized_colors = cluster_centers_rgb[cluster_labels]
+
+      if progressCallback:
+        progressCallback(90)
+
+      if logCallback:
+        logCallback(f"Quantization complete. Reduced {len(rgb_colors)} colors to {n_clusters} clusters.")
+        # Log some statistics
+        unique_original = len(np.unique(rgb_colors.view(np.void), axis=0))
+        logCallback(f"Original unique colors: {unique_original}, Quantized to: {n_clusters}")
+
+      if progressCallback:
+        progressCallback(100)
+
+      return {
+        "success": True,
+        "quantized_colors": quantized_colors.astype(np.uint8),
+        "cluster_centers": cluster_centers_rgb.astype(np.uint8),
+        "labels": cluster_labels,
+        "original_colors": rgb_colors
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in color quantization: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  def lab_to_rgb(self, lab):
+    """
+    Convert CIE Lab color to RGB color space using scikit-image
+
+    Args:
+        lab: numpy array of shape (..., 3) with Lab values
+
+    Returns:
+        numpy array of shape (..., 3) with RGB values in range [0, 255]
+    """
+    if not SKIMAGE_AVAILABLE:
+      raise ImportError("scikit-image is required for color space conversion")
+
+    # Use scikit-image for accurate Lab to RGB conversion
+    rgb_normalized = skimage_color.lab2rgb(lab)
+
+    # Convert from [0, 1] to [0, 255] and clamp
+    rgb = np.clip(rgb_normalized * 255, 0, 255)
+
+    return rgb
+
+  def performMultiTextureClustering(self, modelNode, textureDir, textureFiles, numClusters, faceAreas=None, progressCallback=None, logCallback=None):
+    """
+    Perform multi-texture clustering using MiniBatchKMeans on face average colors
+
+    Args:
+        modelNode: VTK model node to analyze
+        textureDir: Directory containing texture files
+        textureFiles: List of texture filenames
+        numClusters: Number of color clusters
+        faceAreas: Pre-computed face areas (optional, will calculate if None)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict with 'success', 'cluster_centers', 'face_areas'
+    """
+    try:
+      if logCallback:
+        logCallback(f"Starting multi-texture clustering with {numClusters} clusters...")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Check if required libraries are available
+      if not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for MiniBatchKMeans clustering")
+        return {"success": False}
+
+      if not SKIMAGE_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scikit-image not available for color space conversion")
+        return {"success": False}
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return {"success": False}
+
+      # Use provided face areas or calculate them
+      if faceAreas is None:
+        if logCallback:
+          logCallback("Calculating face areas...")
+
+        faceAreas = self._calculateFaceAreas(polyData)
+        if faceAreas is None:
+          if logCallback:
+            logCallback("Error: Failed to calculate face areas")
+          return {"success": False}
+      else:
+        if logCallback:
+          logCallback("Using provided face areas")
+
+      if progressCallback:
+        progressCallback(10)
+
+      # Collect all face colors from all textures
+      allFaceColors = []
+
+      if logCallback:
+        logCallback(f"Processing {len(textureFiles)} texture files...")
+
+      for i, textureFile in enumerate(textureFiles):
+        texturePath = os.path.join(textureDir, textureFile)
+
+        if logCallback:
+          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {textureFile}")
+
+        try:
+          # Load texture image
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            if logCallback:
+              logCallback(f"Warning: Skipping invalid texture format: {textureFile}")
+            continue
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Failed to load texture {textureFile}: {e}")
+          continue
+
+        # Calculate face average colors for this texture
+        faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+        if faceColors is not None:
+          allFaceColors.append(faceColors)
+        else:
+          if logCallback:
+            logCallback(f"Warning: Failed to calculate face colors for {textureFile}")
+
+        # Update progress
+        progress = 10 + (i + 1) * 60 / len(textureFiles)
+        if progressCallback:
+          progressCallback(progress)
+
+      if not allFaceColors:
+        if logCallback:
+          logCallback("Error: No valid face colors extracted from any texture")
+        return {"success": False}
+
+      if logCallback:
+        logCallback(f"Successfully processed {len(allFaceColors)} textures")
+        logCallback("Combining all face colors for clustering...")
+
+      # Combine all face colors into a single array
+      combinedColors = np.vstack(allFaceColors)
+
+      if logCallback:
+        logCallback(f"Total face colors for clustering: {len(combinedColors)}")
+
+      if progressCallback:
+        progressCallback(75)
+
+      # Convert to Lab color space for clustering
+      if logCallback:
+        logCallback("Converting colors to CIE Lab space...")
+
+      labColors = self.rgb_to_lab(combinedColors)
+
+      # Perform MiniBatchKMeans clustering
+      if logCallback:
+        logCallback(f"Performing MiniBatchKMeans clustering with {numClusters} clusters...")
+
+      kmeans = MiniBatchKMeans(n_clusters=numClusters, random_state=42, batch_size=1000)
+      kmeans.fit(labColors)
+      clusterCentersLab = kmeans.cluster_centers_
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Convert cluster centers back to RGB
+      if logCallback:
+        logCallback("Converting cluster centers back to RGB...")
+
+      clusterCentersRgb = self.lab_to_rgb(clusterCentersLab)
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback(f"Multi-texture clustering completed successfully!")
+        logCallback(f"Created {numClusters} color clusters from {len(allFaceColors)} textures")
+
+      return {
+        "success": True,
+        "cluster_centers": clusterCentersRgb.astype(np.uint8),
+        "face_areas": faceAreas,
+        "num_textures_processed": len(allFaceColors)
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in multi-texture clustering: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  def _calculateFaceAreas(self, polyData):
+    """
+    Calculate the area of each face in the mesh
+
+    Args:
+        polyData: VTK polydata object
+
+    Returns:
+        numpy array of face areas, or None if failed
+    """
+    try:
+      numFaces = polyData.GetNumberOfCells()
+      faceAreas = np.zeros(numFaces)
+
+      for faceId in range(numFaces):
+        cell = polyData.GetCell(faceId)
+        if cell.GetNumberOfPoints() >= 3:
+          # Get the points of the face
+          points = []
+          for i in range(cell.GetNumberOfPoints()):
+            pointId = cell.GetPointId(i)
+            point = polyData.GetPoint(pointId)
+            points.append(point)
+
+          # Calculate area using cross product for triangular faces
+          if len(points) >= 3:
+            # For triangular faces
+            p0, p1, p2 = np.array(points[0]), np.array(points[1]), np.array(points[2])
+            v1 = p1 - p0
+            v2 = p2 - p0
+            area = 0.5 * np.linalg.norm(np.cross(v1, v2))
+
+            # For quad faces, add the second triangle
+            if len(points) == 4:
+              p3 = np.array(points[3])
+              v3 = p3 - p0
+              area += 0.5 * np.linalg.norm(np.cross(v2, v3))
+
+            faceAreas[faceId] = area
+
+      return faceAreas
+
+    except Exception as e:
+      print(f"Error calculating face areas: {e}")
+      return None
+
+  def applyIndividualTextureWithClusteredPalette(self, modelNode, texturePath, clusterCenters, useHighContrast=False, faceAreas=None, progressCallback=None, logCallback=None):
+    """
+    Apply individual texture with pre-computed clustered palette
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        clusterCenters: Pre-computed cluster centers (RGB colors)
+        useHighContrast: If True, use high contrast palette instead of cluster centers
+        faceAreas: Pre-computed face areas (optional, for caching)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture: {os.path.basename(texturePath)}")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Calculate face average colors
+      if logCallback:
+        logCallback("Calculating average face colors...")
+
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if progressCallback:
+        progressCallback(40)
+
+      # Convert face colors to Lab space for clustering assignment
+      if logCallback:
+        logCallback("Converting colors to CIE Lab space...")
+
+      faceColorsLab = self.rgb_to_lab(faceColors)
+
+      if progressCallback:
+        progressCallback(50)
+
+      # Determine which palette to use
+      if useHighContrast:
+        if logCallback:
+          logCallback("Using high contrast palette...")
+        paletteColors = self.generate_high_contrast_palette(len(clusterCenters))
+      else:
+        if logCallback:
+          logCallback("Using clustered palette...")
+        paletteColors = clusterCenters
+
+      # Convert palette to Lab space for distance calculation
+      paletteColorsLab = self.rgb_to_lab(paletteColors)
+
+      if progressCallback:
+        progressCallback(60)
+
+      # Assign each face color to the nearest cluster center
+      if logCallback:
+        logCallback("Assigning face colors to nearest cluster centers...")
+
+      quantizedColors = np.zeros_like(faceColors)
+
+      # Use vectorized distance calculation for better performance
+      # Calculate Euclidean distances in Lab space (faster than ΔE2000)
+      numFaces = len(faceColorsLab)
+      numClusters = len(paletteColorsLab)
+
+      if logCallback:
+        logCallback(f"Processing {numFaces} faces with {numClusters} clusters...")
+
+      # Vectorized distance calculation
+      # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
+      faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
+      clusterColorsExpanded = paletteColorsLab[np.newaxis, :, :]  # (1, K, 3)
+
+      # Calculate Euclidean distances in Lab space
+      distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
+
+      # Find nearest cluster for each face
+      nearestClusters = np.argmin(distances, axis=1)  # (N,)
+
+      # Assign colors
+      quantizedColors = paletteColors[nearestClusters]
+
+      if progressCallback:
+        progressCallback(80)
+
+      # Apply quantized colors to the model
+      if logCallback:
+        logCallback("Applying quantized colors to model...")
+
+      # Create color array for VTK
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("Colors")
+      colorArray.SetNumberOfTuples(polyData.GetNumberOfCells())
+
+      for i in range(len(quantizedColors)):
+        color = quantizedColors[i].astype(int)
+        colorArray.SetTuple3(i, color[0], color[1], color[2])
+
+      # Add colors to the polydata
+      polyData.GetCellData().SetScalars(colorArray)
+      polyData.Modified()
+      modelNode.Modified()
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Update display to show colors
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        if logCallback:
+          logCallback("Configuring display node...")
+
+        # Turn off texture first
+        displayNode.SetTextureImageDataConnection(None)
+
+        # Enable scalar visibility and set to use RGB colors directly
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("Colors")
+
+        # Set to use cell data (not point data)
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.CELL)
+
+        # Set scalar range to use direct mapping (RGB values 0-255)
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+
+        if logCallback:
+          logCallback("Display node configured for color visualization")
+      else:
+        if logCallback:
+          logCallback("Warning: No display node found")
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback("Individual texture visualization applied successfully")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in individual texture visualization: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def performPopulationAnalysis(self, modelNode, textureDir, textureFiles, clusterCenters, faceAreas, dimReductionMethod="PCA", progressCallback=None, logCallback=None):
+    """
+    Perform population analysis by creating area-weighted color vectors and dimensionality reduction
+
+    Args:
+        modelNode: VTK model node to analyze
+        textureDir: Directory containing texture files
+        textureFiles: List of texture filenames
+        clusterCenters: Pre-computed cluster centers (RGB colors)
+        faceAreas: Pre-computed face areas
+        dimReductionMethod: "PCA" or "UMAP"
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict with 'success' and plot information
+    """
+    try:
+      if logCallback:
+        logCallback(f"Starting population analysis with {dimReductionMethod}...")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Check if required libraries are available
+      if not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for dimensionality reduction")
+        return {"success": False}
+
+      if dimReductionMethod == "UMAP" and not UMAP_AVAILABLE:
+        if logCallback:
+          logCallback("Error: UMAP not available. Please install umap-learn.")
+        return {"success": False}
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return {"success": False}
+
+      # Convert cluster centers to Lab space for distance calculations
+      clusterCentersLab = self.rgb_to_lab(clusterCenters)
+      numClusters = len(clusterCenters)
+
+      if logCallback:
+        logCallback(f"Creating area-weighted color vectors for {len(textureFiles)} textures...")
+
+      # Create area-weighted color vectors for each texture
+      textureVectors = []
+      textureNames = []
+
+      for i, textureFile in enumerate(textureFiles):
+        texturePath = os.path.join(textureDir, textureFile)
+
+        if logCallback:
+          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {textureFile}")
+
+        try:
+          # Load texture image
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            if logCallback:
+              logCallback(f"Warning: Skipping invalid texture format: {textureFile}")
+            continue
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Failed to load texture {textureFile}: {e}")
+          continue
+
+        # Calculate face average colors for this texture
+        faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+        if faceColors is None:
+          if logCallback:
+            logCallback(f"Warning: Failed to calculate face colors for {textureFile}")
+          continue
+
+        # Convert face colors to Lab space
+        faceColorsLab = self.rgb_to_lab(faceColors)
+
+        # Create area-weighted color vector
+        colorVector = np.zeros(numClusters)
+
+        # Vectorized distance calculation for better performance
+        numFaces = len(faceColorsLab)
+
+        # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
+        faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
+        clusterColorsExpanded = clusterCentersLab[np.newaxis, :, :]  # (1, K, 3)
+
+        # Calculate Euclidean distances in Lab space
+        distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
+
+        # Find nearest cluster for each face
+        nearestClusters = np.argmin(distances, axis=1)  # (N,)
+
+        # Add face areas to corresponding clusters
+        for faceIdx in range(min(numFaces, len(faceAreas))):
+          nearestCluster = nearestClusters[faceIdx]
+          colorVector[nearestCluster] += faceAreas[faceIdx]
+
+        # Normalize vector to unit length
+        vectorNorm = np.linalg.norm(colorVector)
+        if vectorNorm > 0:
+          colorVector = colorVector / vectorNorm
+
+        textureVectors.append(colorVector)
+        textureNames.append(os.path.splitext(textureFile)[0])  # Remove extension
+
+        # Update progress
+        progress = 10 + (i + 1) * 60 / len(textureFiles)
+        if progressCallback:
+          progressCallback(progress)
+
+      if not textureVectors:
+        if logCallback:
+          logCallback("Error: No valid texture vectors created")
+        return {"success": False}
+
+      if logCallback:
+        logCallback(f"Created {len(textureVectors)} area-weighted color vectors")
+        logCallback(f"Performing {dimReductionMethod} dimensionality reduction...")
+
+      if progressCallback:
+        progressCallback(75)
+
+      # Convert to numpy array
+      textureVectors = np.array(textureVectors)
+
+      # Perform dimensionality reduction
+      if dimReductionMethod == "PCA":
+        reducer = PCA(n_components=2, random_state=42)
+        reducedData = reducer.fit_transform(textureVectors)
+
+        if logCallback:
+          explained_variance = reducer.explained_variance_ratio_
+          logCallback(f"PCA explained variance: PC1={explained_variance[0]:.3f}, PC2={explained_variance[1]:.3f}")
+
+      elif dimReductionMethod == "UMAP":
+        reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=min(15, len(textureVectors)-1))
+        reducedData = reducer.fit_transform(textureVectors)
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Create plot
+      if logCallback:
+        logCallback("Creating population analysis plot...")
+
+      plotResult = self._createPopulationPlot(reducedData, textureNames, dimReductionMethod)
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback(f"Population analysis completed successfully!")
+        logCallback(f"Plotted {len(textureNames)} textures in 2D {dimReductionMethod} space")
+
+      return {
+        "success": True,
+        "reduced_data": reducedData,
+        "texture_names": textureNames,
+        "method": dimReductionMethod,
+        "plot_result": plotResult
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in population analysis: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
+  def _createPopulationPlot(self, reducedData, textureNames, method):
+    """
+    Create a population analysis plot using Slicer's plotting functionality
+    with equal X/Y numeric ranges.
+    """
+    try:
+      # --- series ---
+      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+      plotSeriesNode.SetName(f"MultiRecolor_Population_{method}")
+
+      xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
+      yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
+      xArray.SetNumberOfTuples(len(reducedData))
+      yArray.SetNumberOfTuples(len(reducedData))
+      labelsArray = vtk.vtkStringArray(); labelsArray.SetName("Texture Names")
+      labelsArray.SetNumberOfTuples(len(reducedData))
+
+      for i, (point, name) in enumerate(zip(reducedData, textureNames)):
+        xArray.SetValue(i, float(point[0]))
+        yArray.SetValue(i, float(point[1]))
+        labelsArray.SetValue(i, name)
+
+      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      tableNode.SetName(f"MultiRecolor_Population_Data_{method}")
+      tableNode.AddColumn(xArray); tableNode.AddColumn(yArray); tableNode.AddColumn(labelsArray)
+
+      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+      plotSeriesNode.SetXColumnName(xArray.GetName())
+      plotSeriesNode.SetYColumnName(yArray.GetName())
+      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+      plotSeriesNode.SetMarkerSize(8)
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+      plotSeriesNode.SetColor(0.2, 0.6, 0.8)
+
+      # --- chart ---
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"MultiRecolor_Population_Chart_{method}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+      plotChartNode.SetTitle(f"Multi-Texture Population Analysis ({method})")
+      plotChartNode.SetXAxisTitle(f"{method} Component 1")
+      plotChartNode.SetYAxisTitle(f"{method} Component 2")
+
+      # Disable auto-range BEFORE setting manual ranges
+      if hasattr(plotChartNode, "SetXAxisRangeAuto"):
+        plotChartNode.SetXAxisRangeAuto(False)
+      if hasattr(plotChartNode, "SetYAxisRangeAuto"):
+        plotChartNode.SetYAxisRangeAuto(False)
+
+      # Equal numeric span on both axes
+      x_min, x_max = float(np.min(reducedData[:,0])), float(np.max(reducedData[:,0]))
+      y_min, y_max = float(np.min(reducedData[:,1])), float(np.max(reducedData[:,1]))
+      x_center = (x_min + x_max) / 2.0
+      y_center = (y_min + y_max) / 2.0
+      span = max(x_max - x_min, y_max - y_min)
+      span = max(span, 1e-6)  # avoid zero span
+      span *= 1.2  # 20% padding
+
+      plotChartNode.SetXAxisRange(x_center - span/2.0, x_center + span/2.0)
+      plotChartNode.SetYAxisRange(y_center - span/2.0, y_center + span/2.0)
+      plotChartNode.Modified()
+
+      # show
+      plotViewNode = slicer.app.layoutManager().plotWidget(0).mrmlPlotViewNode()
+      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+      return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
+
+    except Exception as e:
+      print(f"Error creating population plot: {e}")
+      import traceback; traceback.print_exc()
+      return {"success": False}
+
+
+  def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, useHighContrastPalette=False, progressCallback=None, logCallback=None):
+    """
+    Apply quantized average face colors from a texture to a model
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        numClusters: Number of color clusters for quantization
+        useHighContrastPalette: If True, use high contrast palette instead of quantized colors
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      if logCallback:
+        logCallback(f"Loading texture for quantization: {os.path.basename(texturePath)}")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Calculate face average colors
+      if logCallback:
+        logCallback("Calculating average face colors...")
+
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if logCallback:
+        logCallback(f"Calculated colors for {len(faceColors)} faces")
+
+      if progressCallback:
+        progressCallback(40)
+
+      # Quantize the colors using k-means in Lab space
+      if logCallback:
+        logCallback(f"Quantizing colors to {numClusters} clusters...")
+
+      quantResult = self.quantize_colors_lab_kmeans(
+        faceColors, numClusters,
+        use_high_contrast=useHighContrastPalette,
+        progressCallback=lambda p: progressCallback(40 + p * 0.4) if progressCallback else None,
+        logCallback=logCallback
+      )
+
+      if not quantResult.get("success", False):
+        if logCallback:
+          logCallback("Error: Color quantization failed")
+        return False
+
+      quantizedColors = quantResult["quantized_colors"]
+      clusterCenters = quantResult["cluster_centers"]
+
+      if logCallback:
+        logCallback(f"Quantization successful. Cluster centers (RGB):")
+        for i, center in enumerate(clusterCenters):
+          logCallback(f"  Cluster {i+1}: [{center[0]}, {center[1]}, {center[2]}]")
+
+      if progressCallback:
+        progressCallback(85)
+
+      # Apply quantized colors to faces as cell data
+      nFaces = polyData.GetNumberOfCells()
+      if len(quantizedColors) != nFaces:
+        if logCallback:
+          logCallback(f"Error: Color count mismatch. Expected {nFaces}, got {len(quantizedColors)}")
+        return False
+
+      if logCallback:
+        logCallback(f"Applying quantized colors to {nFaces} faces")
+
+      # Create VTK color arrays for RGB components
+      colorArrayR = vtk.vtkUnsignedCharArray()
+      colorArrayR.SetName("QuantizedColorR")
+      colorArrayR.SetNumberOfComponents(1)
+      colorArrayR.SetNumberOfTuples(nFaces)
+
+      colorArrayG = vtk.vtkUnsignedCharArray()
+      colorArrayG.SetName("QuantizedColorG")
+      colorArrayG.SetNumberOfComponents(1)
+      colorArrayG.SetNumberOfTuples(nFaces)
+
+      colorArrayB = vtk.vtkUnsignedCharArray()
+      colorArrayB.SetName("QuantizedColorB")
+      colorArrayB.SetNumberOfComponents(1)
+      colorArrayB.SetNumberOfTuples(nFaces)
+
+      # Combined RGB array
+      colorArrayRGB = vtk.vtkUnsignedCharArray()
+      colorArrayRGB.SetName("QuantizedColors")
+      colorArrayRGB.SetNumberOfComponents(3)
+      colorArrayRGB.SetNumberOfTuples(nFaces)
+
+      for i in range(nFaces):
+        color = quantizedColors[i]
+        colorArrayR.SetValue(i, int(color[0]))
+        colorArrayG.SetValue(i, int(color[1]))
+        colorArrayB.SetValue(i, int(color[2]))
+        colorArrayRGB.SetTuple3(i, int(color[0]), int(color[1]), int(color[2]))
+
+      # Add arrays to cell data
+      polyData.GetCellData().AddArray(colorArrayR)
+      polyData.GetCellData().AddArray(colorArrayG)
+      polyData.GetCellData().AddArray(colorArrayB)
+      polyData.GetCellData().AddArray(colorArrayRGB)
+      polyData.GetCellData().SetActiveScalars("QuantizedColors")
+
+      # Update display
+      modelNode.CreateDefaultDisplayNodes()
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        # Turn off texture first
+        displayNode.SetTextureImageDataConnection(None)
+
+        # Enable scalar visibility and set to use RGB colors directly
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("QuantizedColors")
+
+        # Set to use cell data (not point data)
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.CELL)
+
+        # Use RGB color mode instead of lookup table
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback("Quantized face coloring applied successfully")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in applyQuantizedFaceColorsFromTexture: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
