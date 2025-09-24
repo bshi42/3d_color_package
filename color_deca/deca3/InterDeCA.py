@@ -5948,7 +5948,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     try:
       # --- series ---
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-      plotSeriesNode.SetName(f"MultiRecolor_Population_{method}")
+      plotSeriesNode.SetName(f"{method}")
 
       xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
       yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
@@ -5969,6 +5969,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
       plotSeriesNode.SetXColumnName(xArray.GetName())
       plotSeriesNode.SetYColumnName(yArray.GetName())
+      plotSeriesNode.SetLabelColumnName(labelsArray.GetName())
       plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
       plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
       plotSeriesNode.SetMarkerSize(8)
