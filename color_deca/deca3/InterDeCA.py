@@ -1,3 +1,22 @@
+"""
+InterDeCA (Interactive Dense Correspondence Analysis) module for 3D Slicer.
+
+Extends the original DeCA module with advanced color analysis capabilities,
+texture baking through Blender integration, and interactive visualization tools
+for studying color patterns in biological specimens.
+
+Key features:
+- Blender integration for UV mapping and texture baking
+- Color space analysis (RGB/HSV) with dimensionality reduction
+- Multi-texture clustering for comparative color analysis
+- Interactive shape interpolation and visualization
+- Face-level color quantization and pattern analysis
+
+Dependencies:
+- Optional: sklearn, umap-learn, scikit-image for advanced analysis
+- External: Blender for texture processing
+"""
+
 import os
 import unittest
 import vtk, qt, ctk, slicer
@@ -16,6 +35,8 @@ import shutil
 import imageio # slicer.util.pip_install('imageio')
 import glob
 import colorsys
+
+# Attempts to import optional machine learning libraries
 try:
     from sklearn.decomposition import PCA, FastICA
     from sklearn.manifold import TSNE
@@ -28,6 +49,7 @@ except ImportError:
     UMAP_AVAILABLE = False
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
 
+# Attempts to import scikit-image for color quantization
 try:
     from skimage import color as skimage_color
     from skimage.color import deltaE_ciede2000
@@ -36,7 +58,7 @@ except ImportError:
     SKIMAGE_AVAILABLE = False
     print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
-# Import functions from the deca module to avoid duplication
+# Imports functions from the original DeCA module to avoid code duplication
 import sys
 import os
 
@@ -45,52 +67,94 @@ try:
     print('Successfully imported DeCA module!')
     print(f'decaLogic class: {decaLogic}')
 except ImportError as e:
-    # Handle case where deca module is not available
+    # Handles case where DeCA module is not available
     print(f'Could not import DeCA module: {e}')
     decaLogic = None
 
 print(f'Final decaLogic value: {decaLogic}')
 
 #
-# DeCA
+# InterDeCA
 #
 
 class InterDeCA(ScriptedLoadableModule):
-  """Uses ScriptedLoadableModule base class, available at:
+  """
+  Module class for Interactive Dense Correspondence Analysis (InterDeCA).
+
+  Extends DeCA functionality with color-based morphometric analysis tools,
+  providing workflows for texture processing, color pattern analysis,
+  and interactive visualization of biological specimens.
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def __init__(self, parent):
+    """
+    Initializes the InterDeCA module with metadata and configuration.
+
+    Args:
+      parent: Parent object from 3D Slicer framework
+    """
     ScriptedLoadableModule.__init__(self, parent)
-    self.parent.title = "InterDeCA" # TODO make this more human readable by adding spaces
+
+    # Sets module metadata for 3D Slicer's module browser
+    self.parent.title = "InterDeCA"  # Interactive Dense Correspondence Analysis
     self.parent.categories = ["SlicerMorph.DeCA Toolbox"]
-    self.parent.dependencies = []
-    self.parent.contributors = ["Sara Rolfe (SCRI)"] # replace with "Firstname Lastname (Organization)"
+    self.parent.dependencies = []  # Original DeCA module loaded separately
+    self.parent.contributors = ["Sara Rolfe (SCRI)"]
+
+    # Provides user-facing documentation
     self.parent.helpText = """
-      This module provides several flexible workflows for finding and analyzing dense correspondence points between models.
+      This module provides several flexible workflows for finding and analyzing dense correspondence points between models,
+      with enhanced support for color analysis and texture processing.
       """
     self.parent.helpText += self.getDefaultModuleDocumentationLink()
+
+    # Acknowledges funding sources
     self.parent.acknowledgementText = """This extension was developed by funding from National Institutes of Health (OD032627 and HD104435) to A. Murat Maga (SCRI)
-      """ # replace with organization, grant and thanks.
+      """
 
 #
-# DeCAWidget
+# InterDeCAWidget
 #
 
 class InterDeCAWidget(ScriptedLoadableModuleWidget):
-  """Uses ScriptedLoadableModuleWidget base class, available at:
+  """
+  GUI widget for the InterDeCA module.
+
+  Creates and manages an enhanced user interface with multiple tabs:
+  - DeCA: Standard dense correspondence with texture support
+  - DeCAL: Dense landmarking
+  - Visualize: Interactive results visualization with interpolation
+  - Colors EDA: Color pattern analysis with dimensionality reduction
+  - Recolor: Single texture application and quantization
+  - MultiRecolor: Multi-texture clustering analysis
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """
 
   def setup(self):
+    """
+    Builds the module's user interface.
+
+    Creates a tabbed interface with six main workflows:
+    - DeCA: Dense correspondence with Blender integration
+    - DeCAL: Dense landmarking with subsampling
+    - Visualize: Heatmaps and shape interpolation
+    - Colors EDA: Statistical color analysis
+    - Recolor: Texture application and quantization
+    - MultiRecolor: Comparative multi-texture analysis
+    """
     ScriptedLoadableModuleWidget.setup(self)
 
-    # This variable will hold our temporary interpolation model
-    self.interpolatedModelNode = None
-    self.selectedOriginalModelNode = None
-    self.lastDeCAAlignedModelsPath = None
+    # Initializes variables for interpolation visualization
+    self.interpolatedModelNode = None  # Temporary model for interpolation
+    self.selectedOriginalModelNode = None  # Selected resampled model
+    self.lastDeCAAlignedModelsPath = None  # Path to aligned models
 
-    # Set up tabs to split workflow
+    # Sets up tabs to organize complex workflow
     tabsWidget = qt.QTabWidget()
     self.tabsWidget = tabsWidget
     DeCATab = qt.QWidget()
@@ -208,6 +272,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCAWidgetLayout.addRow("Textures directory (png): ", self.textureDirectoryDC)
 
     # --- Blender integration ---
+    # Configures external Blender processing for UV mapping and texture baking
     self.blenderGroup = ctk.ctkCollapsibleButton()
     self.blenderGroup.text = "Blender (cleanup, UV, bake)"
     DeCAWidgetLayout.addRow(self.blenderGroup)
@@ -586,6 +651,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     ################################### Phase 1: Data Sampling ###################################
     # Data Sampling section
+    # Creates interface for sampling color data from textured models
     dataSamplingWidget = ctk.ctkCollapsibleButton()
     dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
     dataSamplingWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f0f8ff; }")
@@ -594,7 +660,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     dataSamplingWidgetLayout.setHorizontalSpacing(8)
     dataSamplingWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
     dataSamplingWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    dataSamplingWidget.text = "Phase 1: Data Sampling"
+    dataSamplingWidget.text = "Phase 1: Data Sampling"  # First step: extract colors
     colorsEDATabLayout.addRow(dataSamplingWidget)
 
     # Atlas model selector for Colors EDA
@@ -655,6 +721,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     ################################### Phase 2: Analysis & Plotting ###################################
     # Analysis section
+    # Creates interface for statistical analysis and visualization of color data
     analysisWidget = ctk.ctkCollapsibleButton()
     analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
     analysisWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f8fff0; }")
@@ -663,7 +730,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     analysisWidgetLayout.setHorizontalSpacing(8)
     analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
     analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    analysisWidget.text = "Phase 2: Analysis & Plotting"
+    analysisWidget.text = "Phase 2: Analysis & Plotting"  # Second step: analyze patterns
     analysisWidget.enabled = False  # Disabled until data is sampled
     colorsEDATabLayout.addRow(analysisWidget)
 
@@ -1343,21 +1410,42 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
 
   def onGenerateAtlasButton(self):
+    """
+    Generates or loads an atlas model for DeCAL analysis.
+
+    Handles two workflows:
+    1. Loading existing atlas: Uses pre-computed atlas model and landmarks
+    2. Generating new atlas: Creates average shape from specimen collection
+
+    Outputs atlas files to the DeCA output directory for use in dense
+    correspondence analysis.
+    """
+    # Initializes the InterDeCA logic processor
     logic = InterDeCALogic()
-    #set up output directory
+
+    # Sets up the output directory structure with DeCAL-specific folders
     self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+
+    # Validates that directory creation was successful
     if self.folderNames == {}:
       self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
       return
+
+    # Stores paths to original data for reference during processing
     self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
     self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
+
+    # Determines whether to load existing atlas or generate new one
     if self.loadAtlasOptionDCL.checked:
+      # Loads existing atlas model from file
       try:
         atlasModelPath = self.DCLBaseModelSelector.currentPath
         self.atlasModel = slicer.util.loadModel(atlasModelPath)
       except:
         self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
         return
+
+      # Loads corresponding atlas landmarks
       try:
         atlasLMPath = self.DCLBaseLMSelector.currentPath
         self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
@@ -1366,34 +1454,60 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
         return
     else:
-      removeScale = True
+      # Generates new atlas from specimen collection using Procrustes alignment
+      removeScale = True  # Removes scale differences during alignment
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+
+    # Saves the atlas model to the output directory for later use
     atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
+
+    # Saves the atlas landmarks alongside the model
     atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+
+    # Enables the next step button for point number calculation
     self.getPointNumberButton.enabled = True
 
   def generateNewAtlas(self, removeScale, log):
+    """
+    Creates an unbiased atlas model from a collection of specimens.
+
+    Implements the following workflow:
+    1. Identifies specimen closest to mean shape using Procrustes analysis
+    2. Performs rigid alignment of all specimens to this template
+    3. Computes average shape from aligned specimens
+    4. Cleans up temporary files
+
+    Args:
+      removeScale: Boolean to normalize scale during alignment
+      log: Qt text widget for progress reporting
+
+    Returns:
+      tuple: (atlasModel, atlasLMs) - Generated atlas and average landmarks
+    """
+    # Initializes the InterDeCA logic for processing operations
     logic = InterDeCALogic()
 
-    # getClosestToMeanPath returns a filename, we need to extract the base subject ID
+    # Determines which specimen is closest to the mean shape configuration
+    # This specimen will serve as the initial template for alignment
     try:
       closestFileName = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
       if closestFileName is None:
         log.appendPlainText("Error: Could not determine closest sample to mean")
         return None, None
 
-      # Extract the base subject ID by removing landmark file extensions
+      # Extracts the subject ID by removing landmark file extensions
+      # Handles multiple extension formats (.fcsv, .mrk.json, etc.)
       subjectID = closestFileName
-      # Strip common landmark file extensions (.fcsv, .mrk, .json)
       fileNameBase = Path(subjectID)
       while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
         fileNameBase = fileNameBase.with_suffix('')
       subjectID = str(fileNameBase)
 
+      # Reports the selected template specimen for user verification
       log.appendPlainText(f"Closest sample to mean: {closestFileName}")
       log.appendPlainText(f"Using subject ID: {subjectID}")
     except Exception as e:
@@ -1433,9 +1547,23 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
 
   def onGetPointNumberButton(self):
+    """
+    Calculates the number of points in the subsampled atlas.
+
+    Uses the spacing tolerance value to downsample the atlas model and
+    reports the resulting point count. This helps users understand the
+    density of correspondence points before running DeCAL.
+    """
+    # Creates logic instance for point calculation
     logic = InterDeCALogic()
+
+    # Subsamples the atlas based on the specified spacing tolerance
     subsampledTemplate, pointNumber = logic.runCheckPoints(self.atlasModel, self.spacingTolerance.value)
+
+    # Reports the point count to help users assess correspondence density
     self.logInfoDCL.appendPlainText(f'The subsampled template has a total of {pointNumber} points.')
+
+    # Enables the DeCAL execution button now that point count is known
     self.DCLApplyButton.enabled = True
 
   def onTabChanged(self, index):
@@ -3814,11 +3942,36 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         '/opt/blender/blender',
         '/snap/bin/blender',
         os.path.expanduser('~/blender/blender'),
-        os.path.expanduser('~/.local/bin/blender')
+        os.path.expanduser('~/.local/bin/blender'),
+        # Flatpak installation paths
+        '/var/lib/flatpak/exports/bin/org.blender.Blender',
+        os.path.expanduser('~/.local/share/flatpak/exports/bin/org.blender.Blender'),
+        # AppImage installations
+        os.path.expanduser('~/Applications/Blender.AppImage'),
+        os.path.expanduser('~/Downloads/Blender.AppImage'),
+        '/opt/Blender.AppImage',
+        # Distribution-specific paths
+        '/usr/share/blender/blender',  # Some distributions
+        '/usr/games/blender',          # Debian games partition
+        '/opt/blender-*/blender',      # Custom installations
       ]
-      # Check for snap installations
+      
+      # Check for snap installations with version numbers
       snap_paths = glob.glob('/snap/blender/*/blender')
       common_paths.extend(snap_paths)
+      
+      # Check for versioned installations
+      versioned_paths = glob.glob('/usr/bin/blender-*')
+      versioned_paths.extend(glob.glob('/usr/local/bin/blender-*'))
+      versioned_paths.extend(glob.glob('/opt/blender-*/blender'))
+      common_paths.extend(versioned_paths)
+      
+      # Check for user-installed versions
+      user_blender_dirs = glob.glob(os.path.expanduser('~/blender-*'))
+      for blender_dir in user_blender_dirs:
+        potential_path = os.path.join(blender_dir, 'blender')
+        if os.path.isfile(potential_path):
+          common_paths.append(potential_path)
 
     # Test each common path
     for path in common_paths:
@@ -3829,9 +3982,355 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     print("Blender executable not found in common locations")
     return None
 
+  def _tryInstallBlenderMacOS(self, log_callback):
+    """
+    Try to install Blender on macOS using Homebrew.
+    Returns True if successful, False otherwise.
+    """
+    import subprocess
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    try:
+      # Check if Homebrew is installed
+      result = subprocess.run(['which', 'brew'], capture_output=True, text=True)
+      if result.returncode != 0:
+        log("Homebrew not found. Trying to install Homebrew first...")
+        # Install Homebrew
+        install_brew_cmd = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        result = subprocess.run(install_brew_cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+          log("Failed to install Homebrew")
+          return False
+      
+      log("Installing Blender via Homebrew...")
+      result = subprocess.run(['brew', 'install', '--cask', 'blender'], capture_output=True, text=True, timeout=300)
+      
+      if result.returncode == 0:
+        log("Blender installed successfully via Homebrew")
+        return True
+      else:
+        log(f"Homebrew installation failed: {result.stderr}")
+        return False
+        
+    except subprocess.TimeoutExpired:
+      log("Homebrew installation timed out")
+      return False
+    except Exception as e:
+      log(f"Error during Homebrew installation: {e}")
+      return False
+
+  def _tryInstallBlenderLinux(self, log_callback):
+    """
+    Try to install Blender on Linux using various package managers.
+    Returns True if successful, False otherwise.
+    """
+    import subprocess
+    import shutil
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    # Detect distribution and get preferred package managers
+    distro_name, preferred_managers = self._detectLinuxDistribution()
+    log(f"Detected Linux distribution: {distro_name}")
+    log(f"Preferred package managers: {', '.join(preferred_managers)}")
+    
+    # Define all package managers with their commands
+    all_package_managers = {
+      'snap': {
+        'check': ['which', 'snap'],
+        'install': ['sudo', 'snap', 'install', 'blender', '--classic'],
+        'name': 'Snap'
+      },
+      'flatpak': {
+        'check': ['which', 'flatpak'],
+        'install': ['flatpak', 'install', '-y', 'flathub', 'org.blender.Blender'],
+        'name': 'Flatpak',
+        'setup': ['flatpak', 'remote-add', '--if-not-exists', 'flathub', 'https://flathub.org/repo/flathub.flatpakrepo']
+      },
+      'apt': {
+        'check': ['which', 'apt'],
+        'install': ['sudo', 'apt', 'update', '&&', 'sudo', 'apt', 'install', '-y', 'blender'],
+        'name': 'APT'
+      },
+      'dnf': {
+        'check': ['which', 'dnf'],
+        'install': ['sudo', 'dnf', 'install', '-y', 'blender'],
+        'name': 'DNF'
+      },
+      'yum': {
+        'check': ['which', 'yum'],
+        'install': ['sudo', 'yum', 'install', '-y', 'blender'],
+        'name': 'YUM'
+      },
+      'pacman': {
+        'check': ['which', 'pacman'],
+        'install': ['sudo', 'pacman', '-S', '--noconfirm', 'blender'],
+        'name': 'Pacman'
+      },
+      'zypper': {
+        'check': ['which', 'zypper'],
+        'install': ['sudo', 'zypper', 'install', '-y', 'blender'],
+        'name': 'Zypper'
+      }
+    }
+    
+    # Try preferred package managers first, then fall back to others
+    managers_to_try = []
+    for pm_name in preferred_managers:
+      if pm_name in all_package_managers:
+        managers_to_try.append(all_package_managers[pm_name])
+    
+    # Add remaining package managers as fallbacks
+    for pm_name, pm_info in all_package_managers.items():
+      if pm_name not in preferred_managers:
+        managers_to_try.append(pm_info)
+    
+    for pm in managers_to_try:
+      try:
+        # Check if package manager is available
+        result = subprocess.run(pm['check'], capture_output=True, text=True)
+        if result.returncode == 0:
+          log(f"Found {pm['name']} package manager. Attempting installation...")
+          
+          # Run setup command if needed (e.g., for Flatpak)
+          if 'setup' in pm:
+            log(f"Setting up {pm['name']}...")
+            setup_result = subprocess.run(pm['setup'], capture_output=True, text=True, timeout=60)
+            if setup_result.returncode != 0:
+              log(f"{pm['name']} setup failed, but continuing anyway: {setup_result.stderr}")
+          
+          # Handle shell commands with && properly
+          if isinstance(pm['install'], list) and '&&' in ' '.join(pm['install']):
+            cmd_str = ' '.join(pm['install'])
+            result = subprocess.run(cmd_str, shell=True, capture_output=True, text=True, timeout=300)
+          else:
+            result = subprocess.run(pm['install'], capture_output=True, text=True, timeout=300)
+          
+          if result.returncode == 0:
+            log(f"Blender installed successfully via {pm['name']}")
+            return True
+          else:
+            log(f"{pm['name']} installation failed: {result.stderr}")
+            continue
+            
+      except subprocess.TimeoutExpired:
+        log(f"{pm['name']} installation timed out")
+        continue
+      except Exception as e:
+        log(f"Error during {pm['name']} installation: {e}")
+        continue
+    
+    log("All package manager installations failed")
+    return False
+
+  def _detectLinuxDistribution(self):
+    """
+    Detect Linux distribution to prioritize appropriate package managers.
+    Returns a tuple of (distro_name, package_manager_priority)
+    """
+    import subprocess
+    
+    try:
+      # Try to read /etc/os-release
+      with open('/etc/os-release', 'r') as f:
+        lines = f.readlines()
+        distro_info = {}
+        for line in lines:
+          if '=' in line:
+            key, value = line.strip().split('=', 1)
+            distro_info[key] = value.strip('"')
+        
+        distro_id = distro_info.get('ID', '').lower()
+        distro_like = distro_info.get('ID_LIKE', '').lower()
+        
+        # Return appropriate package manager priority based on distribution
+        if 'ubuntu' in distro_id or 'debian' in distro_id or 'ubuntu' in distro_like:
+          return ('debian', ['snap', 'apt', 'flatpak'])  # Snap is preferred on Ubuntu
+        elif 'fedora' in distro_id or 'rhel' in distro_id or 'centos' in distro_id:
+          return ('fedora', ['dnf', 'flatpak', 'snap'])
+        elif 'arch' in distro_id or 'manjaro' in distro_id:
+          return ('arch', ['pacman', 'flatpak', 'snap'])
+        elif 'opensuse' in distro_id or 'suse' in distro_id:
+          return ('suse', ['zypper', 'flatpak', 'snap'])
+        elif 'alpine' in distro_id:
+          return ('alpine', ['flatpak', 'snap'])  # Alpine doesn't have Blender in main repos
+        else:
+          return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+          
+    except FileNotFoundError:
+      # Fallback to lsb_release or uname
+      try:
+        result = subprocess.run(['lsb_release', '-si'], capture_output=True, text=True)
+        if result.returncode == 0:
+          distro = result.stdout.strip().lower()
+          if 'ubuntu' in distro or 'debian' in distro:
+            return ('debian', ['snap', 'apt', 'flatpak'])
+          elif 'fedora' in distro or 'red hat' in distro:
+            return ('fedora', ['dnf', 'flatpak', 'snap'])
+        
+        # Final fallback
+        return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+        
+      except:
+        return ('unknown', ['snap', 'flatpak', 'apt', 'dnf', 'pacman', 'zypper'])
+
+  def _installBlenderMacOSDMG(self, download_urls, filename, install_dir, log_callback):
+    """
+    Handle macOS DMG file download and installation.
+    Returns the path to Blender executable if successful, None otherwise.
+    """
+    import subprocess
+    import tempfile
+    import urllib.request
+    import ssl
+    
+    def log(message):
+      if log_callback:
+        log_callback(message)
+      else:
+        print(message)
+    
+    temp_dmg_path = None
+    
+    # Try each download URL until one works
+    for download_url in download_urls:
+      try:
+        log(f"Downloading macOS DMG from: {download_url}")
+        
+        # Create request with proper headers
+        request = urllib.request.Request(download_url)
+        request.add_header('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
+        
+        # Download with SSL context
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.dmg') as tmp_file:
+          with urllib.request.urlopen(request, context=ssl_context) as response:
+            content_type = response.headers.get('content-type', '').lower()
+            
+            if 'text/html' in content_type:
+              log("Got HTML response (likely error page), trying next URL...")
+              continue
+            
+            # Download in chunks
+            while True:
+              chunk = response.read(8192)
+              if not chunk:
+                break
+              tmp_file.write(chunk)
+          
+          temp_dmg_path = tmp_file.name
+          break
+          
+      except Exception as e:
+        log(f"Failed to download from {download_url}: {e}")
+        if temp_dmg_path and os.path.exists(temp_dmg_path):
+          os.unlink(temp_dmg_path)
+          temp_dmg_path = None
+        continue
+    
+    if not temp_dmg_path:
+      log("Failed to download DMG from any mirror")
+      return None
+    
+    try:
+      log("Mounting DMG file...")
+      
+      # Mount the DMG
+      mount_result = subprocess.run(
+        ['hdiutil', 'attach', temp_dmg_path, '-nobrowse', '-quiet'],
+        capture_output=True, text=True
+      )
+      
+      if mount_result.returncode != 0:
+        log(f"Failed to mount DMG: {mount_result.stderr}")
+        os.unlink(temp_dmg_path)
+        return None
+      
+      # Parse mount output to find the volume path
+      mount_point = None
+      for line in mount_result.stdout.split('\n'):
+        if '/Volumes/' in line:
+          mount_point = line.split()[-1]
+          break
+      
+      if not mount_point:
+        log("Could not determine mount point")
+        os.unlink(temp_dmg_path)
+        return None
+      
+      log(f"DMG mounted at: {mount_point}")
+      
+      # Find Blender.app in the mounted volume
+      blender_app_source = os.path.join(mount_point, 'Blender.app')
+      if not os.path.exists(blender_app_source):
+        # Try to find it with different names
+        for item in os.listdir(mount_point):
+          if item.endswith('.app') and 'blender' in item.lower():
+            blender_app_source = os.path.join(mount_point, item)
+            break
+      
+      if not os.path.exists(blender_app_source):
+        log("Could not find Blender.app in mounted DMG")
+        subprocess.run(['hdiutil', 'detach', mount_point, '-quiet'], capture_output=True)
+        os.unlink(temp_dmg_path)
+        return None
+      
+      # Copy Blender.app to Applications
+      blender_app_dest = '/Applications/Blender.app'
+      log(f"Installing Blender.app to {blender_app_dest}...")
+      
+      # Remove existing installation if present
+      if os.path.exists(blender_app_dest):
+        subprocess.run(['rm', '-rf', blender_app_dest], capture_output=True)
+      
+      # Copy the app bundle
+      copy_result = subprocess.run(['cp', '-R', blender_app_source, blender_app_dest], capture_output=True, text=True)
+      
+      # Unmount the DMG
+      subprocess.run(['hdiutil', 'detach', mount_point, '-quiet'], capture_output=True)
+      os.unlink(temp_dmg_path)
+      
+      if copy_result.returncode != 0:
+        log(f"Failed to copy Blender.app: {copy_result.stderr}")
+        return None
+      
+      # Return path to the executable
+      blender_executable = os.path.join(blender_app_dest, 'Contents', 'MacOS', 'Blender')
+      if os.path.exists(blender_executable):
+        log(f"Blender installed successfully at: {blender_executable}")
+        return blender_executable
+      else:
+        log("Blender executable not found in installed app bundle")
+        return None
+        
+    except Exception as e:
+      log(f"Error during DMG installation: {e}")
+      if temp_dmg_path and os.path.exists(temp_dmg_path):
+        os.unlink(temp_dmg_path)
+      return None
+
   def installBlender(self, log_callback=None):
     """
-    Automatically download and install Blender.
+    Automatically download and install Blender with enhanced cross-platform support.
+    
+    Features:
+    - macOS: Tries Homebrew first, falls back to DMG download and installation
+    - Linux: Detects distribution and uses appropriate package manager (snap, flatpak, apt, dnf, pacman, zypper)
+    - Windows: Direct download and extraction (existing functionality)
+    - Supports both x64 and ARM64 architectures where available
+    
     Returns the path to the installed Blender executable if successful, None otherwise.
     """
     import platform
@@ -3867,13 +4366,32 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         return None
 
     elif system == 'darwin':  # macOS
-      log("macOS installation not supported in automatic mode. Please install Blender manually from:")
-      log("https://www.blender.org/download/")
-      return None
-
+      # Try to install via Homebrew first, then fallback to direct download
+      if self._tryInstallBlenderMacOS(log):
+        return self.findBlenderExecutable()
+      
+      # If Homebrew fails, try direct download
+      if 'amd64' in architecture or 'x86_64' in architecture:
+        filename = f"blender-{blender_version}-macos-x64.dmg"
+        blender_exe = "Blender"  # macOS app bundle executable
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-macos-arm64.dmg"
+        blender_exe = "Blender"
+      else:
+        log("Unsupported macOS architecture")
+        return None
+    
     elif system == 'linux':
+      # Try to install via package manager first
+      if self._tryInstallBlenderLinux(log):
+        return self.findBlenderExecutable()
+      
+      # If package manager fails, try direct download
       if 'amd64' in architecture or 'x86_64' in architecture:
         filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        blender_exe = "blender"
+      elif 'arm' in architecture or 'aarch64' in architecture:
+        filename = f"blender-{blender_version}-linux-arm64.tar.xz"
         blender_exe = "blender"
       else:
         log("Unsupported Linux architecture")
@@ -3890,17 +4408,41 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       f"https://mirror.clarkson.edu/blender/release/Blender4.5/{filename}",
       f"https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/{filename}"
     ]
-
+    
+    # Special handling for macOS DMG files
+    if system == 'darwin' and filename.endswith('.dmg'):
+      return self._installBlenderMacOSDMG(download_urls, filename, install_dir, log)
+    
+    # Special handling for Linux ARM64
+    if system == 'linux' and 'arm' in architecture:
+      # ARM64 Linux support was added in Blender 3.0+
+      if not any(url for url in download_urls if 'arm64' in filename):
+        log("ARM64 Linux binaries may not be available for this Blender version. Trying x64 compatibility...")
+        filename = f"blender-{blender_version}-linux-x64.tar.xz"
+        download_urls = [url.replace('arm64', 'x64') for url in download_urls]
+    
     # Create installation directory
     install_dir = os.path.join(os.path.expanduser('~'), '.slicer-blender')
     os.makedirs(install_dir, exist_ok=True)
 
     # Check if already installed
-    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-x64")
-    if system == 'windows' and 'arm' in architecture:
-      expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-arm64")
-
-    expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    arch_suffix = 'x64'
+    if 'arm' in architecture or 'aarch64' in architecture:
+      arch_suffix = 'arm64'
+    
+    expected_blender_dir = os.path.join(install_dir, f"blender-{blender_version}-{system}-{arch_suffix}")
+    
+    # For macOS, the executable is in a different location within the app bundle
+    if system == 'darwin':
+      expected_blender_path = '/Applications/Blender.app/Contents/MacOS/Blender'
+      # Also check for manually downloaded version
+      manual_blender_path = os.path.join(expected_blender_dir, 'Blender.app', 'Contents', 'MacOS', 'Blender')
+      if os.path.isfile(manual_blender_path):
+        log(f"Blender already installed at: {manual_blender_path}")
+        return manual_blender_path
+    else:
+      expected_blender_path = os.path.join(expected_blender_dir, blender_exe)
+    
     if os.path.isfile(expected_blender_path):
       log(f"Blender already installed at: {expected_blender_path}")
       return expected_blender_path
