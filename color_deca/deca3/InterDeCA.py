@@ -3051,10 +3051,35 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     else:
       self.logInfoDC.appendPlainText("No textures directory set → skipping bake.")
 
-    # ---- 6) Fill Visualize dropdown ----
+    # ---- 6) Load result model into 3D view ----
+    self.updateProgressDC(95, "Loading results into 3D view...")
+    resultModelPath = os.path.join(self.folderNames['output'], 'decaResultModel.vtp')
+    if os.path.exists(resultModelPath):
+      try:
+        resultModelNode = slicer.util.loadModel(resultModelPath)
+        if resultModelNode:
+          resultModelNode.SetName("DeCA Result Model")
+          # Enable scalar visibility and set to show the first array
+          displayNode = resultModelNode.GetDisplayNode()
+          if displayNode:
+            displayNode.SetScalarVisibility(True)
+            polyData = resultModelNode.GetPolyData()
+            if polyData and polyData.GetPointData().GetNumberOfArrays() > 0:
+              firstArrayName = polyData.GetPointData().GetArrayName(0)
+              displayNode.SetActiveScalarName(firstArrayName)
+              displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
+          self.logInfoDC.appendPlainText(f"Result model loaded: {resultModelNode.GetName()}")
+        else:
+          self.logInfoDC.appendPlainText("Warning: Could not load result model into 3D view")
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Warning: Failed to load result model: {e}")
+    else:
+      self.logInfoDC.appendPlainText("Warning: Result model file not found")
+
+    # ---- 7) Fill Visualize dropdown ----
     self.updateProgressDC(100, "Finalizing results...")
     self.updateBakedPreviewList()
-    
+
     # Success - reset progress and re-enable button
     self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
     self.resetProgressDC()
