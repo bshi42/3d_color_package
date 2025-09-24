@@ -649,13 +649,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
     self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
     
-    # Point index selector (for single point mode)
-    self.pointIndexSpinBox = qt.QSpinBox()
-    self.pointIndexSpinBox.minimum = 0
-    self.pointIndexSpinBox.maximum = 999
-    self.pointIndexSpinBox.value = 0
-    self.pointIndexSpinBox.setToolTip("Index of the point to use for selection (0-based)")
-    self.landmarkLayout.addRow("Point Index:", self.pointIndexSpinBox)
+    # Selected points display (for single point mode)
+    self.selectedPointsLabel = qt.QLabel("No points selected")
+    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
+    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
     
     # Click to select landmark button
     self.clickSelectLandmarkButton = qt.QPushButton("Click to Select Landmark")
@@ -1392,13 +1390,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
     self.clickSelectLandmarkButton.enabled = hasModel and hasMarkup
     
-    # Update point index maximum based on markup points
+    # Update selected points display
     if hasMarkup:
-      markupNode = self.selectionMarkupSelector.currentNode()
-      maxPoints = markupNode.GetNumberOfControlPoints()
-      self.pointIndexSpinBox.maximum = max(0, maxPoints - 1)
+      self._updateSelectedPointsDisplay()
     else:
-      self.pointIndexSpinBox.maximum = 0
+      self.selectedPointsLabel.setText("No points selected")
   
   def onSelectionMethodChanged(self):
     """Handle selection method change"""
@@ -1673,14 +1669,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       method = self.selectionMethodCombo.currentText
       radius = self.selectionRadiusSlider.value
       
+      # Get selected landmark points
+      selectedPoints = self._getSelectedPoints(markupNode)
+      
+      if not selectedPoints:
+        slicer.util.errorDisplay("No landmark points are selected. Please select some points first.")
+        return
+      
       if method == "Landmark + Radius":
-        pointIndex = self.pointIndexSpinBox.value
-        if pointIndex >= markupNode.GetNumberOfControlPoints():
-          slicer.util.errorDisplay(f"Point index {pointIndex} is out of range. Available points: 0-{markupNode.GetNumberOfControlPoints()-1}")
-          return
+        if len(selectedPoints) > 1:
+          slicer.util.warningDisplay(f"Multiple points selected ({len(selectedPoints)}), but using single point mode. Using first selected point: {selectedPoints[0]}")
+        pointIndex = selectedPoints[0]
         selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
       else:  # Multiple Landmarks + Radius
-        selectedVertices = self.selectMeshRegionByMultiplePoints(modelNode, markupNode, radius)
+        # Use only the selected points
+        selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
       
       # Visualize the selection
       self.visualizeRegionSelection(modelNode, selectedVertices)
@@ -1719,15 +1722,22 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       method = self.selectionMethodCombo.currentText
       radius = self.selectionRadiusSlider.value
       
+      # Get selected landmark points
+      selectedPoints = self._getSelectedPoints(markupNode)
+      
+      if not selectedPoints:
+        slicer.util.errorDisplay("No landmark points are selected. Please select some points first.")
+        return
+      
       # Get selected vertices
       if method == "Landmark + Radius":
-        pointIndex = self.pointIndexSpinBox.value
-        if pointIndex >= markupNode.GetNumberOfControlPoints():
-          slicer.util.errorDisplay(f"Point index {pointIndex} is out of range. Available points: 0-{markupNode.GetNumberOfControlPoints()-1}")
-          return
+        if len(selectedPoints) > 1:
+          slicer.util.warningDisplay(f"Multiple points selected ({len(selectedPoints)}), but using single point mode. Using first selected point: {selectedPoints[0]}")
+        pointIndex = selectedPoints[0]
         selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
       else:  # Multiple Landmarks + Radius
-        selectedVertices = self.selectMeshRegionByMultiplePoints(modelNode, markupNode, radius)
+        # Use only the selected points
+        selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
       
       if not selectedVertices:
         slicer.util.warningDisplay("No vertices were selected. Try adjusting the radius or landmark positions.")
@@ -1836,12 +1846,35 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if not markupNode:
       return
     
-    # Get the currently active/selected point index
-    activePointIndex = markupNode.GetActiveControlPoint()
+    # Update the selected points display
+    self._updateSelectedPointsDisplay()
+  
+  def _updateSelectedPointsDisplay(self):
+    """Update the display of selected landmark points"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if not markupNode:
+      self.selectedPointsLabel.setText("No points selected")
+      return
     
-    if activePointIndex >= 0:
-      self.pointIndexSpinBox.value = activePointIndex
-      slicer.util.infoDisplay(f"Selected landmark point {activePointIndex}")
+    # Get list of selected points
+    selectedPoints = self._getSelectedPoints(markupNode)
+    
+    if selectedPoints:
+      pointsText = ", ".join(map(str, selectedPoints))
+      self.selectedPointsLabel.setText(f"Points: {pointsText}")
+    else:
+      self.selectedPointsLabel.setText("No points selected")
+  
+  def _getSelectedPoints(self, markupNode):
+    """Get list of selected landmark point indices"""
+    selectedPoints = []
+    numPoints = markupNode.GetNumberOfControlPoints()
+    
+    for i in range(numPoints):
+      if markupNode.GetNthControlPointSelected(i):
+        selectedPoints.append(i)
+    
+    return selectedPoints
   
   def _findClickedLandmark(self):
     """Fallback method to find which landmark was clicked"""
@@ -1880,10 +1913,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         minDistance = distance
         closestIndex = i
     
-    # If we found a close enough landmark, select it
+    # If we found a close enough landmark, toggle its selection
     if closestIndex >= 0 and minDistance < (tolerance * tolerance):
-      self.pointIndexSpinBox.value = closestIndex
-      slicer.util.infoDisplay(f"Selected landmark point {closestIndex}")
+      markupNode = self.selectionMarkupSelector.currentNode()
+      if markupNode:
+        # Toggle the selection state of the landmark
+        currentState = markupNode.GetNthControlPointSelected(closestIndex)
+        markupNode.SetNthControlPointSelected(closestIndex, not currentState)
+        
+        # Update the display
+        self._updateSelectedPointsDisplay()
+        
+        action = "Selected" if not currentState else "Deselected"
+        slicer.util.infoDisplay(f"{action} landmark point {closestIndex}")
+      # Keep the click-select mode active for selecting other landmarks
+      # User can click the button again to disable it
     else:
       # Show feedback that no landmark was found near the click
       slicer.util.warningDisplay("No landmark point found near the clicked position. Try clicking closer to a landmark.")
@@ -1932,6 +1976,29 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Check each markup point
     for pointIndex in range(markupNode.GetNumberOfControlPoints()):
+      # Get the markup point position
+      point = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(pointIndex, point)
+      
+      # Find vertices within radius of this point
+      for i in range(points.GetNumberOfPoints()):
+        vertex = points.GetPoint(i)
+        distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
+        if distanceSquared <= radiusSquared:
+          selectedVertices.add(i)
+    
+    return list(selectedVertices)
+  
+  def selectMeshRegionBySelectedPoints(self, modelNode, markupNode, selectedPointIndices, radius):
+    """Select mesh vertices within radius of selected markup points only"""
+    # Get mesh data
+    polyData = modelNode.GetPolyData()
+    points = polyData.GetPoints()
+    selectedVertices = set()  # Use set to avoid duplicates
+    radiusSquared = radius * radius
+    
+    # Check only the selected markup points
+    for pointIndex in selectedPointIndices:
       # Get the markup point position
       point = [0, 0, 0]
       markupNode.GetNthControlPointPosition(pointIndex, point)
