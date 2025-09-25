@@ -344,16 +344,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.progressBarDC.setValue(0)
     progressLayout.addWidget(self.progressBarDC)
     
-    self.progressLabelDC = qt.QLabel("Ready")
-    # Use theme-aware color that works in both light and dark modes
-    # This will automatically adapt to the current Slicer theme
-    self.progressLabelDC.setStyleSheet("""
-      QLabel { 
-        color: palette(link); 
-        font-weight: bold; 
-      }
-    """)
-    progressLayout.addWidget(self.progressLabelDC)
     
     self.cancelButtonDC = qt.QPushButton("Cancel Operation")
     self.cancelButtonDC.setMaximumWidth(120)
@@ -412,13 +402,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.landmarkDirectoryDC.connect('currentPathChanged(QString)', self.onLandmarkDirectoryChangedDC)
     self.outputDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
+    self.outputDirectoryDC.connect('currentPathChanged(QString)', self.onOutputDirectoryChangedDC)
     self.applyButtonDC.connect('clicked(bool)', self.onDCApplyButton)
     self.textureDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)
     self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)
 
-
+    # Restore previously saved directory paths
+    self.restoreSavedDirectories()
 
     ################################### Visualize Tab ###################################
     # Layout within the tab
@@ -1459,6 +1451,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
+    # Save the directory path
+    self.settings.setValue("meshDirectory", directory)
     self.onParameterSelectDC()
   
   def onLandmarkDirectoryChangedDC(self, directory):
@@ -1468,19 +1462,51 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Update texture matching if textures are already loaded
     if self.textureDirectoryDC.currentPath:
       self.validateTextureMatching()
+    # Save the directory path
+    self.settings.setValue("landmarkDirectory", directory)
     self.onParameterSelectDC()
   
   def onTextureDirectoryChangedDC(self, directory):
     """Validate texture directory when changed"""
     texture_extensions = ['.png']
     valid, count = self.validateDirectory(directory, texture_extensions, self.textureValidationLabelDC, "textures")
-    
+
     # If we have textures and models/landmarks, check for matches
     if valid and count > 0:
       self.validateTextureMatching()
-    
+
+    # Save the directory path
+    self.settings.setValue("textureDirectory", directory)
     self.onParameterSelectDC()
-  
+
+  def restoreSavedDirectories(self):
+    """Restore previously saved directory paths"""
+    # Restore mesh directory
+    savedMeshDir = self.settings.value("meshDirectory", "")
+    if savedMeshDir and os.path.exists(savedMeshDir):
+      self.meshDirectoryDC.setCurrentPath(savedMeshDir)
+
+    # Restore landmark directory
+    savedLandmarkDir = self.settings.value("landmarkDirectory", "")
+    if savedLandmarkDir and os.path.exists(savedLandmarkDir):
+      self.landmarkDirectoryDC.setCurrentPath(savedLandmarkDir)
+
+    # Restore texture directory
+    savedTextureDir = self.settings.value("textureDirectory", "")
+    if savedTextureDir and os.path.exists(savedTextureDir):
+      self.textureDirectoryDC.setCurrentPath(savedTextureDir)
+
+    # Restore output directory
+    savedOutputDir = self.settings.value("outputDirectory", "")
+    if savedOutputDir and os.path.exists(savedOutputDir):
+      self.outputDirectoryDC.setCurrentPath(savedOutputDir)
+
+  def onOutputDirectoryChangedDC(self, directory):
+    """Save output directory when changed"""
+    # Save the directory path
+    self.settings.setValue("outputDirectory", directory)
+    self.onParameterSelectDC()
+
   def validateTextureMatching(self):
     """Check if texture files match available models/landmarks"""
     textureDir = self.textureDirectoryDC.currentPath
@@ -1535,16 +1561,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(negative); }")
   
   def updateProgressDC(self, value, text="", showCancel=False):
-    """Update progress bar and label"""
+    """Update progress bar (text moved to logs)"""
     if not self.progressWidgetDC.isVisible():
       self.progressWidgetDC.setVisible(True)
-    
+
     self.progressBarDC.setValue(value)
+    # Add progress text to log 
     if text:
-      self.progressLabelDC.setText(text)
-    
+      self.logInfoDC.appendPlainText(text)
+
     self.cancelButtonDC.setVisible(showCancel)
-    
+
     # Process events to update UI
     slicer.app.processEvents()
   
@@ -1552,7 +1579,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Reset progress indicators"""
     self.progressWidgetDC.setVisible(False)
     self.progressBarDC.setValue(0)
-    self.progressLabelDC.setText("Ready")
     self.cancelButtonDC.setVisible(False)
     self.currentOperation = None
   
@@ -2914,6 +2940,41 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.folderNames['originalModels'] = self.meshDirectoryDC.currentPath
     self.lastDeCAAlignedModelsPath = self.folderNames['resampledModels']  # for Visualize tab
 
+    # ---- 0) Load a representative model for 3D visualization ----
+    self.updateProgressDC(5, "Loading representative model for visualization...")
+    try:
+      # Find a representative model from the model directory
+      modelDir = self.meshDirectoryDC.currentPath
+      if os.path.exists(modelDir):
+        model_files = []
+        for f in os.listdir(modelDir):
+          if not f.startswith('.') and f.lower().endswith(('.ply', '.stl', '.obj', '.vtk', '.vtp')):
+            model_files.append(f)
+
+        if model_files:
+          # Use the first available model as representative
+          representative_model = model_files[0]
+          model_path = os.path.join(modelDir, representative_model)
+
+          # Load the model
+          self.representativeModel = slicer.util.loadModel(model_path)
+          if self.representativeModel:
+            self.representativeModel.SetName("Representative Model (Preview)")
+            # Make it semi-transparent and visible
+            displayNode = self.representativeModel.GetDisplayNode()
+            if displayNode:
+              displayNode.SetVisibility(True)
+              displayNode.SetOpacity(0.7)  # Semi-transparent
+            self.logInfoDC.appendPlainText(f"Loaded representative model: {representative_model}")
+          else:
+            self.logInfoDC.appendPlainText("Warning: Could not load representative model")
+        else:
+          self.logInfoDC.appendPlainText("Warning: No valid model files found in directory")
+      else:
+        self.logInfoDC.appendPlainText("Warning: Model directory not found")
+    except Exception as e:
+      self.logInfoDC.appendPlainText(f"Warning: Failed to load representative model: {e}")
+
     # ---- 1) Load or compute atlas (Slicer) ----
     self.updateProgressDC(10, "Loading or computing atlas...")
     if loadAtlasOption:
@@ -2974,12 +3035,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"Blender atlas UV step failed: {e}")
       return
 
-    # Reload UV’d atlas back into Slicer (replace old atlas node)
+    # Reload UV'd atlas back into Slicer (replace old atlas node)
     try:
       slicer.mrmlScene.RemoveNode(self.atlasModel)
     except Exception:
       pass
     self.atlasModel = logic._load_model_with_cs(atlas_uv_obj, 'RAS')
+
+    # Ensure the new atlas model is visible
+    if self.atlasModel:
+      self.atlasModel.SetName("DeCA Atlas Model")
+      displayNode = self.atlasModel.GetDisplayNode()
+      if displayNode:
+        displayNode.SetVisibility(True)
+        displayNode.SetOpacity(1.0)
 
     median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
     if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
@@ -3051,30 +3120,99 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     else:
       self.logInfoDC.appendPlainText("No textures directory set → skipping bake.")
 
-    # ---- 6) Load result model into 3D view ----
-    self.updateProgressDC(95, "Loading results into 3D view...")
-    resultModelPath = os.path.join(self.folderNames['output'], 'decaResultModel.vtp')
-    if os.path.exists(resultModelPath):
-      try:
-        resultModelNode = slicer.util.loadModel(resultModelPath)
-        if resultModelNode:
-          resultModelNode.SetName("DeCA Result Model")
-          # Enable scalar visibility and set to show the first array
-          displayNode = resultModelNode.GetDisplayNode()
-          if displayNode:
-            displayNode.SetScalarVisibility(True)
-            polyData = resultModelNode.GetPolyData()
-            if polyData and polyData.GetPointData().GetNumberOfArrays() > 0:
-              firstArrayName = polyData.GetPointData().GetArrayName(0)
-              displayNode.SetActiveScalarName(firstArrayName)
-              displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
-          self.logInfoDC.appendPlainText(f"Result model loaded: {resultModelNode.GetName()}")
-        else:
-          self.logInfoDC.appendPlainText("Warning: Could not load result model into 3D view")
-      except Exception as e:
-        self.logInfoDC.appendPlainText(f"Warning: Failed to load result model: {e}")
+    # ---- 6) Finalize atlas model display ----
+    self.updateProgressDC(95, "Finalizing atlas model display...")
+
+    # Remove the representative model now that we have the final atlas
+    if hasattr(self, 'representativeModel') and self.representativeModel:
+      slicer.mrmlScene.RemoveNode(self.representativeModel)
+      self.representativeModel = None
+
+    # Ensure the atlas model is prominent and shows analysis data
+    if hasattr(self, 'atlasModel') and self.atlasModel:
+      # Make sure atlas model has a clear name
+      self.atlasModel.SetName("DeCA Atlas Model")
+
+      # Ensure the model node itself is visible first
+      self.atlasModel.SetDisplayVisibility(True)
+      self.atlasModel.SetHideFromEditors(False)  # Make sure it shows in module lists
+
+      # Get or create display node
+      displayNode = self.atlasModel.GetDisplayNode()
+      if not displayNode:
+        # Create a new display node if one doesn't exist
+        self.atlasModel.CreateDefaultDisplayNodes()
+        displayNode = self.atlasModel.GetDisplayNode()
+
+      if displayNode:
+        # Force visibility in multiple ways
+        displayNode.SetVisibility(True)
+        displayNode.SetVisibility2D(True)
+        displayNode.SetVisibility3D(True)
+        displayNode.SetOpacity(1.0)  # Full opacity
+
+        # Make sure it's not clipped or hidden
+        displayNode.SetClipping(False)
+
+        # Ensure it's in the scene
+        if not slicer.mrmlScene.IsNodePresent(displayNode):
+          slicer.mrmlScene.AddNode(displayNode)
+
+        # Enable scalar coloring
+        displayNode.SetScalarVisibility(True)
+
+        # Force the display node to update
+        displayNode.Modified()
+
+      # Force the model node to update and ensure it's in the scene
+      if not slicer.mrmlScene.IsNodePresent(self.atlasModel):
+        slicer.mrmlScene.AddNode(self.atlasModel)
+
+      self.atlasModel.Modified()
+
+      self.logInfoDC.appendPlainText("Atlas model visibility settings applied")
+
+      # Try to show analysis data if available
+      polyData = self.atlasModel.GetPolyData()
+      if polyData and polyData.GetPointData().GetNumberOfArrays() > 0:
+        # Find a good array to display (prefer magnitude data)
+        arrayToShow = None
+        for i in range(polyData.GetPointData().GetNumberOfArrays()):
+          arrayName = polyData.GetPointData().GetArrayName(i)
+          if 'Magnitude' in arrayName or 'Mean' in arrayName:
+            arrayToShow = arrayName
+            break
+
+        # If no magnitude array found, use the first array
+        if arrayToShow is None:
+          arrayToShow = polyData.GetPointData().GetArrayName(0)
+
+        if arrayToShow and displayNode:
+          displayNode.SetActiveScalarName(arrayToShow)
+          displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
+          self.logInfoDC.appendPlainText(f"Atlas model displayed with data: {arrayToShow}")
+      else:
+        # If no data arrays, just show the atlas model normally
+        if displayNode:
+          displayNode.SetScalarVisibility(False)
+        self.logInfoDC.appendPlainText("Atlas model displayed (no analysis data arrays found)")
+
+      self.logInfoDC.appendPlainText("DeCA Atlas Model is now visible and ready")
     else:
-      self.logInfoDC.appendPlainText("Warning: Result model file not found")
+      self.logInfoDC.appendPlainText("Warning: Atlas model not found or not properly created")
+
+    # Force the 3D view to center on the models
+    slicer.util.resetSliceViews()
+
+    # Make sure the 3D view is active and centered
+    layoutManager = slicer.app.layoutManager()
+    threeDWidget = layoutManager.threeDWidget(0)
+    threeDView = threeDWidget.threeDView()
+    threeDView.resetCamera()
+    threeDView.resetFocalPoint()
+
+    # Force a render update
+    slicer.app.processEvents()
 
     # ---- 7) Fill Visualize dropdown ----
     self.updateProgressDC(100, "Finalizing results...")
