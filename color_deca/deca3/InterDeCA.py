@@ -8190,8 +8190,30 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotChartNode.Modified()
 
       # show
-      plotViewNode = slicer.app.layoutManager().plotWidget(0).mrmlPlotViewNode()
-      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager is None:
+        print("Layout manager not available")
+        return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
+
+      # Ensure we have a layout that supports plots
+      layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpPlotView)
+
+      plotWidget = layoutManager.plotWidget(0)
+      if plotWidget is None:
+        print("Plot widget not available, trying alternative layout...")
+        # Try a different layout that includes plots
+        layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutTabbedSliceView)
+        layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpPlotView)
+        plotWidget = layoutManager.plotWidget(0)
+
+      if plotWidget is not None:
+        plotViewNode = plotWidget.mrmlPlotViewNode()
+        if plotViewNode is not None:
+          plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+        else:
+          print("Plot view node not available")
+      else:
+        print("Could not create plot widget - plot will be available in Data module")
 
       return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
 
