@@ -3353,10 +3353,236 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if SHOW_VISUALIZE_RESULTS:
       self.updateBakedPreviewList()
 
+    # ---- 8) Update UI after DeCA completion ----
+    self.updateUIAfterDeCACompletion()
+
     # Success - reset progress and re-enable button
     self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
     self.resetProgressDC()
     self.applyButtonDC.enabled = True
+
+  def updateUIAfterDeCACompletion(self):
+    """
+    Update UI components after DeCA completes successfully.
+
+    This function:
+    1. Preselects the "DeCA Atlas Model" in Colors EDA, Recolor, and MultiRecolor tabs
+    2. Auto-populates texture directories with the baked textures path
+    3. Switches to the Recolor tab automatically
+    4. Auto-selects average_texture.png
+    5. Auto-applies the texture
+    6. Maximizes the 3D viewer
+    """
+    self.logInfoDC.appendPlainText("Starting UI automation after DeCA completion...")
+
+    try:
+      # Find the "DeCA Atlas Model" in the scene
+      decaAtlasModel = None
+      try:
+        for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
+          if model.GetName() == "DeCA Atlas Model":
+            decaAtlasModel = model
+            break
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Warning: Error searching for DeCA Atlas Model: {e}")
+
+      if decaAtlasModel:
+        try:
+          # Preselect the DeCA Atlas Model in all relevant tabs
+          self.colorsAtlasModelSelect.setCurrentNode(decaAtlasModel)
+          self.recolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
+          self.multiRecolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
+
+          self.logInfoDC.appendPlainText("Auto-selected 'DeCA Atlas Model' in Colors EDA, Recolor, and MultiRecolor tabs")
+        except Exception as e:
+          self.logInfoDC.appendPlainText(f"Warning: Error setting atlas model selection: {e}")
+      else:
+        self.logInfoDC.appendPlainText("Warning: Could not find 'DeCA Atlas Model' for auto-selection")
+
+      # Auto-populate texture directories with baked textures path
+      try:
+        if hasattr(self, 'lastBakedTexturesPath') and self.lastBakedTexturesPath and os.path.isdir(self.lastBakedTexturesPath):
+          # Set texture directory in Colors EDA tab
+          self.bakedTexturesDirectorySelector.setCurrentPath(self.lastBakedTexturesPath)
+
+          # Set texture directory in Recolor tab
+          self.recolorTexturesDirectorySelector.setCurrentPath(self.lastBakedTexturesPath)
+
+          # Set texture directory in MultiRecolor tab
+          self.multiRecolorTextureDirectorySelector.setCurrentPath(self.lastBakedTexturesPath)
+
+          self.logInfoDC.appendPlainText(f"Auto-populated texture directories with: {self.lastBakedTexturesPath}")
+        else:
+          self.logInfoDC.appendPlainText("Warning: No baked textures directory available for auto-population")
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Warning: Error setting texture directories: {e}")
+
+      # Switch to the Recolor tab automatically
+      try:
+        # Find the index of the Recolor tab using a more robust approach
+        recolorTabIndex = -1
+
+        # Try different ways to get tab count and text to handle Qt API variations
+        try:
+          # Method 1: Try as method call
+          tabCount = self.tabsWidget.count()
+        except TypeError:
+          try:
+            # Method 2: Try as property
+            tabCount = self.tabsWidget.count
+          except:
+            # Method 3: Fallback - manually check known tabs
+            tabCount = 5  # We know there are typically 5 tabs: DeCA, Colors EDA, Recolor, MultiRecolor (+ optionally Visualize)
+
+        for i in range(tabCount):
+          try:
+            # Try to get tab text
+            try:
+              tabText = self.tabsWidget.tabText(i)
+            except TypeError:
+              # If tabText is callable, call it
+              tabText = self.tabsWidget.tabText(i)()
+
+            if tabText == "Recolor":
+              recolorTabIndex = i
+              break
+          except Exception:
+            # Skip this tab if we can't get its text
+            continue
+
+        if recolorTabIndex >= 0:
+          self.tabsWidget.setCurrentIndex(recolorTabIndex)
+          self.logInfoDC.appendPlainText("Automatically switched to Recolor tab")
+        else:
+          # Fallback: try to switch to tab index 2 (which should be Recolor based on the setup)
+          # Tab order: 0=DeCA, 1=Colors EDA (or Visualize if enabled), 2=Recolor
+          fallbackIndex = 2 if not SHOW_VISUALIZE_RESULTS else 3
+          try:
+            self.tabsWidget.setCurrentIndex(fallbackIndex)
+            self.logInfoDC.appendPlainText(f"Switched to tab index {fallbackIndex} (likely Recolor tab)")
+          except:
+            self.logInfoDC.appendPlainText("Warning: Could not find or switch to Recolor tab")
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Warning: Error switching to Recolor tab: {e}")
+
+      # ---- Additional Recolor Tab Automation ----
+      try:
+        # Wait a moment for the tab switch and UI updates to complete
+        slicer.app.processEvents()
+
+        # Select "average_texture.png" in the texture selector
+        try:
+          # Find "average_texture.png" in the texture selector
+          averageTextureIndex = -1
+
+          # Handle Qt API variations for count
+          try:
+            itemCount = self.recolorTextureSelector.count()
+          except TypeError:
+            try:
+              itemCount = self.recolorTextureSelector.count
+            except:
+              itemCount = 0  # Fallback
+
+          for i in range(itemCount):
+            try:
+              itemText = self.recolorTextureSelector.itemText(i)
+              if itemText == "average_texture.png":
+                averageTextureIndex = i
+                break
+            except:
+              continue  # Skip this item if we can't get its text
+
+          if averageTextureIndex >= 0:
+            self.recolorTextureSelector.setCurrentIndex(averageTextureIndex)
+            self.logInfoDC.appendPlainText("Auto-selected 'average_texture.png' in Recolor tab")
+          else:
+            self.logInfoDC.appendPlainText("Warning: 'average_texture.png' not found in texture selector")
+        except Exception as e:
+          self.logInfoDC.appendPlainText(f"Warning: Error selecting average_texture.png: {e}")
+
+        # Automatically run "Apply Texture"
+        try:
+          # Wait a moment for UI updates to propagate
+          slicer.app.processEvents()
+
+          # Check if the apply button is enabled (should be after selecting texture and atlas)
+          if hasattr(self, 'applyRecolorButton') and self.applyRecolorButton.enabled:
+            self.logInfoDC.appendPlainText("Auto-applying average texture to atlas model...")
+            # Trigger the apply recolor button
+            self.onApplyRecolorButton()
+          else:
+            # Try to enable the button by triggering parameter validation
+            try:
+              self.onRecolorParameterChanged()
+              slicer.app.processEvents()
+              if self.applyRecolorButton.enabled:
+                self.logInfoDC.appendPlainText("Auto-applying average texture to atlas model (after enabling button)...")
+                self.onApplyRecolorButton()
+              else:
+                self.logInfoDC.appendPlainText("Warning: Apply Recolor button not enabled - skipping auto-apply")
+            except Exception as e2:
+              self.logInfoDC.appendPlainText(f"Warning: Could not enable Apply Recolor button: {e2}")
+        except Exception as e:
+          self.logInfoDC.appendPlainText(f"Warning: Error auto-applying texture: {e}")
+
+        # Maximize the 3D viewer
+        try:
+          layoutManager = slicer.app.layoutManager()
+          if layoutManager:
+            # Set layout to 3D only view - try different approaches
+            try:
+              # Method 1: Try common layout constants
+              layout_constants_to_try = [
+                'SlicerLayoutThreeDOnlyView',
+                'SlicerLayoutOneUp3DView',
+                'SlicerLayout3DView',
+                'SlicerLayoutThreeDView'
+              ]
+
+              layout_set = False
+              for const_name in layout_constants_to_try:
+                try:
+                  layout_id = getattr(slicer.vtkMRMLLayoutNode, const_name)
+                  layoutManager.setLayout(layout_id)
+                  self.logInfoDC.appendPlainText(f"Maximized 3D viewer for optimal visualization ({const_name})")
+                  layout_set = True
+                  break
+                except AttributeError:
+                  continue
+
+              if not layout_set:
+                # Method 2: Try common numeric layout IDs for 3D-only views
+                layout_ids_to_try = [6, 4, 5, 7]  # Common 3D layout IDs
+                for layout_id in layout_ids_to_try:
+                  try:
+                    layoutManager.setLayout(layout_id)
+                    self.logInfoDC.appendPlainText(f"Maximized 3D viewer for optimal visualization (layout ID {layout_id})")
+                    layout_set = True
+                    break
+                  except:
+                    continue
+
+              if not layout_set:
+                self.logInfoDC.appendPlainText("Warning: Could not find 3D-only layout, keeping current layout")
+
+            except Exception as inner_e:
+              self.logInfoDC.appendPlainText(f"Warning: Error setting 3D layout: {inner_e}")
+          else:
+            self.logInfoDC.appendPlainText("Warning: Could not access layout manager to maximize 3D view")
+        except Exception as e:
+          self.logInfoDC.appendPlainText(f"Warning: Error maximizing 3D viewer: {e}")
+
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Warning: Error during additional Recolor tab automation: {e}")
+
+    except Exception as e:
+      self.logInfoDC.appendPlainText(f"Error during UI update after DeCA completion: {e}")
+      import traceback
+      self.logInfoDC.appendPlainText(f"Traceback: {traceback.format_exc()}")
+
+    # Final completion message
+    self.logInfoDC.appendPlainText("UI automation after DeCA completion finished.")
 
 
   def onDCLApplyButton(self):
@@ -4653,10 +4879,25 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
     outputModelName = 'decaResultModel.vtp'
     outputModelPath = os.path.join(outputDirectory, outputModelName)
-    slicer.util.saveNode(baseNode, outputModelPath)
+
+    # Try to save the result model with error handling
+    try:
+      # Check if the baseNode is still valid and in the scene
+      if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
+        slicer.util.saveNode(baseNode, outputModelPath)
+        print(f"Successfully saved DeCA result model to: {outputModelPath}")
+      else:
+        print(f"Warning: baseNode is not valid or not in scene, skipping save to {outputModelPath}")
+    except Exception as e:
+      print(f"Warning: Failed to save DeCA result model to {outputModelPath}: {e}")
+      # Continue execution even if save fails
 
     # Clean up the temporary base node now that we're done with it
-    slicer.mrmlScene.RemoveNode(baseNode)
+    try:
+      if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
+        slicer.mrmlScene.RemoveNode(baseNode)
+    except Exception as e:
+      print(f"Warning: Failed to remove baseNode: {e}")
 
   def runDCAlignSymmetric(self, baseMeshPath, baseLMPath, meshDir, landmarkDir, mirrorMeshDir, mirrorLandmarkDir, outputDir, optionErrorOutput):
     if optionErrorOutput:
