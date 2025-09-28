@@ -73,6 +73,113 @@ except ImportError as e:
 
 print(f'Final decaLogic value: {decaLogic}')
 
+def checkAndOfferPackageInstallation():
+    """
+    Checks for missing optional packages and offers to install them.
+    Returns a tuple of (missing_packages, all_available)
+    """
+    missing_packages = []
+    package_info = {
+        'sklearn': {'import_test': lambda: __import__('sklearn'), 'pip_name': 'scikit-learn'},
+        'umap': {'import_test': lambda: __import__('umap'), 'pip_name': 'umap-learn'},
+        'skimage': {'import_test': lambda: __import__('skimage'), 'pip_name': 'scikit-image'},
+        'imageio': {'import_test': lambda: __import__('imageio'), 'pip_name': 'imageio'}
+    }
+    
+    # Check which packages are missing
+    for package_name, info in package_info.items():
+        try:
+            info['import_test']()
+        except ImportError:
+            missing_packages.append({
+                'name': package_name,
+                'pip_name': info['pip_name'],
+                'description': {
+                    'sklearn': 'Required for PCA, t-SNE, and clustering in Colors EDA',
+                    'umap': 'Required for UMAP dimensionality reduction in Colors EDA',
+                    'skimage': 'Required for advanced color quantization and analysis',
+                    'imageio': 'Required for texture and image processing'
+                }.get(package_name, 'Optional package for enhanced functionality')
+            })
+    
+    if missing_packages:
+        # Create a user-friendly message
+        package_list = '\n'.join([f"• {pkg['pip_name']}: {pkg['description']}" for pkg in missing_packages])
+        message = f"""InterDeCA has detected missing optional packages that enhance functionality:
+
+{package_list}
+
+Would you like to install these packages now? This will use Slicer's built-in package manager."""
+        
+        # Ask user if they want to install
+        reply = slicer.util.confirmOkCancelDisplay(
+            message, 
+            windowTitle="Install Optional Packages?"
+        )
+        
+        if reply:
+            installMissingPackages(missing_packages)
+            return missing_packages, True
+    
+    return missing_packages, len(missing_packages) == 0
+
+def installMissingPackages(missing_packages):
+    """
+    Installs the specified missing packages using Slicer's pip functionality.
+    
+    Args:
+        missing_packages: List of package dictionaries with 'pip_name' keys
+    """
+    import subprocess
+    
+    success_count = 0
+    failed_packages = []
+    
+    # Show progress dialog
+    progressDialog = slicer.util.createProgressDialog(
+        windowTitle="Installing Packages",
+        maximum=len(missing_packages)
+    )
+    
+    try:
+        for i, package in enumerate(missing_packages):
+            package_name = package['pip_name']
+            progressDialog.labelText = f"Installing {package_name}..."
+            progressDialog.value = i
+            slicer.app.processEvents()
+            
+            try:
+                # Use Slicer's pip_install utility
+                slicer.util.pip_install(package_name)
+                success_count += 1
+                print(f"Successfully installed {package_name}")
+                
+            except Exception as e:
+                print(f"Failed to install {package_name}: {e}")
+                failed_packages.append(package_name)
+        
+        progressDialog.close()
+        
+        # Show results to user
+        if success_count > 0:
+            success_msg = f"Successfully installed {success_count} package(s)."
+            if failed_packages:
+                success_msg += f"\n\nFailed to install: {', '.join(failed_packages)}"
+                success_msg += "\nYou may need to restart Slicer for changes to take effect."
+            else:
+                success_msg += "\n\nPlease restart Slicer to use the new functionality."
+            
+            slicer.util.infoDisplay(success_msg, windowTitle="Installation Complete")
+        else:
+            slicer.util.errorDisplay(
+                f"Failed to install packages: {', '.join(failed_packages)}", 
+                windowTitle="Installation Failed"
+            )
+    
+    except Exception as e:
+        progressDialog.close()
+        slicer.util.errorDisplay(f"Installation process failed: {e}", windowTitle="Installation Error")
+
 #
 # InterDeCA
 #
@@ -114,6 +221,41 @@ class InterDeCA(ScriptedLoadableModule):
     # Acknowledges funding sources
     self.parent.acknowledgementText = """This extension was developed by funding from National Institutes of Health (OD032627 and HD104435) to A. Murat Maga (SCRI)
       """
+
+    # Check for missing packages on module load (but don't prompt automatically)
+    self.checkPackagesOnLoad()
+
+  def checkPackagesOnLoad(self):
+    """
+    Check for missing packages when the module loads and log the results.
+    This provides awareness without being intrusive.
+    """
+    missing_packages = []
+    package_info = {
+        'sklearn': 'scikit-learn',
+        'umap': 'umap-learn', 
+        'skimage': 'scikit-image',
+        'imageio': 'imageio'
+    }
+    
+    for package_name, pip_name in package_info.items():
+        try:
+            if package_name == 'sklearn':
+                import sklearn
+            elif package_name == 'umap':
+                import umap
+            elif package_name == 'skimage':
+                import skimage
+            elif package_name == 'imageio':
+                import imageio
+        except ImportError:
+            missing_packages.append(pip_name)
+    
+    if missing_packages:
+        print(f"InterDeCA: Optional packages not found: {', '.join(missing_packages)}")
+        print("InterDeCA: Use 'Package Management' section to install missing packages for full functionality.")
+    else:
+        print("InterDeCA: All optional packages are available.")
 
 #
 # InterDeCAWidget
@@ -178,6 +320,30 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
 
     self.layout.addWidget(tabsWidget)
+
+    # Add package installation section at the top
+    packageWidget = ctk.ctkCollapsibleButton()
+    packageWidget.text = "Package Management"
+    packageWidget.collapsed = True
+    packageWidgetLayout = qt.QFormLayout(packageWidget)
+    self.layout.addWidget(packageWidget)
+
+    # Package status label
+    self.packageStatusLabel = qt.QLabel()
+    self.updatePackageStatus()
+    packageWidgetLayout.addRow("Status:", self.packageStatusLabel)
+
+    # Install missing packages button
+    self.installPackagesButton = qt.QPushButton("Check & Install Missing Packages")
+    self.installPackagesButton.toolTip = "Check for missing optional packages and offer to install them"
+    self.installPackagesButton.connect('clicked(bool)', self.onInstallPackagesClicked)
+    packageWidgetLayout.addRow(self.installPackagesButton)
+
+    # Quick install all button
+    self.installAllButton = qt.QPushButton("Install All Recommended Packages")
+    self.installAllButton.toolTip = "Install all recommended packages for full InterDeCA functionality"
+    self.installAllButton.connect('clicked(bool)', self.onInstallAllPackagesClicked)
+    packageWidgetLayout.addRow(self.installAllButton)
 
     ################################### DeCA Tab ###################################
     # ... (The DeCA Tab code remains unchanged) ...
@@ -2723,6 +2889,104 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.clusteringLogInfo.append("Using cached face areas")
 
     return self.faceAreasCache[modelId]
+
+  def updatePackageStatus(self):
+    """Update the package status label with current availability"""
+    status_items = []
+    
+    # Check DeCA module
+    if decaLogic:
+        status_items.append("✓ DeCA module")
+    else:
+        status_items.append("✗ DeCA module (fallback implementations available)")
+    
+    # Check optional packages
+    if SKLEARN_AVAILABLE:
+        status_items.append("✓ scikit-learn")
+    else:
+        status_items.append("✗ scikit-learn")
+    
+    if UMAP_AVAILABLE:
+        status_items.append("✓ umap-learn")
+    else:
+        status_items.append("✗ umap-learn")
+    
+    if SKIMAGE_AVAILABLE:
+        status_items.append("✓ scikit-image")
+    else:
+        status_items.append("✗ scikit-image")
+    
+    # Check imageio
+    try:
+        import imageio
+        status_items.append("✓ imageio")
+    except ImportError:
+        status_items.append("✗ imageio")
+    
+    status_text = " | ".join(status_items)
+    self.packageStatusLabel.setText(status_text)
+    
+    # Update button text based on missing packages
+    missing_count = len([item for item in status_items if item.startswith("✗")])
+    if missing_count > 0:
+        self.installPackagesButton.setText(f"Install {missing_count} Missing Package(s)")
+        self.installPackagesButton.setStyleSheet("QPushButton { background-color: #ff9999; }")
+    else:
+        self.installPackagesButton.setText("All Packages Available")
+        self.installPackagesButton.setStyleSheet("QPushButton { background-color: #99ff99; }")
+        self.installPackagesButton.enabled = False
+
+  def onInstallPackagesClicked(self):
+    """Handle the install packages button click"""
+    try:
+        missing_packages, all_available = checkAndOfferPackageInstallation()
+        
+        if all_available and not missing_packages:
+            slicer.util.infoDisplay(
+                "All optional packages are already installed!", 
+                windowTitle="No Action Needed"
+            )
+        else:
+            # Update status after installation attempt
+            self.updatePackageStatus()
+            
+    except Exception as e:
+        slicer.util.errorDisplay(f"Error checking packages: {e}", windowTitle="Package Check Error")
+
+  def onInstallAllPackagesClicked(self):
+    """Handle the install all packages button click"""
+    try:
+        # Define all recommended packages
+        all_packages = [
+            {'name': 'sklearn', 'pip_name': 'scikit-learn', 
+             'description': 'Required for PCA, t-SNE, and clustering in Colors EDA'},
+            {'name': 'umap', 'pip_name': 'umap-learn', 
+             'description': 'Required for UMAP dimensionality reduction in Colors EDA'},
+            {'name': 'skimage', 'pip_name': 'scikit-image', 
+             'description': 'Required for advanced color quantization and analysis'},
+            {'name': 'imageio', 'pip_name': 'imageio', 
+             'description': 'Required for texture and image processing'}
+        ]
+        
+        # Ask user confirmation
+        package_list = '\n'.join([f"• {pkg['pip_name']}: {pkg['description']}" for pkg in all_packages])
+        message = f"""This will install all recommended packages for InterDeCA:
+
+{package_list}
+
+This may take several minutes. Continue?"""
+        
+        reply = slicer.util.confirmOkCancelDisplay(
+            message, 
+            windowTitle="Install All Recommended Packages"
+        )
+        
+        if reply:
+            installMissingPackages(all_packages)
+            self.updatePackageStatus()
+            
+    except Exception as e:
+        slicer.util.errorDisplay(f"Error installing packages: {e}", windowTitle="Installation Error")
 
 
 #
@@ -6490,7 +6754,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     try:
       # --- series ---
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-      plotSeriesNode.SetName(f"{method}")
+      plotSeriesNode.SetName(f"MultiRecolor_Population_{method}")
 
       xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
       yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
@@ -6511,7 +6775,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
       plotSeriesNode.SetXColumnName(xArray.GetName())
       plotSeriesNode.SetYColumnName(yArray.GetName())
-      plotSeriesNode.SetLabelColumnName(labelsArray.GetName())
       plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
       plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
       plotSeriesNode.SetMarkerSize(8)
