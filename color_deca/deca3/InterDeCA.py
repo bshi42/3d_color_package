@@ -77,6 +77,8 @@ print(f'Final decaLogic value: {decaLogic}')
 # InterDeCA
 #
 
+SHOW_VISUALIZE_RESULTS = False
+
 class InterDeCA(ScriptedLoadableModule):
   """
   Module class for Interactive Dense Correspondence Analysis (InterDeCA).
@@ -169,8 +171,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.tabsWidget = tabsWidget
     DeCATab = qt.QWidget()
     DeCATabLayout = qt.QFormLayout(DeCATab)
-    visualizeTab = qt.QWidget()
-    visualizeTabLayout = qt.QFormLayout(visualizeTab)
+
+    # Conditionally create visualize tab based on constant
+    if SHOW_VISUALIZE_RESULTS:
+      visualizeTab = qt.QWidget()
+      visualizeTabLayout = qt.QFormLayout(visualizeTab)
+
     colorsEDATab = qt.QWidget()
     colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
     recolorTab = qt.QWidget()
@@ -179,7 +185,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     multiRecolorTabLayout = qt.QFormLayout(multiRecolorTab)
 
     tabsWidget.addTab(DeCATab, "DeCA")
-    tabsWidget.addTab(visualizeTab, "Visualize Results")
+    if SHOW_VISUALIZE_RESULTS:
+      tabsWidget.addTab(visualizeTab, "Visualize Results")
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
     tabsWidget.addTab(recolorTab, "Recolor")
     tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
@@ -419,8 +426,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     #
     # Run DeCA Button
     #
-    self.applyButtonDC = qt.QPushButton("Run DeCA")
-    self.applyButtonDC.toolTip = "Run non-rigid alignment"
+    self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")
+    self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"
     self.applyButtonDC.enabled = False
     self.applyButtonDC.setStyleSheet("""
       QPushButton {
@@ -477,344 +484,344 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.restoreSavedDirectories()
 
     ################################### Visualize Tab ###################################
-    # Layout within the tab
-    visualizeWidget=ctk.ctkCollapsibleButton()
-    visualizeWidgetLayout = qt.QFormLayout(visualizeWidget)
-    visualizeWidget.text = "Visualize Results"
-    visualizeTabLayout.addRow(visualizeWidget)
+    if SHOW_VISUALIZE_RESULTS:
+      # Layout within the tab
+      visualizeWidget=ctk.ctkCollapsibleButton()
+      visualizeWidgetLayout = qt.QFormLayout(visualizeWidget)
+      visualizeWidget.text = "Visualize Results"
+      visualizeTabLayout.addRow(visualizeWidget)
 
     #
-    # Visualization mode selection
-    #
-    self.visualizationModeGroup = qt.QGroupBox("Visualization Mode")
-    self.visualizationModeGroupLayout = qt.QHBoxLayout(self.visualizationModeGroup)
-    visualizeWidgetLayout.addRow(self.visualizationModeGroup)
+      # Visualization mode selection
+      #
+      self.visualizationModeGroup = qt.QGroupBox("Visualization Mode")
+      self.visualizationModeGroupLayout = qt.QHBoxLayout(self.visualizationModeGroup)
+      visualizeWidgetLayout.addRow(self.visualizationModeGroup)
 
-    self.visualizeHeatmapRadio = qt.QRadioButton("Heatmap")
-    self.visualizeHeatmapRadio.setChecked(True)
-    self.visualizeInterpolationRadio = qt.QRadioButton("Shape Interpolation")
+      self.visualizeHeatmapRadio = qt.QRadioButton("Heatmap")
+      self.visualizeHeatmapRadio.setChecked(True)
+      self.visualizeInterpolationRadio = qt.QRadioButton("Shape Interpolation")
 
-    self.visualizationModeButtonGroup = qt.QButtonGroup()
-    self.visualizationModeButtonGroup.addButton(self.visualizeHeatmapRadio)
-    self.visualizationModeButtonGroup.addButton(self.visualizeInterpolationRadio)
-    self.visualizationModeGroupLayout.addWidget(self.visualizeHeatmapRadio)
-    self.visualizationModeGroupLayout.addWidget(self.visualizeInterpolationRadio)
-
-
-    #
-    # --- Frame for Heatmap Visualization ---
-    #
-    self.heatmapFrame = qt.QFrame()
-    self.heatmapFrameLayout = qt.QFormLayout(self.heatmapFrame)
-    visualizeWidgetLayout.addRow(self.heatmapFrame)
-
-    # Select output model
-    self.meshSelect = slicer.qMRMLNodeComboBox()
-    self.meshSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.meshSelect.setToolTip("Select model node with result arrays")
-    self.meshSelect.selectNodeUponCreation = False
-    self.meshSelect.noneEnabled = True
-    self.meshSelect.addEnabled = False
-    self.meshSelect.removeEnabled = False
-    self.meshSelect.showHidden = False
-    self.meshSelect.setMRMLScene(slicer.mrmlScene)
-    self.heatmapFrameLayout.addRow("Result Model: ", self.meshSelect)
-
-    # Select Subject ID
-    self.subjectIDBox=qt.QComboBox()
-    self.subjectIDBox.enabled = False
-    self.heatmapFrameLayout.addRow("Subject ID: ", self.subjectIDBox)
-
-    # --- Frame for Interpolation Visualization (bring back) ---
-    self.interpolationFrame = qt.QFrame()
-    self.interpolationFrameLayout = qt.QFormLayout(self.interpolationFrame)
-    self.interpolationFrame.setVisible(False)  # hidden by default
-    visualizeWidgetLayout.addRow(self.interpolationFrame)
-
-    # Atlas model (target of interpolation)
-    self.atlasModelSelect = slicer.qMRMLNodeComboBox()
-    self.atlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.atlasModelSelect.setToolTip("Select the atlas or mean shape model")
-    self.atlasModelSelect.selectNodeUponCreation = False
-    self.atlasModelSelect.noneEnabled = True
-    self.atlasModelSelect.addEnabled = False
-    self.atlasModelSelect.removeEnabled = False
-    self.atlasModelSelect.showHidden = False
-    self.atlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    self.interpolationFrameLayout.addRow("Atlas Model: ", self.atlasModelSelect)
-
-    # Directory & file selector for a resampled subject
-    self.visOriginalModelDirSelector = ctk.ctkPathLineEdit()
-    self.visOriginalModelDirSelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.visOriginalModelDirSelector.setToolTip("Select the directory of resampled models")
-    self.interpolationFrameLayout.addRow("Resampled Model Directory:", self.visOriginalModelDirSelector)
-
-    self.visOriginalModelFileSelector = qt.QComboBox()
-    self.visOriginalModelFileSelector.setToolTip("Select a resampled subject model from the directory above")
-    self.visOriginalModelFileSelector.enabled = False
-    self.interpolationFrameLayout.addRow("Resampled Subject Model:", self.visOriginalModelFileSelector)
-
-    # Interpolation slider
-    self.interpolationSlider = ctk.ctkSliderWidget()
-    self.interpolationSlider.minimum = 0.0
-    self.interpolationSlider.maximum = 1.0
-    self.interpolationSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
-    self.interpolationSlider.value = 0.0
-    self.interpolationSlider.setToolTip("Interpolate between original model (0.0) and atlas model (1.0)")
-    self.interpolationSlider.enabled = False
-    self.interpolationFrameLayout.addRow("Interpolation (Original to Atlas):", self.interpolationSlider)
+      self.visualizationModeButtonGroup = qt.QButtonGroup()
+      self.visualizationModeButtonGroup.addButton(self.visualizeHeatmapRadio)
+      self.visualizationModeButtonGroup.addButton(self.visualizeInterpolationRadio)
+      self.visualizationModeGroupLayout.addWidget(self.visualizeHeatmapRadio)
+      self.visualizationModeGroupLayout.addWidget(self.visualizeInterpolationRadio)
 
 
-    self.previewTextureCombo = qt.QComboBox()
-    self.previewTextureCombo.setToolTip("Preview a xbaked atlas-space PNG on the atlas model.")
-    visualizeWidgetLayout.addRow("Preview baked texture:", self.previewTextureCombo)
-    self.previewTextureCombo.connect("currentIndexChanged(int)", self.onPreviewTextureSelected)
-    
-    # Add spacing before the visualization button
-    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+      #
+      # --- Frame for Heatmap Visualization ---
+      #
+      self.heatmapFrame = qt.QFrame()
+      self.heatmapFrameLayout = qt.QFormLayout(self.heatmapFrame)
+      visualizeWidgetLayout.addRow(self.heatmapFrame)
 
-    #
-    # Landmark Lock/Unlock Controls
-    #
-    landmarkControlWidget = qt.QWidget()
-    landmarkControlLayout = qt.QHBoxLayout(landmarkControlWidget)
-    landmarkControlLayout.setContentsMargins(0, 0, 0, 0)
-    
-    self.landmarkLockButton = qt.QPushButton("Lock Landmarks")
-    self.landmarkLockButton.setToolTip("Lock/unlock all landmarks to prevent accidental movement")
-    self.landmarkLockButton.setStyleSheet("""
-      QPushButton {
-        background-color: #ff6b6b;
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 6px 12px;
-        min-height: 25px;
-      }
-      QPushButton:hover {
-        background-color: #ff5252;
-      }
-      QPushButton:pressed {
-        background-color: #e53935;
-      }
-    """)
-    self.landmarkLockButton.connect('clicked(bool)', self.onToggleLandmarkLock)
-    landmarkControlLayout.addWidget(self.landmarkLockButton)
-    
-    visualizeWidgetLayout.addRow("Landmark Control:", landmarkControlWidget)
-    
-    # Add spacing before the visualization button
-    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+      # Select output model
+      self.meshSelect = slicer.qMRMLNodeComboBox()
+      self.meshSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+      self.meshSelect.setToolTip("Select model node with result arrays")
+      self.meshSelect.selectNodeUponCreation = False
+      self.meshSelect.noneEnabled = True
+      self.meshSelect.addEnabled = False
+      self.meshSelect.removeEnabled = False
+      self.meshSelect.showHidden = False
+      self.meshSelect.setMRMLScene(slicer.mrmlScene)
+      self.heatmapFrameLayout.addRow("Result Model: ", self.meshSelect)
 
-    #
-    # --- Mesh Region Selection Section ---
-    #
-    self.regionSelectionWidget = ctk.ctkCollapsibleButton()
-    self.regionSelectionWidget.text = "Mesh Region Selection"
-    self.regionSelectionWidget.collapsed = True
-    visualizeWidgetLayout.addRow(self.regionSelectionWidget)
-    regionLayout = qt.QFormLayout(self.regionSelectionWidget)
-    
-    # Target mesh selector for region selection
-    self.regionMeshSelector = slicer.qMRMLNodeComboBox()
-    self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
-    self.regionMeshSelector.selectNodeUponCreation = False
-    self.regionMeshSelector.noneEnabled = True
-    self.regionMeshSelector.addEnabled = False
-    self.regionMeshSelector.removeEnabled = False
-    self.regionMeshSelector.showHidden = False
-    self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
-    regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
-    
-    # Selection method combo
-    self.selectionMethodCombo = qt.QComboBox()
-    self.selectionMethodCombo.addItems([
-        "Segment Editor (Paint/Scissors)", 
-        "Landmark + Radius",
-        "Multiple Landmarks + Radius"
-    ])
-    self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh")
-    regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
-    
-    # --- Segment Editor Method Controls ---
-    self.segmentEditorFrame = qt.QFrame()
-    self.segmentEditorLayout = qt.QFormLayout()
-    self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
-    
-    # Existing segmentation selector for loading saved work
-    self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
-    self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
-    self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
-    self.existingSegmentationSelector.selectNodeUponCreation = False
-    self.existingSegmentationSelector.noneEnabled = True
-    self.existingSegmentationSelector.addEnabled = False
-    self.existingSegmentationSelector.removeEnabled = False
-    self.existingSegmentationSelector.showHidden = False
-    self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
-    self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
-    
-    self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
-    self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
-    self.loadSegmentationButton.enabled = False
-    self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.segmentEditorLayout.addRow(self.loadSegmentationButton)
-    
-    # Add a separator line
-    separator1 = qt.QFrame()
-    separator1.setFrameShape(qt.QFrame.HLine)
-    separator1.setFrameShadow(qt.QFrame.Sunken)
-    self.segmentEditorLayout.addRow(separator1)
-    
-    self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
-    self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
-    self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
-    
-    # Add another separator line
-    separator2 = qt.QFrame()
-    separator2.setFrameShape(qt.QFrame.HLine)
-    separator2.setFrameShadow(qt.QFrame.Sunken)
-    self.segmentEditorLayout.addRow(separator2)
-    
-    self.exportSelectionButton = qt.QPushButton("Export Selected Region")
-    self.exportSelectionButton.setToolTip("Export painted region back to a model")
-    self.exportSelectionButton.enabled = False
-    self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.segmentEditorLayout.addRow(self.exportSelectionButton)
-    
-    regionLayout.addRow(self.segmentEditorFrame)
-    
-    # --- Landmark Method Controls ---
-    self.landmarkFrame = qt.QFrame()
-    self.landmarkLayout = qt.QFormLayout()
-    self.landmarkFrame.setLayout(self.landmarkLayout)
-    self.landmarkFrame.setVisible(False)  # Hidden by default
-    
-    # Markup selector for selection points
-    self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
-    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
-    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers")
-    self.selectionMarkupSelector.selectNodeUponCreation = False
-    self.selectionMarkupSelector.noneEnabled = True
-    self.selectionMarkupSelector.addEnabled = True
-    self.selectionMarkupSelector.removeEnabled = False
-    self.selectionMarkupSelector.showHidden = False
-    self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
-    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
-    
-    # Radius control
-    self.selectionRadiusSlider = ctk.ctkSliderWidget()
-    self.selectionRadiusSlider.minimum = 0.01
-    self.selectionRadiusSlider.maximum = 10.0
-    self.selectionRadiusSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
-    self.selectionRadiusSlider.value = 0.5
-    try:
-        self.selectionRadiusSlider.decimals = 2
-    except AttributeError:
-        pass  # Some versions might not have this property
-    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
-    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
-    
-    # Selected points display (for single point mode)
-    self.selectedPointsLabel = qt.QLabel("No points selected")
-    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
-    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
-    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
-    
-    # Click to select landmark button
-    self.clickSelectLandmarkButton = qt.QPushButton("Click to Select Landmark")
-    self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
-    self.clickSelectLandmarkButton.enabled = False
-    self.clickSelectLandmarkButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.landmarkLayout.addRow("", self.clickSelectLandmarkButton)
-    
-    # Apply landmark selection button
-    self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
-    self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
-    self.applyLandmarkSelectionButton.enabled = False
-    self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
-    
-    # Export landmark selection button
-    self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
-    self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
-    self.exportLandmarkSelectionButton.enabled = False
-    self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
-    
-    regionLayout.addRow(self.landmarkFrame)
-    
-    # --- Common Controls ---
-    # Clear selection button
-    self.clearSelectionButton = qt.QPushButton("Clear Selection")
-    self.clearSelectionButton.setToolTip("Clear the current region selection")
-    self.clearSelectionButton.enabled = False
-    self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
-    regionLayout.addRow(self.clearSelectionButton)
-    
-    # Selection info label
-    self.selectionInfoLabel = qt.QLabel("No region selected")
-    self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
-    regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
+      # Select Subject ID
+      self.subjectIDBox=qt.QComboBox()
+      self.subjectIDBox.enabled = False
+      self.heatmapFrameLayout.addRow("Subject ID: ", self.subjectIDBox)
 
-    # Add spacing before the visualization button
-    visualizeWidgetLayout.addRow(" ", qt.QLabel())
+      # --- Frame for Interpolation Visualization (bring back) ---
+      self.interpolationFrame = qt.QFrame()
+      self.interpolationFrameLayout = qt.QFormLayout(self.interpolationFrame)
+      self.interpolationFrame.setVisible(False)  # hidden by default
+      visualizeWidgetLayout.addRow(self.interpolationFrame)
 
-    #
-    # Start Visualization Button (at bottom)
-    #
-    self.startVisualizationButton = qt.QPushButton("Start Visualization")
-    self.startVisualizationButton.toolTip = "Prepare the 3D scene for visualization and show markups"
-    self.startVisualizationButton.setStyleSheet("""
-      QPushButton {
-        background-color: #87CEEB;
-        color: #2C3E50;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #6BB6E8;
-      }
-      QPushButton:pressed {
-        background-color: #4FA8D8;
-      }
+      # Atlas model (target of interpolation)
+      self.atlasModelSelect = slicer.qMRMLNodeComboBox()
+      self.atlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
+      self.atlasModelSelect.setToolTip("Select the atlas or mean shape model")
+      self.atlasModelSelect.selectNodeUponCreation = False
+      self.atlasModelSelect.noneEnabled = True
+      self.atlasModelSelect.addEnabled = False
+      self.atlasModelSelect.removeEnabled = False
+      self.atlasModelSelect.showHidden = False
+      self.atlasModelSelect.setMRMLScene(slicer.mrmlScene)
+      self.interpolationFrameLayout.addRow("Atlas Model: ", self.atlasModelSelect)
+
+      # Directory & file selector for a resampled subject
+      self.visOriginalModelDirSelector = ctk.ctkPathLineEdit()
+      self.visOriginalModelDirSelector.filters = ctk.ctkPathLineEdit.Dirs
+      self.visOriginalModelDirSelector.setToolTip("Select the directory of resampled models")
+      self.interpolationFrameLayout.addRow("Resampled Model Directory:", self.visOriginalModelDirSelector)
+
+      self.visOriginalModelFileSelector = qt.QComboBox()
+      self.visOriginalModelFileSelector.setToolTip("Select a resampled subject model from the directory above")
+      self.visOriginalModelFileSelector.enabled = False
+      self.interpolationFrameLayout.addRow("Resampled Subject Model:", self.visOriginalModelFileSelector)
+
+      # Interpolation slider
+      self.interpolationSlider = ctk.ctkSliderWidget()
+      self.interpolationSlider.minimum = 0.0
+      self.interpolationSlider.maximum = 1.0
+      self.interpolationSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
+      self.interpolationSlider.value = 0.0
+      self.interpolationSlider.setToolTip("Interpolate between original model (0.0) and atlas model (1.0)")
+      self.interpolationSlider.enabled = False
+      self.interpolationFrameLayout.addRow("Interpolation (Original to Atlas):", self.interpolationSlider)
+
+
+      self.previewTextureCombo = qt.QComboBox()
+      self.previewTextureCombo.setToolTip("Preview a xbaked atlas-space PNG on the atlas model.")
+      visualizeWidgetLayout.addRow("Preview baked texture:", self.previewTextureCombo)
+      self.previewTextureCombo.connect("currentIndexChanged(int)", self.onPreviewTextureSelected)
+    
+      # Add spacing before the visualization button
+      visualizeWidgetLayout.addRow(" ", qt.QLabel())
+
+      #
+      # Landmark Lock/Unlock Controls
+      #
+      landmarkControlWidget = qt.QWidget()
+      landmarkControlLayout = qt.QHBoxLayout(landmarkControlWidget)
+      landmarkControlLayout.setContentsMargins(0, 0, 0, 0)
+    
+      self.landmarkLockButton = qt.QPushButton("Lock Landmarks")
+      self.landmarkLockButton.setToolTip("Lock/unlock all landmarks to prevent accidental movement")
+      self.landmarkLockButton.setStyleSheet("""
+        QPushButton {
+          background-color: #ff6b6b;
+          color: white;
+          font-weight: bold;
+          border: none;
+          border-radius: 5px;
+          padding: 6px 12px;
+          min-height: 25px;
+        }
+        QPushButton:hover {
+          background-color: #ff5252;
+        }
+        QPushButton:pressed {
+          background-color: #e53935;
+        }
       """)
-    visualizeWidgetLayout.addRow(self.startVisualizationButton)
+      self.landmarkLockButton.connect('clicked(bool)', self.onToggleLandmarkLock)
+      landmarkControlLayout.addWidget(self.landmarkLockButton)
+    
+      visualizeWidgetLayout.addRow("Landmark Control:", landmarkControlWidget)
+    
+      # Add spacing before the visualization button
+      visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
-    self.lastBakedTexturesPath = None
-    self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
+      #
+      # --- Mesh Region Selection Section ---
+      #
+      self.regionSelectionWidget = ctk.ctkCollapsibleButton()
+      self.regionSelectionWidget.text = "Mesh Region Selection"
+      self.regionSelectionWidget.collapsed = True
+      visualizeWidgetLayout.addRow(self.regionSelectionWidget)
+      regionLayout = qt.QFormLayout(self.regionSelectionWidget)
+    
+      # Target mesh selector for region selection
+      self.regionMeshSelector = slicer.qMRMLNodeComboBox()
+      self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
+      self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
+      self.regionMeshSelector.selectNodeUponCreation = False
+      self.regionMeshSelector.noneEnabled = True
+      self.regionMeshSelector.addEnabled = False
+      self.regionMeshSelector.removeEnabled = False
+      self.regionMeshSelector.showHidden = False
+      self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
+      regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
+    
+      # Selection method combo
+      self.selectionMethodCombo = qt.QComboBox()
+      self.selectionMethodCombo.addItems([
+          "Segment Editor (Paint/Scissors)", 
+          "Landmark + Radius",
+          "Multiple Landmarks + Radius"
+      ])
+      self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh")
+      regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
+    
+      # --- Segment Editor Method Controls ---
+      self.segmentEditorFrame = qt.QFrame()
+      self.segmentEditorLayout = qt.QFormLayout()
+      self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
+    
+      # Existing segmentation selector for loading saved work
+      self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
+      self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
+      self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
+      self.existingSegmentationSelector.selectNodeUponCreation = False
+      self.existingSegmentationSelector.noneEnabled = True
+      self.existingSegmentationSelector.addEnabled = False
+      self.existingSegmentationSelector.removeEnabled = False
+      self.existingSegmentationSelector.showHidden = False
+      self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
+      self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
+    
+      self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
+      self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
+      self.loadSegmentationButton.enabled = False
+      self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+      self.segmentEditorLayout.addRow(self.loadSegmentationButton)
+    
+      # Add a separator line
+      separator1 = qt.QFrame()
+      separator1.setFrameShape(qt.QFrame.HLine)
+      separator1.setFrameShadow(qt.QFrame.Sunken)
+      self.segmentEditorLayout.addRow(separator1)
+    
+      self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
+      self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
+      self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+      self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
+    
+      # Add another separator line
+      separator2 = qt.QFrame()
+      separator2.setFrameShape(qt.QFrame.HLine)
+      separator2.setFrameShadow(qt.QFrame.Sunken)
+      self.segmentEditorLayout.addRow(separator2)
+    
+      self.exportSelectionButton = qt.QPushButton("Export Selected Region")
+      self.exportSelectionButton.setToolTip("Export painted region back to a model")
+      self.exportSelectionButton.enabled = False
+      self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+      self.segmentEditorLayout.addRow(self.exportSelectionButton)
+    
+      regionLayout.addRow(self.segmentEditorFrame)
+    
+      # --- Landmark Method Controls ---
+      self.landmarkFrame = qt.QFrame()
+      self.landmarkLayout = qt.QFormLayout()
+      self.landmarkFrame.setLayout(self.landmarkLayout)
+      self.landmarkFrame.setVisible(False)  # Hidden by default
+    
+      # Markup selector for selection points
+      self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
+      self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
+      self.selectionMarkupSelector.setToolTip("Select markup points to define region centers")
+      self.selectionMarkupSelector.selectNodeUponCreation = False
+      self.selectionMarkupSelector.noneEnabled = True
+      self.selectionMarkupSelector.addEnabled = True
+      self.selectionMarkupSelector.removeEnabled = False
+      self.selectionMarkupSelector.showHidden = False
+      self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
+      self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
+    
+      # Radius control
+      self.selectionRadiusSlider = ctk.ctkSliderWidget()
+      self.selectionRadiusSlider.minimum = 0.01
+      self.selectionRadiusSlider.maximum = 10.0
+      self.selectionRadiusSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
+      self.selectionRadiusSlider.value = 0.5
+      try:
+          self.selectionRadiusSlider.decimals = 2
+      except AttributeError:
+          pass  # Some versions might not have this property
+      self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
+      self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+    
+      # Selected points display (for single point mode)
+      self.selectedPointsLabel = qt.QLabel("No points selected")
+      self.selectedPointsLabel.setToolTip("Currently selected landmark points")
+      self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
+      self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
+    
+      # Click to select landmark button
+      self.clickSelectLandmarkButton = qt.QPushButton("Click to Select Landmark")
+      self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
+      self.clickSelectLandmarkButton.enabled = False
+      self.clickSelectLandmarkButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+      self.landmarkLayout.addRow("", self.clickSelectLandmarkButton)
+    
+      # Apply landmark selection button
+      self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
+      self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
+      self.applyLandmarkSelectionButton.enabled = False
+      self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+      self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
+    
+      # Export landmark selection button
+      self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
+      self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
+      self.exportLandmarkSelectionButton.enabled = False
+      self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+      self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
+    
+      regionLayout.addRow(self.landmarkFrame)
+    
+      # --- Common Controls ---
+      # Clear selection button
+      self.clearSelectionButton = qt.QPushButton("Clear Selection")
+      self.clearSelectionButton.setToolTip("Clear the current region selection")
+      self.clearSelectionButton.enabled = False
+      self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
+      regionLayout.addRow(self.clearSelectionButton)
+    
+      # Selection info label
+      self.selectionInfoLabel = qt.QLabel("No region selected")
+      self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
+      regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
+
+      # Add spacing before the visualization button
+      visualizeWidgetLayout.addRow(" ", qt.QLabel())
+
+      #
+      # Start Visualization Button (at bottom)
+      #
+      self.startVisualizationButton = qt.QPushButton("Start Visualization")
+      self.startVisualizationButton.toolTip = "Prepare the 3D scene for visualization and show markups"
+      self.startVisualizationButton.setStyleSheet("""
+        QPushButton {
+          background-color: #87CEEB;
+          color: #2C3E50;
+          font-weight: bold;
+          border: none;
+          border-radius: 5px;
+          padding: 8px 16px;
+          min-height: 30px;
+        }
+        QPushButton:hover {
+          background-color: #6BB6E8;
+        }
+        QPushButton:pressed {
+          background-color: #4FA8D8;
+        }
+        """)
+      visualizeWidgetLayout.addRow(self.startVisualizationButton)
+
+      self.lastBakedTexturesPath = None
+      self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
     
 
-    # Connections
-    self.meshSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onVisualizeMeshSelect)
-    self.subjectIDBox.connect("currentIndexChanged(int)", self.onSubjectIDSelect)
-    self.visualizeHeatmapRadio.connect("toggled(bool)", self.onVisualizationModeChanged)
-    # MODIFIED Connections for new widgets
-    self.atlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onInterpolationInputChanged)
-    self.visOriginalModelDirSelector.connect("currentPathChanged(QString)", self.onVisOriginalModelDirChanged)
-    self.visOriginalModelFileSelector.connect("currentIndexChanged(int)", self.onVisOriginalModelFileSelected)
-    self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
-    self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
-    self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
+      # Connections
+      self.meshSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onVisualizeMeshSelect)
+      self.subjectIDBox.connect("currentIndexChanged(int)", self.onSubjectIDSelect)
+      self.visualizeHeatmapRadio.connect("toggled(bool)", self.onVisualizationModeChanged)
+      # MODIFIED Connections for new widgets
+      self.atlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onInterpolationInputChanged)
+      self.visOriginalModelDirSelector.connect("currentPathChanged(QString)", self.onVisOriginalModelDirChanged)
+      self.visOriginalModelFileSelector.connect("currentIndexChanged(int)", self.onVisOriginalModelFileSelected)
+      self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
+      self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
+      self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
     
-    # Region selection connections
-    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
-    self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
-    self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
-    self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
-    self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
-    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
-    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
-    self.clickSelectLandmarkButton.connect('clicked(bool)', self.onClickSelectLandmark)
-    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
-    
+      # Region selection connections
+      self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+      self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
+      self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
+      self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
+      self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
+      self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
+      self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+      self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+      self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
+      self.clickSelectLandmarkButton.connect('clicked(bool)', self.onClickSelectLandmark)
+      self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
 
     # Auto-detect Blender executable on startup
     self.autoDetectBlender()
@@ -2770,7 +2777,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.getPointNumberButton.enabled = True
 
   def onTabChanged(self, index):
-    if self.tabsWidget.tabText(index) == "Visualize Results":
+    if SHOW_VISUALIZE_RESULTS and self.tabsWidget.tabText(index) == "Visualize Results":
       # Only update the preview list, don't automatically change the scene
       self.updateBakedPreviewList()
       # Reset the visualization button state
@@ -2778,6 +2785,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
   def resetVisualizationButton(self):
     """Reset the Start Visualization button to its initial state"""
+    if not SHOW_VISUALIZE_RESULTS:
+      return
     self.startVisualizationButton.setText("Start Visualization")
     self.startVisualizationButton.setStyleSheet("""
       QPushButton {
@@ -3017,13 +3026,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.DCLApplyButton.enabled = True
 
   def onTabChanged(self, index):
-    if self.tabsWidget.tabText(index) == "Visualize Results":
+    if SHOW_VISUALIZE_RESULTS and self.tabsWidget.tabText(index) == "Visualize Results":
       # Only update the preview list, don't automatically change the scene
       self.updateBakedPreviewList()
       # Reset the visualization button state
       self.resetVisualizationButton()
 
   def updateBakedPreviewList(self):
+    if not SHOW_VISUALIZE_RESULTS:
+      return
     self.previewTextureCombo.blockSignals(True)
     self.previewTextureCombo.clear()
     d = self.lastBakedTexturesPath
@@ -3167,13 +3178,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       pass
     self.atlasModel = logic._load_model_with_cs(atlas_uv_obj, 'RAS')
 
-    # Ensure the new atlas model is visible
+    # Ensure the new atlas model is visible but clean (no texture initially)
     if self.atlasModel:
       self.atlasModel.SetName("DeCA Atlas Model")
       displayNode = self.atlasModel.GetDisplayNode()
       if displayNode:
         displayNode.SetVisibility(True)
         displayNode.SetOpacity(1.0)
+        # Clear any texture that might have been applied during UV processing
+        try:
+          displayNode.SetTextureImageDataConnection(None)
+        except AttributeError:
+          pass  # No texture to remove or method doesn't exist
+        displayNode.SetScalarVisibility(False)
 
     median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
     if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
@@ -3253,7 +3270,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       slicer.mrmlScene.RemoveNode(self.representativeModel)
       self.representativeModel = None
 
-    # Ensure the atlas model is prominent and shows analysis data
+    # Hide all landmarks for clean visualization
+    self._hideAllLandmarks()
+
+    # Hide all other models except the DeCA Atlas Model
+    self._hideOtherModels()
+
+    # Ensure the atlas model is prominent and clean (no texture/heatmap)
     if hasattr(self, 'atlasModel') and self.atlasModel:
       # Make sure atlas model has a clear name
       self.atlasModel.SetName("DeCA Atlas Model")
@@ -3283,8 +3306,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         if not slicer.mrmlScene.IsNodePresent(displayNode):
           slicer.mrmlScene.AddNode(displayNode)
 
-        # Enable scalar coloring
-        displayNode.SetScalarVisibility(True)
+        # DISABLE scalar coloring to show clean model without texture/heatmap
+        displayNode.SetScalarVisibility(False)
+
+        # Remove any texture that might be applied
+        try:
+          displayNode.SetTextureImageDataConnection(None)
+        except AttributeError:
+          # Try alternative method for removing texture
+          try:
+            displayNode.SetAndObserveTextureImageData(None)
+          except AttributeError:
+            pass  # No texture to remove or method doesn't exist
+
+        # Set a neutral color for the model
+        displayNode.SetColor(0.8, 0.8, 0.8)  # Light gray
 
         # Force the display node to update
         displayNode.Modified()
@@ -3295,34 +3331,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       self.atlasModel.Modified()
 
-      self.logInfoDC.appendPlainText("Atlas model visibility settings applied")
-
-      # Try to show analysis data if available
-      polyData = self.atlasModel.GetPolyData()
-      if polyData and polyData.GetPointData().GetNumberOfArrays() > 0:
-        # Find a good array to display (prefer magnitude data)
-        arrayToShow = None
-        for i in range(polyData.GetPointData().GetNumberOfArrays()):
-          arrayName = polyData.GetPointData().GetArrayName(i)
-          if 'Magnitude' in arrayName or 'Mean' in arrayName:
-            arrayToShow = arrayName
-            break
-
-        # If no magnitude array found, use the first array
-        if arrayToShow is None:
-          arrayToShow = polyData.GetPointData().GetArrayName(0)
-
-        if arrayToShow and displayNode:
-          displayNode.SetActiveScalarName(arrayToShow)
-          displayNode.SetAndObserveColorNodeID('vtkMRMLColorTableNodeFilePlasma.txt')
-          self.logInfoDC.appendPlainText(f"Atlas model displayed with data: {arrayToShow}")
-      else:
-        # If no data arrays, just show the atlas model normally
-        if displayNode:
-          displayNode.SetScalarVisibility(False)
-        self.logInfoDC.appendPlainText("Atlas model displayed (no analysis data arrays found)")
-
-      self.logInfoDC.appendPlainText("DeCA Atlas Model is now visible and ready")
+      self.logInfoDC.appendPlainText("DeCA Atlas Model displayed without texture or landmarks")
     else:
       self.logInfoDC.appendPlainText("Warning: Atlas model not found or not properly created")
 
@@ -3341,7 +3350,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # ---- 7) Fill Visualize dropdown ----
     self.updateProgressDC(100, "Finalizing results...")
-    self.updateBakedPreviewList()
+    if SHOW_VISUALIZE_RESULTS:
+      self.updateBakedPreviewList()
 
     # Success - reset progress and re-enable button
     self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
@@ -3416,6 +3426,42 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       try:
         dn = m.GetDisplayNode()
         if dn: dn.SetVisibility(True)
+      except Exception:
+        pass
+
+  def _hideAllLandmarks(self):
+    """Hide all landmark/markup nodes for clean visualization"""
+    try:
+      # Get all markup nodes (landmarks, fiducials, etc.)
+      markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsNode'))
+      if not markups:  # fallback for older Slicer builds
+        markups = list(slicer.util.getNodesByClass('vtkMRMLMarkupsFiducialNode'))
+    except Exception:
+      markups = []
+
+    for markup in markups:
+      try:
+        displayNode = markup.GetDisplayNode()
+        if displayNode:
+          displayNode.SetVisibility(False)
+      except Exception:
+        pass
+
+  def _hideOtherModels(self):
+    """Remove all models except the DeCA Atlas Model to prevent clutter"""
+    models_to_remove = []
+    for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
+      try:
+        # Only keep the DeCA Atlas Model
+        if model.GetName() != "DeCA Atlas Model":
+          models_to_remove.append(model)
+      except Exception:
+        pass
+
+    # Remove the unwanted models
+    for model in models_to_remove:
+      try:
+        slicer.mrmlScene.RemoveNode(model)
       except Exception:
         pass
 
@@ -4579,6 +4625,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
                       f"Missing mesh for: {missing_mesh}\nExtra mesh: {extra_mesh}")
 
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks)
+    slicer.mrmlScene.RemoveNode(baseNode)
 
     #  Save resampled models (VTK/PLY) and OBJ copies that reuse atlas UV (for Blender bake)
     resampledModelPath = os.path.join(outputDirectory, "resampledModels")
@@ -4608,6 +4655,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     outputModelPath = os.path.join(outputDirectory, outputModelName)
     slicer.util.saveNode(baseNode, outputModelPath)
 
+    # Clean up the temporary base node now that we're done with it
+    slicer.mrmlScene.RemoveNode(baseNode)
+
   def runDCAlignSymmetric(self, baseMeshPath, baseLMPath, meshDir, landmarkDir, mirrorMeshDir, mirrorLandmarkDir, outputDir, optionErrorOutput):
     if optionErrorOutput:
       self.errorCheckPath = os.path.join(outputDir, "errorChecking")
@@ -4628,6 +4678,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     outputModelName = 'decaSymmetryResultModel.vtp'
     outputModelPath = os.path.join(outputDir, outputModelName)
     slicer.util.saveNode(baseNode, outputModelPath)
+
+    # Clean up the temporary base node
+    slicer.mrmlScene.RemoveNode(baseNode)
 
   def runMean(self, landmarkDirectory, meshDirectory):
     landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
