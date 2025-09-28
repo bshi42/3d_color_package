@@ -194,74 +194,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.layout.addWidget(tabsWidget)
 
     ################################### DeCA Tab ###################################
-    # ... (The DeCA Tab code remains unchanged) ...
-    # Layout within the DeCA tab
-    DeCAWidget=ctk.ctkCollapsibleButton()
-    DeCAWidgetLayout = qt.QFormLayout(DeCAWidget)
-    DeCAWidget.text = "Dense Correspondence I/0"
-    DeCATabLayout.addRow(DeCAWidget)
-
-    #
-    # Select Atlas Type
-    #
-    self.calculateAtlasOptionDC=qt.QRadioButton()
-    self.calculateAtlasOptionDC.setChecked(True)
-    self.loadAtlasOptionDC=qt.QRadioButton()
-    DCAtlasButtonGroup = qt.QButtonGroup(DeCAWidget)
-    DCAtlasButtonGroup.addButton(self.calculateAtlasOptionDC)
-    DCAtlasButtonGroup.addButton(self.loadAtlasOptionDC)
-    DeCAWidgetLayout.addRow("Create atlas: ", self.calculateAtlasOptionDC)
-    DeCAWidgetLayout.addRow("Load atlas: ", self.loadAtlasOptionDC)
-
-    #
-    # Hidden atlas options
-    self.atlasCollapsibleButtonDC = ctk.ctkCollapsibleButton()
-    self.atlasCollapsibleButtonDC.text = "Atlas Options"
-    self.atlasCollapsibleButtonDC.collapsed = True
-    self.atlasCollapsibleButtonDC.enabled = False
-    DeCAWidgetLayout.addRow(self.atlasCollapsibleButtonDC)
-    atlasOptionLayout = qt.QFormLayout(self.atlasCollapsibleButtonDC)
-
-    #
-    # Select base mesh
-    #
-    self.DCBaseModelSelector = ctk.ctkPathLineEdit()
-    self.DCBaseModelSelector.filters  = ctk.ctkPathLineEdit().Files
-    self.DCBaseModelSelector.nameFilters=["Model (*.ply *.stl *.obj *.vtk *.vtp)"]
-    atlasOptionLayout.addRow("Atlas model: ", self.DCBaseModelSelector)
-
-    #
-    # Select base landmarks
-    #
-    self.DCBaseLMSelector = ctk.ctkPathLineEdit()
-    self.DCBaseLMSelector.filters  = ctk.ctkPathLineEdit().Files
-    self.DCBaseLMSelector.nameFilters=["Point set (*.fcsv *.json *.mrk.json)"]
-    atlasOptionLayout.addRow("Atlas landmarks: ", self.DCBaseLMSelector)
-
-    #
-    # Select Analysis Type
-    #
-    self.analysisTypeShape=qt.QRadioButton()
-    self.analysisTypeShape.setChecked(True)
-    self.analysisTypeSymmetry=qt.QRadioButton()
-    DCAnalysisButtonGroup = qt.QButtonGroup(DeCAWidget)
-    DCAnalysisButtonGroup.addButton(self.analysisTypeShape)
-    DCAnalysisButtonGroup.addButton(self.analysisTypeSymmetry)
-    DeCAWidgetLayout.addRow("Shape analysis: ", self.analysisTypeShape)
-    DeCAWidgetLayout.addRow("Symmetry analysis: ", self.analysisTypeSymmetry)
-
-    #
-    # Hidden symmetry options
-    #
-    self.symmetryCollapsibleButton = ctk.ctkCollapsibleButton()
-    self.symmetryCollapsibleButton.text = "Symmetry Options"
-    self.symmetryCollapsibleButton.collapsed = True
-    self.symmetryCollapsibleButton.enabled = False
-    DeCAWidgetLayout.addRow(self.symmetryCollapsibleButton)
-    symmetryOptionLayout = qt.QFormLayout(self.symmetryCollapsibleButton)
-    self.landmarkIndexText=qt.QLineEdit()
-    self.landmarkIndexText.setToolTip("No spaces. Seperate numbers by commas.  Example:  2,1,3,5,4")
-    symmetryOptionLayout.addRow('Mirror landmark index', self.landmarkIndexText)
 
     #
     # Input Directories Section
@@ -269,7 +201,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.inputDirCollapsibleButton = ctk.ctkCollapsibleButton()
     self.inputDirCollapsibleButton.text = "Input Directories"
     self.inputDirCollapsibleButton.collapsed = False
-    DeCAWidgetLayout.addRow(self.inputDirCollapsibleButton)
+    DeCATabLayout.addRow(self.inputDirCollapsibleButton)
     inputDirLayout = qt.QFormLayout(self.inputDirCollapsibleButton)
     
     # Model directory
@@ -330,14 +262,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     inputDirLayout.addRow("Output directory: ", self.outputDirectoryDC)
 
     # Add spacing
-    DeCAWidgetLayout.addRow(" ", qt.QLabel())
+    DeCATabLayout.addRow(" ", qt.QLabel())
 
     # --- Blender integration ---
     # Configures external Blender processing for UV mapping and texture baking
     self.blenderGroup = ctk.ctkCollapsibleButton()
     self.blenderGroup.text = "Blender (cleanup, UV, bake)"
     self.blenderGroup.collapsed = True
-    DeCAWidgetLayout.addRow(self.blenderGroup)
+    DeCATabLayout.addRow(self.blenderGroup)
     blForm = qt.QFormLayout(self.blenderGroup)
 
     self.blenderExeEdit = ctk.ctkPathLineEdit()
@@ -376,31 +308,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     blForm.addRow("Bake margin (px):", self.bakeMarginPxSpin)
 
     # Add spacing
-    DeCAWidgetLayout.addRow(" ", qt.QLabel())
-
-    #
-    # Analysis Options Section
-    #
-    self.analysisOptionsCollapsibleButton = ctk.ctkCollapsibleButton()
-    self.analysisOptionsCollapsibleButton.text = "Analysis Options"
-    self.analysisOptionsCollapsibleButton.collapsed = False
-    DeCAWidgetLayout.addRow(self.analysisOptionsCollapsibleButton)
-    analysisOptionsLayout = qt.QFormLayout(self.analysisOptionsCollapsibleButton)
-
-    # Remove scale option
-    self.removeScaleCheckBoxDC = qt.QCheckBox()
-    self.removeScaleCheckBoxDC.checked = False
-    self.removeScaleCheckBoxDC.setToolTip("If checked, DeCA alignment will include isotropic scaling.")
-    analysisOptionsLayout.addRow("Remove scale: ", self.removeScaleCheckBoxDC)
-
-    # Error checking directory option
-    self.writeErrorCheckBox = qt.QCheckBox()
-    self.writeErrorCheckBox.checked = False
-    self.writeErrorCheckBox.setToolTip("If checked, DeCA will create a directory of results for use in estimating point correspondence error.")
-    analysisOptionsLayout.addRow("Create output for error checking: ", self.writeErrorCheckBox)
-
-    # Add spacing
-    DeCAWidgetLayout.addRow(" ", qt.QLabel())
+    DeCATabLayout.addRow(" ", qt.QLabel())
 
     #
     # Progress tracking widgets
@@ -409,19 +317,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.progressWidgetDC.setVisible(False)
     progressLayout = qt.QVBoxLayout(self.progressWidgetDC)
     progressLayout.setContentsMargins(0, 0, 0, 0)
-    
+
     self.progressBarDC = qt.QProgressBar()
     self.progressBarDC.setRange(0, 100)
     self.progressBarDC.setValue(0)
     progressLayout.addWidget(self.progressBarDC)
-    
-    
+
+
     self.cancelButtonDC = qt.QPushButton("Cancel Operation")
     self.cancelButtonDC.setMaximumWidth(120)
     self.cancelButtonDC.setVisible(False)
     progressLayout.addWidget(self.cancelButtonDC)
-    
-    DeCAWidgetLayout.addRow("Progress: ", self.progressWidgetDC)
+
+    DeCATabLayout.addRow("Progress: ", self.progressWidgetDC)
 
     #
     # Run DeCA Button
@@ -450,8 +358,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         color: #666666;
       }
     """)
-    DeCAWidgetLayout.addRow(self.applyButtonDC)
-    
+    DeCATabLayout.addRow(self.applyButtonDC)
+
 
     #
     # Log Information
@@ -459,15 +367,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.logInfoDC = qt.QPlainTextEdit()
     self.logInfoDC.setPlaceholderText("DeCA log information")
     self.logInfoDC.setReadOnly(True)
-    DeCAWidgetLayout.addRow(self.logInfoDC)
+    DeCATabLayout.addRow(self.logInfoDC)
 
     # Connections
-    self.analysisTypeShape.connect('toggled(bool)', self.onToggleAnalysis)
-    self.analysisTypeSymmetry.connect('toggled(bool)', self.onToggleAnalysis)
-    self.calculateAtlasOptionDC.connect('toggled(bool)', self.onToggleAtlasDC)
-    self.loadAtlasOptionDC.connect('toggled(bool)', self.onToggleAtlasDC)
-    self.DCBaseModelSelector.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.DCBaseLMSelector.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.meshDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.meshDirectoryDC.connect('currentPathChanged(QString)', self.onMeshDirectoryChangedDC)
     self.landmarkDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
@@ -2455,7 +2357,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       print(f"Error starting visualization: {e}")
 
-  def setUpDeCADir(self, outDir, symmetryOption=False, errorDirectoryOption=False, DeCALOption=False, loadAtlasOption = False):
+  def setUpDeCADir(self, outDir, DeCALOption=False):
     dateTimeStamp = datetime.now().strftime('%Y_%m-%d_%H_%M_%S')
     outputFolderDC = os.path.join(outDir, dateTimeStamp)
     fileNameDictionary = {}
@@ -2465,31 +2367,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       os.makedirs(alignedLMFolderDC)
       alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
       os.makedirs(alignedModelFolderDC)
-      resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels") # <-- ADD THIS LINE
-      os.makedirs(resampledModelFolderDC)  
+      resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels")
+      os.makedirs(resampledModelFolderDC)
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
-      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC) 
-      if not loadAtlasOption:
-        tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
-        os.makedirs(tempLMFolderDC)
-        tempModelFolderDC = os.path.join(outputFolderDC, "tempAlignedModels")
-        os.makedirs(tempModelFolderDC)
-        fileNameDictionary['tempAlignedLMs'] = str(tempLMFolderDC)
-        fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
-      if symmetryOption:
-        mirrorLMFolderDC = os.path.join(outputFolderDC, "mirrorLMs")
-        os.makedirs(mirrorLMFolderDC)
-        mirrorModelFolderDC = os.path.join(outputFolderDC, "mirrorModels")
-        os.makedirs(mirrorModelFolderDC)
-        fileNameDictionary['mirrorLMs'] = str(mirrorLMFolderDC)
-        fileNameDictionary['mirrorModels'] = str(mirrorModelFolderDC)
-      if errorDirectoryOption:
-        errorCheckingFolderDC = os.path.join(outputFolderDC, "errorChecking")
-        os.makedirs(errorCheckingFolderDC)
-        fileNameDictionary['error'] = str(errorCheckingFolderDC)
+      fileNameDictionary['resampledModels'] = str(resampledModelFolderDC)
+      
+      tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
+      os.makedirs(tempLMFolderDC)
+      tempModelFolderDC = os.path.join(outputFolderDC, "tempAlignedModels")
+      os.makedirs(tempModelFolderDC)
+      fileNameDictionary['tempAlignedLMs'] = str(tempLMFolderDC)
+      fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
+
       if DeCALOption:
         DeCALOutputFolder = os.path.join(outputFolderDC, "DeCALOutput")
         os.makedirs(DeCALOutputFolder)
@@ -2498,22 +2390,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       logging.debug('Result directory failed: Could not create output folder')
     return fileNameDictionary
 
-  def onToggleAnalysis(self):
-    if self.analysisTypeSymmetry.checked == True:
-      self.symmetryCollapsibleButton.collapsed = False
-      self.symmetryCollapsibleButton.enabled = True
-    else:
-      self.symmetryCollapsibleButton.collapsed = True
-      self.symmetryCollapsibleButton.enabled = False
-
-  def onToggleAtlasDC(self):
-    if self.calculateAtlasOptionDC.checked == True:
-      self.atlasCollapsibleButtonDC.collapsed = True
-      self.atlasCollapsibleButtonDC.enabled = False
-    else:
-      self.atlasCollapsibleButtonDC.collapsed = False
-      self.atlasCollapsibleButtonDC.enabled = True
-    self.onParameterSelectDC()
 
   def onToggleAtlasDCL(self):
     if self.calculateAtlasOptionDCL.checked == True:
@@ -2699,9 +2575,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.interpolatedModelNode.SetDisplayVisibility(True)
 
   def onParameterSelectDC(self):
-    atlasPathSelected = bool(self.DCBaseModelSelector.currentPath and self.DCBaseLMSelector.currentPath) or self.calculateAtlasOptionDC.checked
     inputPathsSelected = bool(self.meshDirectoryDC.currentPath and self.landmarkDirectoryDC.currentPath and self.outputDirectoryDC.currentPath)
-    self.applyButtonDC.enabled = bool(atlasPathSelected and inputPathsSelected)
+    self.applyButtonDC.enabled = bool(inputPathsSelected)
 
   def onParameterSelectDCL(self):
     atlasPathSelected = bool(self.DCLBaseModelSelector.currentPath and self.DCLBaseLMSelector.currentPath) or self.calculateAtlasOptionDCL.checked
@@ -2729,7 +2604,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     logic = InterDeCALogic()
 
     # Sets up the output directory structure with DeCAL-specific folders
-    self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+    self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, True)
 
     # Validates that directory creation was successful
     if self.folderNames == {}:
@@ -2989,7 +2864,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       logic.runAlign(tempBaseModel, tempBaseLMs,
                     self.folderNames['originalModels'], self.folderNames['originalLMs'],
                     self.folderNames['tempAlignedModels'], self.folderNames['tempAlignedLMs'],
-                    removeScale)
+                    removeScale)  # Keep parameter since this method still needs it
     except ValueError as errorText:
       log.appendPlainText(str(errorText))
       return None, None
@@ -3056,17 +2931,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   def onDCApplyButton(self):
     logic = InterDeCALogic()
-    symmetryOption    = self.analysisTypeSymmetry.checked
-    writeErrorOption  = self.writeErrorCheckBox.checked
-    loadAtlasOption   = self.loadAtlasOptionDC.checked
-    removeScaleOption = self.removeScaleCheckBoxDC.checked
 
     # Start progress tracking
     self.applyButtonDC.enabled = False
     self.updateProgressDC(0, "Initializing DeCA analysis...")
 
     # Folders
-    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
+    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, False)
     if not self.folderNames:
       self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
       self.resetProgressDC()
@@ -3111,25 +2982,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       self.logInfoDC.appendPlainText(f"Warning: Failed to load representative model: {e}")
 
-    # ---- 1) Load or compute atlas (Slicer) ----
-    self.updateProgressDC(10, "Loading or computing atlas...")
-    if loadAtlasOption:
-      try:
-        self.atlasModel = slicer.util.loadModel(self.DCBaseModelSelector.currentPath)
-      except Exception:
-        self.logInfoDC.appendPlainText(f"Can't load model from: {self.DCBaseModelSelector.currentPath}")
-        self.resetProgressDC()
-        self.applyButtonDC.enabled = True
-        return
-      try:
-        self.atlasLMs = slicer.util.loadMarkups(self.DCBaseLMSelector.currentPath)
-      except Exception:
-        self.logInfoDC.appendPlainText(f"Can't load landmarks from: {self.DCBaseLMSelector.currentPath}")
-        self.resetProgressDC()
-        self.applyButtonDC.enabled = True
-        return
-    else:
-      self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScaleOption, self.logInfoDC)
+    # ---- 1) Generate atlas (Slicer) ----
+    # Always generating atlas and using rigid body alignment (no scaling)
+    self.updateProgressDC(10, "Generating atlas...")
+    self.atlasModel, self.atlasLMs = self.generateNewAtlas(False, self.logInfoDC)
 
     # Check if atlas generation was successful
     if self.atlasModel is None or self.atlasLMs is None:
@@ -3209,7 +3065,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       logic.runAlign(self.atlasModel, self.atlasLMs,
                      self.folderNames['originalModels'], self.folderNames['originalLMs'],
                      self.folderNames['alignedModels'], self.folderNames['alignedLMs'],
-                     removeScaleOption)
+                     False)  # Always use rigid body alignment (no scaling)
     except ValueError as errorText:
       self.logInfoDC.appendPlainText(str(errorText))
       self.resetProgressDC()
@@ -3225,7 +3081,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.folderNames['alignedModels'],
         self.folderNames['alignedLMs'],
         self.folderNames['output'],
-        writeErrorOption,
+        False,  # Never create error checking output
         atlas_uv_template_obj=atlas_uv_obj  # NEW: used to stamp the same UVs onto resampled OBJ copies
       )
     except Exception as e:
@@ -4830,10 +4686,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   def runDCAlign(self, baseMeshPath, baseLMPath, alignedMeshDir, landmarkDirectory, outputDirectory, optionErrorOutput,
                 atlas_uv_template_obj=None):
-    if optionErrorOutput:
-      self.errorCheckPath = os.path.join(outputDirectory, "errorChecking")
-      if not os.path.exists(self.errorCheckPath):
-        os.mkdir(self.errorCheckPath)
 
     baseNode = self._load_model_with_cs(baseMeshPath, 'RAS')
     baseMesh = baseNode.GetPolyData()
@@ -4900,10 +4752,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Warning: Failed to remove baseNode: {e}")
 
   def runDCAlignSymmetric(self, baseMeshPath, baseLMPath, meshDir, landmarkDir, mirrorMeshDir, mirrorLandmarkDir, outputDir, optionErrorOutput):
-    if optionErrorOutput:
-      self.errorCheckPath = os.path.join(outputDir, "errorChecking")
-      if not os.path.exists(self.errorCheckPath):
-        os.mkdir(self.errorCheckPath)
     baseNode = slicer.util.loadModel(baseMeshPath)
     baseMesh = baseNode.GetPolyData()
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
@@ -5011,10 +4859,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           transform = vtk.vtkLandmarkTransform()
           transform.SetSourceLandmarks(sourcePoints)
           transform.SetTargetLandmarks(targetPoints)
-          if not removeScaleOption:
-            transform.SetModeToRigidBody()
-          else:
-            transform.SetModeToSimilarity()
+          transform.SetModeToRigidBody()
 
           transformNode=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTransformNode","Alignment")
           transformNode.SetAndObserveTransformToParent(transform)
@@ -5233,7 +5078,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     closestToMeanIndex = self.getClosestToMeanIndex(meanShape, alignedLandmarks)
     return lmNames[closestToMeanIndex]
 
-  def denseCorrespondence(self, originalLandmarks, originalMeshes, writeErrorOption=False):
+  def denseCorrespondence(self, originalLandmarks, originalMeshes):
     meanShape, alignedPoints = self.procrustesImposition(originalLandmarks, False)
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     denseCorrespondenceGroup = vtk.vtkMultiBlockDataGroupFilter()
@@ -5250,7 +5095,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     denseCorrespondenceGroup.Update()
     return denseCorrespondenceGroup.GetOutput(), baseIndex
 
-  def denseCorrespondenceCPD(self, originalLandmarks, originalMeshes, baseMesh, baseLandmarks, writeErrorOption=False):
+  def denseCorrespondenceCPD(self, originalLandmarks, originalMeshes, baseMesh, baseLandmarks):
     meanShape, alignedPoints = self.procrustesImposition(originalLandmarks, False)
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     denseCorrespondenceGroup = vtk.vtkMultiBlockDataGroupFilter()
@@ -5271,17 +5116,6 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       correspondingMesh.SetPolys(baseMesh.GetPolys())
       # convert to polydata
       denseCorrespondenceGroup.AddInputData(correspondingMesh)
-      # write ouput
-      if writeErrorOption:
-        plyWriterSubject = vtk.vtkPLYWriter()
-        plyWriterSubject.SetFileName("/Users/sararolfe/Dropbox/SlicerWorkspace/SMwSML/Data/UBC/DECAOutCPD/" + str(i) + ".ply")
-        plyWriterSubject.SetInputData(correspondingMesh)
-        plyWriterSubject.Write()
-
-        plyWriterBase = vtk.vtkPLYWriter()
-        plyWriterBase.SetFileName("/Users/sararolfe/Dropbox/SlicerWorkspace/SMwSML/Data/UBC/DECAOutCPD/base.ply")
-        plyWriterBase.SetInputData(baseMesh)
-        plyWriterBase.Write()
 
     denseCorrespondenceGroup.Update()
     return denseCorrespondenceGroup.GetOutput()
