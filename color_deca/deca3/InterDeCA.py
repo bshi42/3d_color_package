@@ -73,6 +73,183 @@ except ImportError as e:
 
 print(f'Final decaLogic value: {decaLogic}')
 
+class OutputStructureManager:
+    """
+    Manages organized output directory structure for InterDeCA workflows.
+    Creates standardized folder hierarchies and maintains consistent naming conventions.
+    """
+    
+    def __init__(self, base_output_dir, project_name=None, timestamp=None):
+        """
+        Initialize output structure manager.
+        
+        Args:
+            base_output_dir: Root directory for all outputs
+            project_name: Optional project name for organization
+            timestamp: Optional timestamp string (auto-generated if None)
+        """
+        import datetime
+        
+        self.base_output_dir = base_output_dir
+        self.project_name = project_name or "InterDeCA_Analysis"
+        self.timestamp = timestamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create main project directory
+        self.project_dir = os.path.join(base_output_dir, f"{self.project_name}_{self.timestamp}")
+        self.structure = {}
+        
+        # Define standardized structure
+        self._define_structure()
+        
+    def _define_structure(self):
+        """Define the standardized directory structure"""
+        self.structure = {
+            # Main project directory
+            'root': self.project_dir,
+            
+            # Input processing outputs
+            'inputs': {
+                'aligned_landmarks': os.path.join(self.project_dir, 'inputs', 'aligned_landmarks'),
+                'aligned_models': os.path.join(self.project_dir, 'inputs', 'aligned_models'),
+                'temp_aligned_landmarks': os.path.join(self.project_dir, 'inputs', 'temp', 'landmarks'),
+                'temp_aligned_models': os.path.join(self.project_dir, 'inputs', 'temp', 'models'),
+                'mirrored_landmarks': os.path.join(self.project_dir, 'inputs', 'mirrored', 'landmarks'),
+                'mirrored_models': os.path.join(self.project_dir, 'inputs', 'mirrored', 'models'),
+            },
+            
+            # Core analysis outputs
+            'analysis': {
+                'resampled_models': os.path.join(self.project_dir, 'analysis', 'resampled_models'),
+                'correspondence_results': os.path.join(self.project_dir, 'analysis', 'correspondence'),
+                'statistical_results': os.path.join(self.project_dir, 'analysis', 'statistics'),
+                'error_checking': os.path.join(self.project_dir, 'analysis', 'error_checking'),
+                'decal_output': os.path.join(self.project_dir, 'analysis', 'decal_landmarks'),
+            },
+            
+            # Texture and visualization outputs
+            'textures': {
+                'baked_textures': os.path.join(self.project_dir, 'textures', 'baked_atlas_space'),
+                'original_textures': os.path.join(self.project_dir, 'textures', 'original_subject_space'),
+                'average_textures': os.path.join(self.project_dir, 'textures', 'averages'),
+                'color_analysis': os.path.join(self.project_dir, 'textures', 'color_analysis'),
+                'uv_models': os.path.join(self.project_dir, 'textures', 'uv_mapped_models'),
+            },
+            
+            # Visualization and export outputs
+            'visualization': {
+                'heatmaps': os.path.join(self.project_dir, 'visualization', 'heatmaps'),
+                'interpolations': os.path.join(self.project_dir, 'visualization', 'interpolations'),
+                'plots': os.path.join(self.project_dir, 'visualization', 'plots'),
+                'screenshots': os.path.join(self.project_dir, 'visualization', 'screenshots'),
+            },
+            
+            # Final deliverables
+            'deliverables': {
+                'final_models': os.path.join(self.project_dir, 'deliverables', 'models'),
+                'final_textures': os.path.join(self.project_dir, 'deliverables', 'textures'),
+                'reports': os.path.join(self.project_dir, 'deliverables', 'reports'),
+                'exports': os.path.join(self.project_dir, 'deliverables', 'exports'),
+            },
+            
+            # Temporary and cache files
+            'temp': {
+                'blender_scripts': os.path.join(self.project_dir, 'temp', 'blender_scripts'),
+                'processing_cache': os.path.join(self.project_dir, 'temp', 'cache'),
+                'intermediate': os.path.join(self.project_dir, 'temp', 'intermediate'),
+            }
+        }
+    
+    def create_structure(self, sections=None):
+        """
+        Create the directory structure.
+        
+        Args:
+            sections: List of section names to create (creates all if None)
+        """
+        sections = sections or list(self.structure.keys())
+        created_dirs = []
+        
+        for section in sections:
+            if section in self.structure:
+                if isinstance(self.structure[section], dict):
+                    # Create all subdirectories in this section
+                    for subdir_name, subdir_path in self.structure[section].items():
+                        os.makedirs(subdir_path, exist_ok=True)
+                        created_dirs.append(subdir_path)
+                else:
+                    # Create single directory
+                    os.makedirs(self.structure[section], exist_ok=True)
+                    created_dirs.append(self.structure[section])
+        
+        # Create project info file
+        self._create_project_info()
+        
+        return created_dirs
+    
+    def _create_project_info(self):
+        """Create a project information file for reference"""
+        import datetime
+        import json
+        
+        info_file = os.path.join(self.project_dir, 'project_info.json')
+        info = {
+            'project_name': self.project_name,
+            'timestamp': self.timestamp,
+            'created_date': datetime.datetime.now().isoformat(),
+            'structure_version': '1.0',
+            'description': 'InterDeCA analysis project with organized output structure',
+            'directory_structure': self._flatten_structure()
+        }
+        
+        with open(info_file, 'w') as f:
+            json.dump(info, f, indent=2)
+    
+    def _flatten_structure(self):
+        """Flatten nested structure for JSON serialization"""
+        flat = {}
+        for section, content in self.structure.items():
+            if isinstance(content, dict):
+                for subsection, path in content.items():
+                    flat[f"{section}.{subsection}"] = path
+            else:
+                flat[section] = content
+        return flat
+    
+    def get_path(self, section, subsection=None):
+        """
+        Get path for a specific section/subsection.
+        
+        Args:
+            section: Main section name
+            subsection: Optional subsection name
+            
+        Returns:
+            Path string or None if not found
+        """
+        if section in self.structure:
+            if subsection and isinstance(self.structure[section], dict):
+                return self.structure[section].get(subsection)
+            elif not subsection:
+                return self.structure[section]
+        return None
+    
+    def get_legacy_mapping(self):
+        """
+        Get mapping from old folder names to new structure for backward compatibility.
+        """
+        return {
+            'output': self.project_dir,
+            'alignedLMs': self.get_path('inputs', 'aligned_landmarks'),
+            'alignedModels': self.get_path('inputs', 'aligned_models'),
+            'resampledModels': self.get_path('analysis', 'resampled_models'),
+            'tempAlignedLMs': self.get_path('inputs', 'temp_aligned_landmarks'),
+            'tempAlignedModels': self.get_path('inputs', 'temp_aligned_models'),
+            'mirrorLMs': self.get_path('inputs', 'mirrored_landmarks'),
+            'mirrorModels': self.get_path('inputs', 'mirrored_models'),
+            'error': self.get_path('analysis', 'error_checking'),
+            'DeCALOutput': self.get_path('analysis', 'decal_output'),
+        }
+
 def checkAndOfferPackageInstallation():
     """
     Checks for missing optional packages and offers to install them.
@@ -1456,22 +1633,167 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   ################################### GUI SUpport Functions
   def setUpDeCADir(self, outDir, symmetryOption=False, errorDirectoryOption=False, DeCALOption=False, loadAtlasOption = False):
+    """
+    Create organized output directory structure using OutputStructureManager.
+    
+    Args:
+        outDir: Base output directory
+        symmetryOption: Whether to create symmetry analysis directories
+        errorDirectoryOption: Whether to create error checking directories  
+        DeCALOption: Whether to create DeCAL directories
+        loadAtlasOption: Whether atlas loading is being used
+        
+    Returns:
+        fileNameDictionary: Dictionary mapping old keys to new organized paths
+    """
     dateTimeStamp = datetime.now().strftime('%Y_%m-%d_%H_%M_%S')
+    
+    try:
+      # Create organized structure using the new manager
+      structure_manager = OutputStructureManager(
+          base_output_dir=outDir,
+          project_name="DeCA_Analysis",
+          timestamp=dateTimeStamp
+      )
+      
+      # Define which sections to create based on options
+      sections_to_create = ['inputs', 'analysis', 'textures', 'deliverables']
+      
+      if not loadAtlasOption:
+          # Only create temp directories if not loading atlas
+          sections_to_create.append('temp')
+      
+      if errorDirectoryOption:
+          # Error checking is part of analysis section, always available
+          pass
+      
+      # Create the organized directory structure
+      created_dirs = structure_manager.create_structure(sections_to_create)
+      
+      # Get legacy mapping for backward compatibility
+      fileNameDictionary = structure_manager.get_legacy_mapping()
+      
+      # Add texture-specific directories to the legacy mapping
+      fileNameDictionary.update({
+          'bakedTextures': structure_manager.get_path('textures', 'baked_textures'),
+          'originalTextures': structure_manager.get_path('textures', 'original_textures'),
+          'uvModels': structure_manager.get_path('textures', 'uv_models'),
+          'colorAnalysis': structure_manager.get_path('textures', 'color_analysis'),
+          'visualization': structure_manager.get_path('visualization', 'heatmaps'),
+          'plots': structure_manager.get_path('visualization', 'plots'),
+          'finalModels': structure_manager.get_path('deliverables', 'final_models'),
+          'finalTextures': structure_manager.get_path('deliverables', 'final_textures'),
+          'reports': structure_manager.get_path('deliverables', 'reports')
+      })
+      
+      # Store the structure manager for later use
+      self.output_structure = structure_manager
+      
+      # Log the created structure
+      print(f"\n📁 Created organized output structure:")
+      print(f"   Root: {structure_manager.project_dir}")
+      print(f"   Sections created: {', '.join(sections_to_create)}")
+      print(f"   Total directories: {len(created_dirs)}")
+      
+      # Create a README file explaining the structure
+      self._createStructureReadme(structure_manager)
+      
+    except Exception as e:
+      logging.error(f'Failed to create organized output structure: {e}')
+      # Fallback to old structure
+      return self._createLegacyStructure(outDir, dateTimeStamp, symmetryOption, errorDirectoryOption, DeCALOption, loadAtlasOption)
+    
+    return fileNameDictionary
+
+  def _createStructureReadme(self, structure_manager):
+    """Create a README file explaining the output structure"""
+    readme_path = os.path.join(structure_manager.project_dir, 'README.md')
+    
+    readme_content = f"""# InterDeCA Analysis Output Structure
+
+This directory contains the organized output from an InterDeCA (Interactive Dense Correspondence Analysis) run.
+
+## Project Information
+- **Project Name**: {structure_manager.project_name}
+- **Timestamp**: {structure_manager.timestamp}
+- **Structure Version**: 1.0
+
+## Directory Structure
+
+### 📂 inputs/
+Contains processed input data and alignment results:
+- `aligned_landmarks/` - Landmark files aligned to atlas space
+- `aligned_models/` - 3D models aligned to atlas space  
+- `temp/` - Temporary alignment files
+- `mirrored/` - Mirrored versions (if symmetry analysis enabled)
+
+### 📂 analysis/
+Core analysis results and correspondence data:
+- `resampled_models/` - Models resampled to atlas topology
+- `correspondence/` - Dense correspondence results
+- `statistics/` - Statistical analysis outputs
+- `error_checking/` - Error validation results (if enabled)
+- `decal_landmarks/` - DeCAL landmark outputs (if enabled)
+
+### 📂 textures/
+Texture processing and color analysis:
+- `baked_atlas_space/` - Textures baked to atlas UV space
+- `original_subject_space/` - Original subject textures
+- `averages/` - Average texture computations
+- `color_analysis/` - Color pattern analysis results
+- `uv_mapped_models/` - UV-mapped model files
+
+### 📂 visualization/
+Visualization outputs and plots:
+- `heatmaps/` - Statistical heatmap visualizations
+- `interpolations/` - Shape interpolation results
+- `plots/` - Analysis plots and charts
+- `screenshots/` - Saved screenshots
+
+### 📂 deliverables/
+Final outputs and deliverables:
+- `final_models/` - Final processed models
+- `final_textures/` - Final texture outputs
+- `reports/` - Analysis reports and summaries
+- `exports/` - Export-ready files
+
+### 📂 temp/
+Temporary files and processing cache:
+- `blender_scripts/` - Temporary Blender processing scripts
+- `cache/` - Processing cache files
+- `intermediate/` - Intermediate processing results
+
+## Usage Notes
+- All outputs maintain consistent naming conventions
+- Original file relationships are preserved through naming
+- JSON metadata files provide traceability
+- Structure supports both individual and batch processing workflows
+
+Generated by InterDeCA v1.0 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    
+    with open(readme_path, 'w') as f:
+        f.write(readme_content)
+
+  def _createLegacyStructure(self, outDir, dateTimeStamp, symmetryOption, errorDirectoryOption, DeCALOption, loadAtlasOption):
+    """Fallback to create legacy directory structure if new system fails"""
     outputFolderDC = os.path.join(outDir, dateTimeStamp)
     fileNameDictionary = {}
+    
     try:
       os.makedirs(outputFolderDC)
       alignedLMFolderDC = os.path.join(outputFolderDC, "alignedLMs")
       os.makedirs(alignedLMFolderDC)
       alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
       os.makedirs(alignedModelFolderDC)
-      resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels") # <-- ADD THIS LINE
+      resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels")
       os.makedirs(resampledModelFolderDC)
-      # initialize the filename dictionary
+      
       fileNameDictionary['output'] = str(outputFolderDC)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
       fileNameDictionary['resampledModels'] = str(resampledModelFolderDC)
+      
       if not loadAtlasOption:
         tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
         os.makedirs(tempLMFolderDC)
@@ -1479,6 +1801,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         os.makedirs(tempModelFolderDC)
         fileNameDictionary['tempAlignedLMs'] = str(tempLMFolderDC)
         fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
+        
       if symmetryOption:
         mirrorLMFolderDC = os.path.join(outputFolderDC, "mirrorLMs")
         os.makedirs(mirrorLMFolderDC)
@@ -1486,16 +1809,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         os.makedirs(mirrorModelFolderDC)
         fileNameDictionary['mirrorLMs'] = str(mirrorLMFolderDC)
         fileNameDictionary['mirrorModels'] = str(mirrorModelFolderDC)
+        
       if errorDirectoryOption:
         errorCheckingFolderDC = os.path.join(outputFolderDC, "errorChecking")
         os.makedirs(errorCheckingFolderDC)
         fileNameDictionary['error'] = str(errorCheckingFolderDC)
+        
       if DeCALOption:
         DeCALOutputFolder = os.path.join(outputFolderDC, "DeCALOutput")
         os.makedirs(DeCALOutputFolder)
         fileNameDictionary['DeCALOutput'] = str(DeCALOutputFolder)
-    except:
-      logging.debug('Result directory failed: Could not create output folder')
+        
+    except Exception as e:
+      logging.error(f'Legacy structure creation failed: {e}')
+      
     return fileNameDictionary
 
   def onToggleAnalysis(self):
@@ -1741,12 +2068,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
 
     # Saves the atlas model to the output directory for later use
-    atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    atlasModelPath = self.getOrganizedOutputPath('deliverables', 'final_models', 'decaAtlasModel', 'ply') or \
+                     os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
 
     # Saves the atlas landmarks alongside the model
-    atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    atlasLMPath = self.getOrganizedOutputPath('deliverables', 'final_models', 'decaAtlasLM.mrk', 'json') or \
+                  os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
 
@@ -1910,7 +2239,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       return
 
     # Save an intermediate atlas file (RAS) so Blender can read it
-    atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
+    atlas_preuv_obj = self.getOrganizedOutputPath('temp', 'blender_processing', 'decaAtlas_preUV', 'obj') or \
+                      os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
     logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
 
     # ---- 2) Blender cleanup + Smart UV ----
@@ -1931,7 +2261,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       else:
         self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
         return
-    atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
+    atlas_uv_obj = self.getOrganizedOutputPath('textures', 'uv_models', 'decaAtlasUV', 'obj') or \
+                   os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
     try:
       logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
                                   merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
@@ -1952,9 +2283,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
 
     # Save atlas landmarks & a copy of the atlas (PLY) for provenance
-    atlasLMPath   = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    atlasLMPath   = self.getOrganizedOutputPath('deliverables', 'final_models', 'decaAtlasLM.mrk', 'json') or \
+                    os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-    atlasPlyPath  = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    atlasPlyPath  = self.getOrganizedOutputPath('deliverables', 'final_models', 'decaAtlasModel', 'ply') or \
+                    os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
     logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
 
     # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
@@ -1971,11 +2304,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # ---- 4) DeCA resampling (Slicer). Also create OBJ copies that reuse atlas UV (for Blender bake) ----
     try:
       self.logInfoDC.appendPlainText("Calculating point correspondences to atlas")
+      # Get organized analysis output path
+      analysis_output_dir = self.getOrganizedOutputPath('analysis', 'resampled_models') or self.folderNames['output']
+      
       logic.runDCAlign(
         atlas_uv_obj, atlasLMPath,
         self.folderNames['alignedModels'],
         self.folderNames['alignedLMs'],
-        self.folderNames['output'],
+        analysis_output_dir,
         writeErrorOption,
         atlas_uv_template_obj=atlas_uv_obj  # NEW: used to stamp the same UVs onto resampled OBJ copies
       )
@@ -1984,7 +2320,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       return
 
     # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
-    self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
+    # Use organized texture structure if available
+    if hasattr(self, 'output_structure') and self.output_structure:
+        self.lastBakedTexturesPath = self.output_structure.get_path('textures', 'baked_textures')
+    else:
+        # Fallback to legacy path
+        self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
     os.makedirs(self.lastBakedTexturesPath, exist_ok=True)
 
     texturesDir = self.textureDirectoryDC.currentPath
@@ -1993,7 +2334,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         made = logic.blender_bake_all(
           blender_exe=blender_exe,
           alignedDir=self.folderNames['alignedModels'],
-          resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
+          resampledUVDir=(self.output_structure.get_path('textures', 'uv_models') if hasattr(self, 'output_structure') and self.output_structure 
+                         else os.path.join(self.folderNames['output'], "resampledOBJ_withUV")),
           texturesDir=texturesDir,
           outDir=self.lastBakedTexturesPath,
           bake_size=int(self.bakeSizeSpin.value),
@@ -3006,6 +3348,52 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     return self.faceAreasCache[modelId]
 
+  def getOrganizedOutputPath(self, category, subcategory=None, filename=None, extension=None):
+    """
+    Get an organized output path using the structure manager.
+    
+    Args:
+        category: Main category (e.g., 'textures', 'analysis', 'visualization')
+        subcategory: Optional subcategory 
+        filename: Optional filename
+        extension: Optional file extension
+        
+    Returns:
+        Complete file path or directory path
+    """
+    if hasattr(self, 'output_structure') and self.output_structure:
+        base_path = self.output_structure.get_path(category, subcategory)
+        if base_path and filename:
+            if extension and not filename.endswith(extension):
+                filename = f"{filename}.{extension}"
+            return os.path.join(base_path, filename)
+        return base_path
+    
+    # Fallback to legacy structure
+    if hasattr(self, 'folderNames') and 'output' in self.folderNames:
+        legacy_mapping = {
+            ('textures', 'baked_textures'): 'atlasTextures',
+            ('textures', 'uv_models'): 'resampledOBJ_withUV',
+            ('textures', 'color_analysis'): 'colorAnalysis',
+            ('visualization', 'heatmaps'): 'visualization',
+            ('visualization', 'plots'): 'plots',
+            ('analysis', 'resampled_models'): 'resampledModels',
+            ('deliverables', 'final_models'): 'finalModels',
+            ('deliverables', 'reports'): 'reports'
+        }
+        
+        legacy_name = legacy_mapping.get((category, subcategory))
+        if legacy_name:
+            base_path = os.path.join(self.folderNames['output'], legacy_name)
+            os.makedirs(base_path, exist_ok=True)
+            if filename:
+                if extension and not filename.endswith(extension):
+                    filename = f"{filename}.{extension}"
+                return os.path.join(base_path, filename)
+            return base_path
+    
+    return None
+
   def updatePackageStatus(self):
     """Update the package status label with current availability"""
     print(f"🔄 Updating package status display...")
@@ -3361,7 +3749,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     resampledModelPath = os.path.join(outputDirectory, "resampledModels")
     if os.path.exists(resampledModelPath):
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
-      outOBJdir = os.path.join(outputDirectory, "resampledOBJ_withUV")
+      # Use organized structure for UV models if available  
+      if hasattr(self, 'output_structure') and self.output_structure:
+          outOBJdir = self.output_structure.get_path('textures', 'uv_models')
+      else:
+          outOBJdir = os.path.join(outputDirectory, "resampledOBJ_withUV")
       os.makedirs(outOBJdir, exist_ok=True)
 
       for i in range(denseCorrespondenceGroup.GetNumberOfBlocks()):
