@@ -752,7 +752,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.colorsAtlasModelSelect.removeEnabled = False
     self.colorsAtlasModelSelect.showHidden = False
     self.colorsAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    dataSamplingWidgetLayout.addRow("Atlas Model: ", self.colorsAtlasModelSelect)
+    dataSamplingWidgetLayout.addRow("Model: ", self.colorsAtlasModelSelect)
 
     # Baked textures directory selector
     self.bakedTexturesDirectorySelector = ctk.ctkPathLineEdit()
@@ -760,19 +760,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.bakedTexturesDirectorySelector.setToolTip("Select directory containing baked atlas-space textures")
     dataSamplingWidgetLayout.addRow("Textures Directory: ", self.bakedTexturesDirectorySelector)
 
-    # Random seed input
-    self.randomSeedSpin = qt.QSpinBox()
-    self.randomSeedSpin.setRange(0, 999999)
-    self.randomSeedSpin.setValue(42)  # Default seed
-    self.randomSeedSpin.setToolTip("Random seed for reproducible face sampling")
-    dataSamplingWidgetLayout.addRow("Random Seed: ", self.randomSeedSpin)
-
     # Percentage of faces to sample
     self.faceSamplePercentSpin = qt.QDoubleSpinBox()
     self.faceSamplePercentSpin.setRange(1.0, 100.0)
     self.faceSamplePercentSpin.setSingleStep(5.0)
     self.faceSamplePercentSpin.setSuffix(" %")
-    self.faceSamplePercentSpin.setValue(100.0)  # Default to all faces
+    self.faceSamplePercentSpin.setValue(10.0)  # Default to all faces
     self.faceSamplePercentSpin.setToolTip("Percentage of faces to randomly sample from the atlas model")
     dataSamplingWidgetLayout.addRow("Sample Percentage: ", self.faceSamplePercentSpin)
 
@@ -1012,7 +1005,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.recolorAtlasModelSelect.removeEnabled = False
     self.recolorAtlasModelSelect.showHidden = False
     self.recolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    recolorWidgetLayout.addRow("Atlas Model: ", self.recolorAtlasModelSelect)
+    recolorWidgetLayout.addRow("Model: ", self.recolorAtlasModelSelect)
 
     # Textures directory selector
     self.recolorTexturesDirectorySelector = ctk.ctkPathLineEdit()
@@ -1102,7 +1095,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
     self.multiRecolorAtlasModelSelect.setToolTip("Select the atlas model for multi-texture analysis")
     self.multiRecolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    clusteringWidgetLayout.addRow("Atlas Model: ", self.multiRecolorAtlasModelSelect)
+    clusteringWidgetLayout.addRow("Model: ", self.multiRecolorAtlasModelSelect)
 
     # Texture directory selector for MultiRecolor
     self.multiRecolorTextureDirectorySelector = ctk.ctkPathLineEdit()
@@ -3579,7 +3572,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Get parameters
       atlasModel = self.colorsAtlasModelSelect.currentNode()
       texturesDir = self.bakedTexturesDirectorySelector.currentPath
-      randomSeed = int(self.randomSeedSpin.value)
+      randomSeed = 42
       samplePercent = float(self.faceSamplePercentSpin.value)
 
       self.samplingStatusLabel.setText("Sampling in progress...")
