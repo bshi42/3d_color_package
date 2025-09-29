@@ -2363,27 +2363,40 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     fileNameDictionary = {}
     try:
       os.makedirs(outputFolderDC)
-      alignedLMFolderDC = os.path.join(outputFolderDC, "alignedLMs")
+
+      # Create main subdirectories
+      decaSubDir = os.path.join(outputFolderDC, "DeCA")
+      colorAnalysisSubDir = os.path.join(outputFolderDC, "colorAnalysis")
+      os.makedirs(decaSubDir)
+      os.makedirs(colorAnalysisSubDir)
+
+      # DeCA-only data goes in DeCA subdirectory
+      alignedLMFolderDC = os.path.join(decaSubDir, "alignedLMs")
       os.makedirs(alignedLMFolderDC)
-      alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
+      alignedModelFolderDC = os.path.join(decaSubDir, "alignedModels")
       os.makedirs(alignedModelFolderDC)
-      resampledModelFolderDC = os.path.join(outputFolderDC, "resampledModels")
+
+      tempLMFolderDC = os.path.join(decaSubDir, "tempAlignedLMs")
+      os.makedirs(tempLMFolderDC)
+      tempModelFolderDC = os.path.join(decaSubDir, "tempAlignedModels")
+      os.makedirs(tempModelFolderDC)
+
+      # Resampled models (without UVs) are DeCA output
+      resampledModelFolderDC = os.path.join(decaSubDir, "resampledModels")
       os.makedirs(resampledModelFolderDC)
+
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
+      fileNameDictionary['decaSubDir'] = str(decaSubDir)
+      fileNameDictionary['colorAnalysisSubDir'] = str(colorAnalysisSubDir)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
       fileNameDictionary['resampledModels'] = str(resampledModelFolderDC)
-      
-      tempLMFolderDC = os.path.join(outputFolderDC, "tempAlignedLMs")
-      os.makedirs(tempLMFolderDC)
-      tempModelFolderDC = os.path.join(outputFolderDC, "tempAlignedModels")
-      os.makedirs(tempModelFolderDC)
       fileNameDictionary['tempAlignedLMs'] = str(tempLMFolderDC)
       fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
 
       if DeCALOption:
-        DeCALOutputFolder = os.path.join(outputFolderDC, "DeCALOutput")
+        DeCALOutputFolder = os.path.join(decaSubDir, "DeCALOutput")
         os.makedirs(DeCALOutputFolder)
         fileNameDictionary['DeCALOutput'] = str(DeCALOutputFolder)
     except:
@@ -2638,8 +2651,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       removeScale = True  # Removes scale differences during alignment
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
 
-    # Saves the atlas model to the output directory for later use
-    atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    # Saves the atlas model to the colorAnalysis directory for later use
+    atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
 
@@ -2996,7 +3009,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Save an intermediate atlas file (RAS) so Blender can read it
     self.updateProgressDC(30, "Preparing atlas for UV mapping...")
-    atlas_preuv_obj = os.path.join(self.folderNames['output'], 'decaAtlas_preUV.obj')
+    atlas_preuv_obj = os.path.join(self.folderNames['decaSubDir'], 'decaAtlas_preUV.obj')
     logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
 
     # ---- 2) Blender cleanup + Smart UV ----
@@ -3018,7 +3031,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       else:
         self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
       return
-    atlas_uv_obj = os.path.join(self.folderNames['output'], 'decaAtlasUV.obj')
+    atlas_uv_obj = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasUV.obj')
     try:
       logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
                                   merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
@@ -3053,9 +3066,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
 
     # Save atlas landmarks & a copy of the atlas (PLY) for provenance
-    atlasLMPath   = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasLM.mrk.json')
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-    atlasPlyPath  = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    atlasPlyPath  = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
     logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
 
     # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
@@ -3092,7 +3105,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # ---- 5) Blender bake (selection→active) from aligned → resampled(OBJ with atlas UV) ----
     self.updateProgressDC(80, "Setting up texture baking...")
-    self.lastBakedTexturesPath = os.path.join(self.folderNames['output'], "atlasTextures")
+    self.lastBakedTexturesPath = os.path.join(self.folderNames['colorAnalysisSubDir'], "atlasTextures")
     os.makedirs(self.lastBakedTexturesPath, exist_ok=True)
 
     texturesDir = self.textureDirectoryDC.currentPath
@@ -3102,7 +3115,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         made = logic.blender_bake_all(
           blender_exe=blender_exe,
           alignedDir=self.folderNames['alignedModels'],
-          resampledUVDir=os.path.join(self.folderNames['output'], "resampledOBJ_withUV"),
+          resampledUVDir=os.path.join(self.folderNames['colorAnalysisSubDir'], "resampledOBJ_withUV"),
           texturesDir=texturesDir,
           outDir=self.lastBakedTexturesPath,
           bake_size=int(self.bakeSizeSpin.value),
@@ -4703,13 +4716,30 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
                       f"Missing mesh for: {missing_mesh}\nExtra mesh: {extra_mesh}")
 
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks)
+
+    # Save the result model before removing baseNode from scene
+    self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
+    outputModelName = 'decaResultModel.vtp'
+    outputModelPath = os.path.join(outputDirectory, "DeCA", outputModelName)
+
+    # Save the result model with error handling
+    try:
+      if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
+        slicer.util.saveNode(baseNode, outputModelPath)
+        print(f"Successfully saved DeCA result model to: {outputModelPath}")
+      else:
+        print(f"Warning: baseNode is not valid or not in scene, skipping save to {outputModelPath}")
+    except Exception as e:
+      print(f"Warning: Failed to save DeCA result model to {outputModelPath}: {e}")
+
+    # Now remove baseNode from scene
     slicer.mrmlScene.RemoveNode(baseNode)
 
     #  Save resampled models (VTK/PLY) and OBJ copies that reuse atlas UV (for Blender bake)
-    resampledModelPath = os.path.join(outputDirectory, "resampledModels")
+    resampledModelPath = os.path.join(outputDirectory, "DeCA", "resampledModels")
     if os.path.exists(resampledModelPath):
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
-      outOBJdir = os.path.join(outputDirectory, "resampledOBJ_withUV")
+      outOBJdir = os.path.join(outputDirectory, "colorAnalysis", "resampledOBJ_withUV")
       os.makedirs(outOBJdir, exist_ok=True)
 
       for i in range(denseCorrespondenceGroup.GetNumberOfBlocks()):
@@ -4728,21 +4758,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       slicer.mrmlScene.RemoveNode(tempModelNode)
 
-    self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
-    outputModelName = 'decaResultModel.vtp'
-    outputModelPath = os.path.join(outputDirectory, outputModelName)
 
-    # Try to save the result model with error handling
-    try:
-      # Check if the baseNode is still valid and in the scene
-      if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
-        slicer.util.saveNode(baseNode, outputModelPath)
-        print(f"Successfully saved DeCA result model to: {outputModelPath}")
-      else:
-        print(f"Warning: baseNode is not valid or not in scene, skipping save to {outputModelPath}")
-    except Exception as e:
-      print(f"Warning: Failed to save DeCA result model to {outputModelPath}: {e}")
-      # Continue execution even if save fails
 
     # Clean up the temporary base node now that we're done with it
     try:
