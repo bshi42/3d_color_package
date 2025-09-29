@@ -3223,6 +3223,387 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.resetProgressDC()
     self.applyButtonDC.enabled = True
 
+  def maximize3DViewer(self, logWidget=None):
+    """
+    Maximizes the 3D viewer by setting the layout to 3D-only view.
+
+    This method tries multiple approaches to find and set a 3D-only layout:
+    1. First tries common layout constants from vtkMRMLLayoutNode
+    2. Falls back to trying common numeric layout IDs
+    3. Logs results to the provided log widget or self.logInfoDC
+
+    Args:
+      logWidget: Optional QPlainTextEdit widget for logging. If None, uses self.logInfoDC
+
+    Returns:
+      bool: True if successfully set 3D layout, False otherwise
+
+    Example usage from other methods:
+      # Use with default log widget (self.logInfoDC)
+      success = self.maximize3DViewer()
+
+      # Use with specific log widget
+      success = self.maximize3DViewer(self.recolorLogInfo)
+
+      # Use from external code (if you have a reference to the widget instance)
+      widget = slicer.modules.interdeca.widgetRepresentation().self()
+      success = widget.maximize3DViewer()
+    """
+    if logWidget is None:
+      logWidget = getattr(self, 'logInfoDC', None)
+
+    try:
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager:
+        # Set layout to 3D only view - try different approaches
+        try:
+          # Method 1: Try common layout constants
+          layout_constants_to_try = [
+            'SlicerLayoutThreeDOnlyView',
+            'SlicerLayoutOneUp3DView',
+            'SlicerLayout3DView',
+            'SlicerLayoutThreeDView'
+          ]
+
+          layout_set = False
+          for const_name in layout_constants_to_try:
+            try:
+              layout_id = getattr(slicer.vtkMRMLLayoutNode, const_name)
+              layoutManager.setLayout(layout_id)
+              self._logToWidget(logWidget, f"Maximized 3D viewer for optimal visualization ({const_name})")
+              layout_set = True
+              break
+            except AttributeError:
+              continue
+
+          if not layout_set:
+            # Method 2: Try common numeric layout IDs for 3D-only views
+            layout_ids_to_try = [6, 4, 5, 7]  # Common 3D layout IDs
+            for layout_id in layout_ids_to_try:
+              try:
+                layoutManager.setLayout(layout_id)
+                self._logToWidget(logWidget, f"Maximized 3D viewer for optimal visualization (layout ID {layout_id})")
+                layout_set = True
+                break
+              except:
+                continue
+
+          if not layout_set:
+            self._logToWidget(logWidget, "Warning: Could not find 3D-only layout, keeping current layout")
+            return False
+
+          return True
+
+        except Exception as inner_e:
+          self._logToWidget(logWidget, f"Warning: Error setting 3D layout: {inner_e}")
+          return False
+      else:
+        self._logToWidget(logWidget, "Warning: Could not access layout manager to maximize 3D view")
+        return False
+    except Exception as e:
+      self._logToWidget(logWidget, f"Warning: Error maximizing 3D viewer: {e}")
+      return False
+
+  def _logToWidget(self, logWidget, message):
+    """
+    Helper method to log messages to either QTextEdit or QPlainTextEdit widgets.
+
+    Args:
+      logWidget: Either QTextEdit or QPlainTextEdit widget
+      message: String message to log
+    """
+    if logWidget is None:
+      return
+
+    try:
+      # Try QPlainTextEdit method first
+      if hasattr(logWidget, 'appendPlainText'):
+        logWidget.appendPlainText(message)
+      # Fall back to QTextEdit method
+      elif hasattr(logWidget, 'append'):
+        logWidget.append(message)
+    except Exception as e:
+      print(f"Warning: Could not log message to widget: {e}")
+
+  def maximizePlotViewer(self, logWidget=None):
+    """
+    Maximizes the plot viewer by setting the layout to plot-focused view.
+
+    This method tries multiple approaches to find and set a plot-focused layout:
+    1. First tries common plot layout constants from vtkMRMLLayoutNode
+    2. Falls back to trying common numeric layout IDs for plot views
+    3. Logs results to the provided log widget or self.logInfoDC
+    4. Verifies that plot widget is accessible after layout change
+
+    Args:
+      logWidget: Optional QTextEdit or QPlainTextEdit widget for logging. If None, uses self.logInfoDC
+
+    Returns:
+      bool: True if successfully set plot layout and plot widget is accessible, False otherwise
+
+    Example usage from other methods:
+      # Use with default log widget (self.logInfoDC)
+      success = self.maximizePlotViewer()
+
+      # Use with specific log widget (supports both QTextEdit and QPlainTextEdit)
+      success = self.maximizePlotViewer(self.colorsEDALogInfo)  # QPlainTextEdit
+      success = self.maximizePlotViewer(self.populationLogInfo)  # QTextEdit
+
+      # Use from external code (if you have a reference to the widget instance)
+      widget = slicer.modules.interdeca.widgetRepresentation().self()
+      success = widget.maximizePlotViewer()
+    """
+    if logWidget is None:
+      logWidget = getattr(self, 'logInfoDC', None)
+
+    try:
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager:
+        # Set layout to plot-focused view - try different approaches
+        try:
+          # Method 1: Try the most reliable plot layout constants
+          plot_layout_constants_to_try = [
+            'SlicerLayoutOneUpPlotView',      # Single plot view - most reliable
+            'SlicerLayoutFourUpPlotView',     # Four-up plot view
+            'SlicerLayoutPlotView',           # Generic plot view
+            'SlicerLayoutTabbedSliceView'     # Tabbed view that supports plots
+          ]
+
+          layout_set = False
+          for const_name in plot_layout_constants_to_try:
+            try:
+              layout_id = getattr(slicer.vtkMRMLLayoutNode, const_name)
+              layoutManager.setLayout(layout_id)
+
+              # Give Slicer time to update the layout
+              slicer.app.processEvents()
+
+              # Verify that plot widget is accessible
+              plotWidget = layoutManager.plotWidget(0)
+              if plotWidget is not None:
+                self._logToWidget(logWidget, f"Maximized plot viewer for optimal visualization ({const_name})")
+                layout_set = True
+                break
+              else:
+                # Layout was set but plot widget is not accessible, try next option
+                continue
+            except AttributeError:
+              continue
+
+          if not layout_set:
+            # Method 2: Try well-known numeric layout IDs for plot views
+            # These are based on Slicer's standard layout definitions
+            plot_layout_ids_to_try = [
+              24, 25, 26, 27, 28, 29  # Extended range of plot layout IDs
+            ]
+            for layout_id in plot_layout_ids_to_try:
+              try:
+                layoutManager.setLayout(layout_id)
+
+                # Give Slicer time to update the layout
+                slicer.app.processEvents()
+
+                # Verify that plot widget is accessible
+                plotWidget = layoutManager.plotWidget(0)
+                if plotWidget is not None:
+                  self._logToWidget(logWidget, f"Maximized plot viewer for optimal visualization (layout ID {layout_id})")
+                  layout_set = True
+                  break
+              except:
+                continue
+
+          if not layout_set:
+            self._logToWidget(logWidget, "Warning: Could not find plot-compatible layout, keeping current layout")
+            return False
+
+          return True
+
+        except Exception as inner_e:
+          self._logToWidget(logWidget, f"Warning: Error setting plot layout: {inner_e}")
+          return False
+      else:
+        self._logToWidget(logWidget, "Warning: Could not access layout manager to maximize plot view")
+        return False
+    except Exception as e:
+      self._logToWidget(logWidget, f"Warning: Error maximizing plot viewer: {e}")
+      return False
+
+  def switchToOptimalViewLayout(self, viewType="3D", logWidget=None):
+    """
+    Switches to the optimal layout for the specified view type.
+
+    This is a convenience method that calls the appropriate maximization method
+    based on the requested view type.
+
+    Args:
+      viewType: String indicating the desired view type. Options: "3D", "plot"
+      logWidget: Optional QPlainTextEdit widget for logging. If None, uses self.logInfoDC
+
+    Returns:
+      bool: True if successfully switched to the requested layout, False otherwise
+
+    Example usage:
+      # Switch to 3D view
+      success = self.switchToOptimalViewLayout("3D")
+
+      # Switch to plot view with custom logging
+      success = self.switchToOptimalViewLayout("plot", self.colorsEDALogInfo)
+    """
+    if viewType.lower() == "3d":
+      return self.maximize3DViewer(logWidget)
+    elif viewType.lower() == "plot":
+      return self.maximizePlotViewer(logWidget)
+    else:
+      if logWidget is None:
+        logWidget = getattr(self, 'logInfoDC', None)
+      self._logToWidget(logWidget, f"Warning: Unknown view type '{viewType}'. Supported types: '3D', 'plot'")
+      return False
+
+  def createPopulationPlot(self, reducedData, textureNames, method):
+    """
+    Create a population analysis plot using Slicer's plotting functionality
+    with equal X/Y numeric ranges.
+
+    This method handles the UI aspects of plotting and should be called from
+    the Widget class after the Logic class has prepared the data.
+
+    Args:
+      reducedData: numpy array of 2D coordinates for each texture
+      textureNames: list of texture names corresponding to the data points
+      method: string indicating the dimensionality reduction method ("PCA" or "UMAP")
+
+    Returns:
+      dict with success status and plot node information
+    """
+    try:
+      # --- series ---
+      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+      plotSeriesNode.SetName(f"{method}")
+
+      xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
+      yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
+      xArray.SetNumberOfTuples(len(reducedData))
+      yArray.SetNumberOfTuples(len(reducedData))
+      labelsArray = vtk.vtkStringArray(); labelsArray.SetName("Texture Names")
+      labelsArray.SetNumberOfTuples(len(reducedData))
+
+      for i, (point, name) in enumerate(zip(reducedData, textureNames)):
+        xArray.SetValue(i, float(point[0]))
+        yArray.SetValue(i, float(point[1]))
+        labelsArray.SetValue(i, name)
+
+      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      tableNode.SetName(f"MultiRecolor_Population_Data_{method}")
+      tableNode.AddColumn(xArray); tableNode.AddColumn(yArray); tableNode.AddColumn(labelsArray)
+
+      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+      plotSeriesNode.SetXColumnName(xArray.GetName())
+      plotSeriesNode.SetYColumnName(yArray.GetName())
+      plotSeriesNode.SetLabelColumnName(labelsArray.GetName())
+      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+      plotSeriesNode.SetMarkerSize(8)
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+      plotSeriesNode.SetColor(0.2, 0.6, 0.8)
+
+      # --- chart ---
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"MultiRecolor_Population_Chart_{method}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+      plotChartNode.SetTitle(f"Multi-Texture Population Analysis ({method})")
+      plotChartNode.SetXAxisTitle(f"{method} Component 1")
+      plotChartNode.SetYAxisTitle(f"{method} Component 2")
+
+      # Calculate axis ranges with proper validation
+      if len(reducedData) > 0 and reducedData.shape[1] >= 2:
+        x_min, x_max = float(np.min(reducedData[:,0])), float(np.max(reducedData[:,0]))
+        y_min, y_max = float(np.min(reducedData[:,1])), float(np.max(reducedData[:,1]))
+
+        # Ensure valid ranges (avoid NaN, inf, or identical min/max)
+        if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max):
+          x_center = (x_min + x_max) / 2.0
+          y_center = (y_min + y_max) / 2.0
+          x_span = x_max - x_min
+          y_span = y_max - y_min
+
+          # Use the larger span for both axes to create equal scaling
+          span = max(x_span, y_span)
+          span = max(span, 1e-6)  # Avoid zero span
+          span *= 1.2  # Add 20% padding
+
+          # Set equal ranges centered on the data
+          x_range_min = x_center - span/2.0
+          x_range_max = x_center + span/2.0
+          y_range_min = y_center - span/2.0
+          y_range_max = y_center + span/2.0
+
+          # Disable auto-range BEFORE setting manual ranges
+          if hasattr(plotChartNode, "SetXAxisRangeAuto"):
+            plotChartNode.SetXAxisRangeAuto(False)
+          if hasattr(plotChartNode, "SetYAxisRangeAuto"):
+            plotChartNode.SetYAxisRangeAuto(False)
+
+          # Set the ranges
+          plotChartNode.SetXAxisRange(x_range_min, x_range_max)
+          plotChartNode.SetYAxisRange(y_range_min, y_range_max)
+          plotChartNode.Modified()
+        else:
+          # Data contains invalid values, use auto-range
+          self._logToWidget(self.populationLogInfo, "Warning: Invalid data ranges detected, using auto-range")
+      else:
+        # No data or insufficient dimensions, use auto-range
+        self._logToWidget(self.populationLogInfo, "Warning: Insufficient data for manual range setting, using auto-range")
+
+      # Maximize plot viewer and show the plot
+      self._logToWidget(self.populationLogInfo, "Attempting to maximize plot viewer...")
+      plotLayoutSuccess = self.maximizePlotViewer(self.populationLogInfo)
+      if not plotLayoutSuccess:
+        self._logToWidget(self.populationLogInfo, "Warning: Could not set optimal plot layout, using current layout")
+
+      # Show the plot in the plot view
+      layoutManager = slicer.app.layoutManager()
+      if layoutManager is not None:
+        # Try to get plot widget and display the chart
+        plotWidget = layoutManager.plotWidget(0)
+        if plotWidget is not None:
+          plotViewNode = plotWidget.mrmlPlotViewNode()
+          if plotViewNode is not None:
+            plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+            self._logToWidget(self.populationLogInfo, "Plot successfully displayed in plot viewer")
+
+            # Force the plot widget to fit the view
+            try:
+              plotWidget.fitToContent()
+            except:
+              pass  # fitToContent might not be available in all Slicer versions
+          else:
+            self._logToWidget(self.populationLogInfo, "Warning: Plot view node not available")
+        else:
+          self._logToWidget(self.populationLogInfo, "Warning: Could not access plot widget - plot will be available in Data module")
+
+          # Fallback: Try to switch to a different layout that might work better
+          try:
+            # Try the tabbed slice view which often has plot capabilities
+            layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutTabbedSliceView)
+            slicer.app.processEvents()
+            plotWidget = layoutManager.plotWidget(0)
+            if plotWidget is not None:
+              plotViewNode = plotWidget.mrmlPlotViewNode()
+              if plotViewNode is not None:
+                plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+                self._logToWidget(self.populationLogInfo, "Plot displayed using fallback layout")
+          except:
+            pass
+      else:
+        self._logToWidget(self.populationLogInfo, "Warning: Layout manager not available")
+
+      return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
+
+    except Exception as e:
+      self._logToWidget(self.populationLogInfo, f"Error creating population plot: {e}")
+      import traceback; traceback.print_exc()
+      return {"success": False}
+
   def updateUIAfterDeCACompletion(self):
     """
     Update UI components after DeCA completes successfully.
@@ -3388,52 +3769,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         except Exception as e:
           self.logInfoDC.appendPlainText(f"Warning: Error auto-applying texture: {e}")
 
-        # Maximize the 3D viewer
-        try:
-          layoutManager = slicer.app.layoutManager()
-          if layoutManager:
-            # Set layout to 3D only view - try different approaches
-            try:
-              # Method 1: Try common layout constants
-              layout_constants_to_try = [
-                'SlicerLayoutThreeDOnlyView',
-                'SlicerLayoutOneUp3DView',
-                'SlicerLayout3DView',
-                'SlicerLayoutThreeDView'
-              ]
-
-              layout_set = False
-              for const_name in layout_constants_to_try:
-                try:
-                  layout_id = getattr(slicer.vtkMRMLLayoutNode, const_name)
-                  layoutManager.setLayout(layout_id)
-                  self.logInfoDC.appendPlainText(f"Maximized 3D viewer for optimal visualization ({const_name})")
-                  layout_set = True
-                  break
-                except AttributeError:
-                  continue
-
-              if not layout_set:
-                # Method 2: Try common numeric layout IDs for 3D-only views
-                layout_ids_to_try = [6, 4, 5, 7]  # Common 3D layout IDs
-                for layout_id in layout_ids_to_try:
-                  try:
-                    layoutManager.setLayout(layout_id)
-                    self.logInfoDC.appendPlainText(f"Maximized 3D viewer for optimal visualization (layout ID {layout_id})")
-                    layout_set = True
-                    break
-                  except:
-                    continue
-
-              if not layout_set:
-                self.logInfoDC.appendPlainText("Warning: Could not find 3D-only layout, keeping current layout")
-
-            except Exception as inner_e:
-              self.logInfoDC.appendPlainText(f"Warning: Error setting 3D layout: {inner_e}")
-          else:
-            self.logInfoDC.appendPlainText("Warning: Could not access layout manager to maximize 3D view")
-        except Exception as e:
-          self.logInfoDC.appendPlainText(f"Warning: Error maximizing 3D viewer: {e}")
+        # Maximize the 3D viewer using the refactored method
+        self.maximize3DViewer()
 
       except Exception as e:
         self.logInfoDC.appendPlainText(f"Warning: Error during additional Recolor tab automation: {e}")
@@ -3704,6 +4041,18 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       if result and isinstance(result, dict) and result.get('success'):
         self.colorsEDALogInfo.appendPlainText("Analysis completed successfully!")
+
+        # Create plot using Widget's plot creation method
+        plotResult = self.createColorsEDAPlot(
+          result['reducedData'],
+          result['specimenNames'],
+          result['nFaces'],
+          result['colorSpace'],
+          result['algorithm'],
+          result.get('originalColorData'),
+          result.get('enhanceColors', False)
+        )
+
         # Save color data and enable histogram selector
         if 'colorData' in result:
           self._lastColorData = result['colorData']  # Full dataset
@@ -3717,12 +4066,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           self._lastValueCutoff = valueCutoff
 
           # Store the 2D plot chart node for view switching
-          if 'chartNode' in result and result['chartNode']:
-            self._last2DPlotChartNode = result['chartNode']
+          if plotResult and plotResult.get('chartNode'):
+            self._last2DPlotChartNode = plotResult['chartNode']
 
           # Show appropriate view based on radio button selection
           if self.view2DRadio.isChecked():
             self.colorsEDALogInfo.appendPlainText("Results plotted in 2D viewer")
+            # Try to maximize the plot viewer
+            try:
+              self.maximizePlotViewer(self.colorsEDALogInfo)
+            except Exception as e:
+              self.colorsEDALogInfo.appendPlainText(f"Note: Could not maximize plot viewer: {e}")
           else:
             self.colorsEDALogInfo.appendPlainText("Channel histogram view enabled")
             try:
@@ -4185,6 +4539,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.recolorProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
 
+      # Maximize the 3D view
+      self.maximize3DViewer(self.recolorLogInfo)
+
     except Exception as e:
       self.recolorProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
@@ -4230,7 +4587,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     textureFiles = []
 
     for filename in os.listdir(textureDir):
-      if any(filename.lower().endswith(ext) for ext in imageExtensions):
+      if any(filename.lower().endswith(ext) for ext in imageExtensions) and not filename.startswith('average_texture'):
         textureFiles.append(filename)
 
     self.multiRecolorTextureFiles = sorted(textureFiles)
@@ -4372,6 +4729,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.individualProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
 
+      # Maximize the 3D view
+      self.maximize3DViewer(self.individualLogInfo)
+
     except Exception as e:
       self.individualProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
@@ -4411,7 +4771,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       logic = InterDeCALogic()
 
-      # Perform population analysis
+      # Perform population analysis (data preparation only)
       result = logic.performPopulationAnalysis(
         atlasModel, textureDir, self.multiRecolorTextureFiles,
         self.multiRecolorClusterCenters, self.multiRecolorFaceAreas,
@@ -4421,8 +4781,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       )
 
       if result.get("success", False):
-        self.populationLogInfo.append("Population analysis completed successfully!")
-        self.populationLogInfo.append(f"Created {dimReductionMethod} plot with {len(self.multiRecolorTextureFiles)} texture points")
+        self.populationLogInfo.append("Population analysis data preparation completed successfully!")
+
+        # Create the plot in the UI layer
+        self.populationLogInfo.append("Creating population analysis plot...")
+        plotResult = self.createPopulationPlot(
+          result["reduced_data"],
+          result["texture_names"],
+          result["method"]
+        )
+
+        if plotResult.get("success", False):
+          self.populationLogInfo.append(f"Created {dimReductionMethod} plot with {len(self.multiRecolorTextureFiles)} texture points")
+        else:
+          self.populationLogInfo.append("Plot creation failed - data will be available in Data module")
       else:
         self.populationLogInfo.append("Population analysis failed - check log for details")
 
@@ -4490,6 +4862,185 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.clusteringLogInfo.append("Using cached face areas")
 
     return self.faceAreasCache[modelId]
+
+  # ================================ PLOT CREATION METHODS ================================
+  # These methods handle UI aspects of plotting and were moved from Logic class
+
+  def _createStandardPlot(self, reducedData, algorithm, colorSpace):
+    """Create a standard single-series scatter plot"""
+    try:
+      # Create a scatter plot node
+      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+      plotSeriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}")
+
+      # Create arrays for the plot data
+      xArray = vtk.vtkFloatArray()
+      xArray.SetName(f"{algorithm}_Component_1")
+      xArray.SetNumberOfTuples(reducedData.shape[0])
+
+      yArray = vtk.vtkFloatArray()
+      yArray.SetName(f"{algorithm}_Component_2")
+      yArray.SetNumberOfTuples(reducedData.shape[0])
+
+      # Fill arrays with data
+      for i in range(reducedData.shape[0]):
+        xArray.SetValue(i, reducedData[i, 0])
+        yArray.SetValue(i, reducedData[i, 1])
+
+      # Create table for the plot
+      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}")
+      tableNode.AddColumn(xArray)
+      tableNode.AddColumn(yArray)
+
+      # Set up the plot series
+      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+      plotSeriesNode.SetXColumnName(xArray.GetName())
+      plotSeriesNode.SetYColumnName(yArray.GetName())
+      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+      plotSeriesNode.SetMarkerSize(6)
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+
+      # Create plot chart
+      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+      plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
+      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+
+      # Show in plot view
+      layoutManager = slicer.app.layoutManager()
+      plotWidget = layoutManager.plotWidget(0)
+      plotViewNode = plotWidget.mrmlPlotViewNode()
+      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+      return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+      print(f"Error creating standard plot: {e}")
+      return {"success": False, "chartNode": None}
+
+  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False):
+    """
+    Render colored scatter by quantizing hue into bins and creating one series per bin.
+    This avoids the 'single color per series' limitation in Slicer plots.
+    """
+    try:
+        import colorsys
+
+        # 1) Compute hue (deg), sat, val from your 4D HSV repr
+        hue_cos = originalColorData[:, 0]
+        hue_sin = originalColorData[:, 1]
+        hue_deg = (np.degrees(np.arctan2(hue_sin, hue_cos)) + 360.0) % 360.0  # [0,360)
+        sat = np.clip(originalColorData[:, 2] / 100.0, 0.0, 1.0)
+        val = np.clip(originalColorData[:, 3] / 100.0, 0.0, 1.0)
+
+        # 2) Optional visibility boost
+        if enhanceColors:
+            sat = np.maximum(sat, 0.7)
+            val = np.maximum(val, 0.8)
+
+        min_hue = 0.0
+        max_hue = 360.0
+        min_hue = np.minimum(min_hue, np.min(hue_deg))
+        max_hue = np.maximum(max_hue, np.max(hue_deg))
+
+        # 3) Bin hues
+        n_bins = 36  # 10° per bin; bump to 72 if you want finer gradation
+        edges = np.linspace(min_hue, max_hue, n_bins + 1, endpoint=True)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        bin_idx = np.clip(np.digitize(hue_deg, edges, right=False) - 1, 0, n_bins - 1)
+
+        # 4) Make a chart and populate one series per bin
+        plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+        plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
+        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors"
+                               + (" (Enhanced Colors)" if enhanceColors else " (Actual Colors)"))
+        plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
+        plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
+        plotChartNode.SetLegendVisibility(False)
+
+        # Build series for occupied bins only (keeps node count tight)
+        for k in range(n_bins):
+            mask = (bin_idx == k)
+            if not np.any(mask):
+                continue
+
+            X = reducedData[mask, 0]
+            Y = reducedData[mask, 1]
+
+            # Representative color for the bin: use bin center hue and the mean sat/val of points in the bin
+            mean_sat = float(np.mean(sat[mask]))
+            mean_val = float(np.mean(val[mask]))
+            r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, mean_sat, mean_val)
+
+            # Build table
+            xArray = vtk.vtkFloatArray(); xArray.SetName(f"{algorithm}_Component_1"); xArray.SetNumberOfTuples(X.shape[0])
+            yArray = vtk.vtkFloatArray(); yArray.SetName(f"{algorithm}_Component_2"); yArray.SetNumberOfTuples(Y.shape[0])
+            for i in range(X.shape[0]):
+                xArray.SetValue(i, float(X[i])); yArray.SetValue(i, float(Y[i]))
+
+            tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+            tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}_bin{k:02d}")
+            tableNode.AddColumn(xArray); tableNode.AddColumn(yArray)
+
+            seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+            seriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}_bin{k:02d}")
+            seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+            seriesNode.SetXColumnName(xArray.GetName())
+            seriesNode.SetYColumnName(yArray.GetName())
+            seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+            seriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
+            seriesNode.SetMarkerSize(6)
+            seriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+            seriesNode.SetColor(float(r), float(g), float(b))
+
+            plotChartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
+
+        # Show chart
+        layoutManager = slicer.app.layoutManager()
+        plotWidget = layoutManager.plotWidget(0)
+        plotViewNode = plotWidget.mrmlPlotViewNode()
+        plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+        return {"success": True, "chartNode": plotChartNode}
+
+    except Exception as e:
+        print(f"Error creating colored scatter plot: {e}")
+        return {"success": False, "chartNode": None}
+
+  def createColorsEDAPlot(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False):
+    """
+    Create a Colors EDA plot using Slicer's plotting functionality.
+
+    This method handles the UI aspects of plotting and should be called from
+    the Widget class after the Logic class has prepared the data.
+
+    Args:
+        reducedData: numpy array of shape (N_samples, 2)
+        specimenNames: list of specimen names
+        nFaces: number of faces per specimen
+        colorSpace: "RGB" or "HSV"
+        algorithm: "PCA", "ICA", or "UMAP"
+        originalColorData: numpy array of original color data for hue-based coloring (optional)
+        enhanceColors: whether to enhance colors for visibility
+
+    Returns:
+        dict: {"success": bool, "chartNode": node} if successful
+    """
+    try:
+      # Create enhanced plot with color information when HSV data is available
+      if colorSpace == "HSV" and originalColorData is not None and originalColorData.shape[1] >= 4:
+        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors)
+
+      # Standard single-series plot for RGB or when no color data available
+      return self._createStandardPlot(reducedData, algorithm, colorSpace)
+
+    except Exception as e:
+      print(f"Error creating Colors EDA plot: {e}")
+      return {"success": False, "chartNode": None}
 
 
 #
@@ -6528,37 +7079,31 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(90)
 
-      # Plot results in 2D viewer
+      if progressCallback:
+        progressCallback(100)
+
+      # Return structured data for UI layer to create plots
       # For HSV with filtering, we need to adjust the specimen information
       if colorSpace == "HSV" and dimRedData.shape[0] != colorData.shape[0]:
         # Calculate how many faces per specimen passed the filter
         filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+        plotNFaces = filteredNFaces
       else:
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+        plotNFaces = nFaces
 
-      if progressCallback:
-        progressCallback(100)
-
-      # Return result details for downstream UI updates (e.g., histograms)
-      # Always return the FULL color data for histogram use, not the filtered data
-      if plotResult and isinstance(plotResult, dict):
-        return {
-          "success": True,
-          "colorData": colorData,  # Full dataset for histograms
-          "colorSpace": colorSpace,
-          "chartNode": plotResult.get("chartNode"),
-          "satCutoff": satCutoff,
-          "valueCutoff": valueCutoff
-        }
-      else:
-        return {
-          "success": bool(plotResult),
-          "colorData": colorData,  # Full dataset for histograms
-          "colorSpace": colorSpace,
-          "satCutoff": satCutoff,
-          "valueCutoff": valueCutoff
-        }
+      return {
+        "success": True,
+        "reducedData": reducedData,
+        "specimenNames": specimenNames,
+        "nFaces": plotNFaces,
+        "colorSpace": colorSpace,
+        "algorithm": dimRedAlgo,
+        "originalColorData": dimRedData,  # Filtered data for plotting
+        "colorData": colorData,  # Full dataset for histograms
+        "satCutoff": satCutoff,
+        "valueCutoff": valueCutoff,
+        "enhanceColors": enhanceColors
+      }
 
     except Exception as e:
       if logCallback:
@@ -7121,202 +7666,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Error in dimensionality reduction: {e}")
       return None
 
-  def _plotColorsEDAResults(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False):
-    """
-    Plot the dimensionality reduction results in a 2D viewer
 
-    Args:
-        reducedData: numpy array of shape (N_samples, 2)
-        specimenNames: list of specimen names
-        nFaces: number of faces per specimen
-        colorSpace: "RGB" or "HSV"
-        algorithm: "PCA", "ICA", or "UMAP"
-        originalColorData: numpy array of original color data for hue-based coloring (optional)
-        enhanceColors: whether to enhance colors for visibility
 
-    Returns:
-        dict: {"success": bool, "chartNode": node} if successful
-    """
-    try:
-      # Create enhanced plot with color information when HSV data is available
-      if colorSpace == "HSV" and originalColorData is not None and originalColorData.shape[1] >= 4:
-        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors)
 
-      # Standard single-series plot for RGB or when no color data available
-      return self._createStandardPlot(reducedData, algorithm, colorSpace)
 
-      # Create plot chart
-      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
-      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
 
-      # Set title based on whether hue coloring is used
-      if colorArray is not None:
-        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors (Hue-Colored)")
-      else:
-        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
-
-      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
-      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
-
-      # Show in plot view
-      layoutManager = slicer.app.layoutManager()
-      plotWidget = layoutManager.plotWidget(0)
-      plotViewNode = plotWidget.mrmlPlotViewNode()
-      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-
-      # Return both success status and chart node for UI to store
-      return {"success": True, "chartNode": plotChartNode}
-
-    except Exception as e:
-      print(f"Error plotting results: {e}")
-      return {"success": False, "chartNode": None}
-
-  def _createStandardPlot(self, reducedData, algorithm, colorSpace):
-    """Create a standard single-series scatter plot"""
-    try:
-      # Create a scatter plot node
-      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-      plotSeriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}")
-
-      # Create arrays for the plot data
-      xArray = vtk.vtkFloatArray()
-      xArray.SetName(f"{algorithm}_Component_1")
-      xArray.SetNumberOfTuples(reducedData.shape[0])
-
-      yArray = vtk.vtkFloatArray()
-      yArray.SetName(f"{algorithm}_Component_2")
-      yArray.SetNumberOfTuples(reducedData.shape[0])
-
-      # Fill arrays with data
-      for i in range(reducedData.shape[0]):
-        xArray.SetValue(i, reducedData[i, 0])
-        yArray.SetValue(i, reducedData[i, 1])
-
-      # Create table for the plot
-      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
-      tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}")
-      tableNode.AddColumn(xArray)
-      tableNode.AddColumn(yArray)
-
-      # Set up the plot series
-      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
-      plotSeriesNode.SetXColumnName(xArray.GetName())
-      plotSeriesNode.SetYColumnName(yArray.GetName())
-      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
-      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
-      plotSeriesNode.SetMarkerSize(6)
-      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
-
-      # Create plot chart
-      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-      plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
-      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
-      plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
-      plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
-      plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
-
-      # Show in plot view
-      layoutManager = slicer.app.layoutManager()
-      plotWidget = layoutManager.plotWidget(0)
-      plotViewNode = plotWidget.mrmlPlotViewNode()
-      plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-
-      return {"success": True, "chartNode": plotChartNode}
-
-    except Exception as e:
-      print(f"Error creating standard plot: {e}")
-      return {"success": False, "chartNode": None}
-
-  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False):
-    """
-    Render colored scatter by quantizing hue into bins and creating one series per bin.
-    This avoids the 'single color per series' limitation in Slicer plots.
-    """
-    try:
-        import colorsys
-
-        # 1) Compute hue (deg), sat, val from your 4D HSV repr
-        hue_cos = originalColorData[:, 0]
-        hue_sin = originalColorData[:, 1]
-        hue_deg = (np.degrees(np.arctan2(hue_sin, hue_cos)) + 360.0) % 360.0  # [0,360)
-        sat = np.clip(originalColorData[:, 2] / 100.0, 0.0, 1.0)
-        val = np.clip(originalColorData[:, 3] / 100.0, 0.0, 1.0)
-
-        # 2) Optional visibility boost
-        if enhanceColors:
-            sat = np.maximum(sat, 0.7)
-            val = np.maximum(val, 0.8)
-
-        min_hue = 0.0
-        max_hue = 360.0
-        min_hue = np.minimum(min_hue, np.min(hue_deg))
-        max_hue = np.maximum(max_hue, np.max(hue_deg))
-
-        # 3) Bin hues
-        n_bins = 36  # 10° per bin; bump to 72 if you want finer gradation
-        edges = np.linspace(min_hue, max_hue, n_bins + 1, endpoint=True)
-        centers = (edges[:-1] + edges[1:]) / 2.0
-        bin_idx = np.clip(np.digitize(hue_deg, edges, right=False) - 1, 0, n_bins - 1)
-
-        # 4) Make a chart and populate one series per bin
-        plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-        plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
-        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors"
-                               + (" (Enhanced Colors)" if enhanceColors else " (Actual Colors)"))
-        plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
-        plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
-        plotChartNode.SetLegendVisibility(False)
-
-        # Build series for occupied bins only (keeps node count tight)
-        for k in range(n_bins):
-            mask = (bin_idx == k)
-            if not np.any(mask):
-                continue
-
-            X = reducedData[mask, 0]
-            Y = reducedData[mask, 1]
-
-            # Representative color for the bin: use bin center hue and the mean sat/val of points in the bin
-            mean_sat = float(np.mean(sat[mask]))
-            mean_val = float(np.mean(val[mask]))
-            r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, mean_sat, mean_val)
-
-            # Build table
-            xArray = vtk.vtkFloatArray(); xArray.SetName(f"{algorithm}_Component_1"); xArray.SetNumberOfTuples(X.shape[0])
-            yArray = vtk.vtkFloatArray(); yArray.SetName(f"{algorithm}_Component_2"); yArray.SetNumberOfTuples(Y.shape[0])
-            for i in range(X.shape[0]):
-                xArray.SetValue(i, float(X[i])); yArray.SetValue(i, float(Y[i]))
-
-            tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
-            tableNode.SetName(f"Colors_EDA_Data_{algorithm}_{colorSpace}_bin{k:02d}")
-            tableNode.AddColumn(xArray); tableNode.AddColumn(yArray)
-
-            seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-            seriesNode.SetName(f"Colors_EDA_{algorithm}_{colorSpace}_bin{k:02d}")
-            seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
-            seriesNode.SetXColumnName(xArray.GetName())
-            seriesNode.SetYColumnName(yArray.GetName())
-            seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
-            seriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
-            seriesNode.SetMarkerSize(6)
-            seriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
-            seriesNode.SetColor(float(r), float(g), float(b))
-
-            plotChartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
-
-        # Show chart
-        layoutManager = slicer.app.layoutManager()
-        plotWidget = layoutManager.plotWidget(0)
-        plotViewNode = plotWidget.mrmlPlotViewNode()
-        plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-
-        return {"success": True, "chartNode": plotChartNode}
-
-    except Exception as e:
-        print(f"Error creating binned colored scatter: {e}")
-        import traceback; traceback.print_exc()
-        return {"success": False, "chartNode": None}
 
   def runColorsEDAFromSampledData(self, sampledColorData, specimenNames, colorSpace, dimRedAlgo, progressCallback=None, logCallback=None, satCutoff=10.0, valueCutoff=10.0, enhanceColors=False):
     """
@@ -7424,37 +7778,31 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(70)
 
-      # Plot results in 2D viewer
+      if progressCallback:
+        progressCallback(100)
+
+      # Return structured data for UI layer to create plots
       # For HSV with filtering, we need to adjust the specimen information
       if colorSpace == "HSV" and dimRedData.shape[0] != colorDataFlat.shape[0]:
         # Calculate how many faces per specimen passed the filter
         filteredNFaces = dimRedData.shape[0] // nSpecimens if nSpecimens > 0 else 0
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, filteredNFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+        plotNFaces = filteredNFaces
       else:
-        plotResult = self._plotColorsEDAResults(reducedData, specimenNames, nSampledFaces, colorSpace, dimRedAlgo, dimRedData, enhanceColors)
+        plotNFaces = nSampledFaces
 
-      if progressCallback:
-        progressCallback(100)
-
-      # Return result details for downstream UI updates (e.g., histograms)
-      # Always return the FULL color data for histogram use, not the filtered data
-      if plotResult and isinstance(plotResult, dict):
-        return {
-          "success": True,
-          "colorData": colorDataFlat,  # Full dataset for histograms
-          "colorSpace": colorSpace,
-          "chartNode": plotResult.get("chartNode"),
-          "satCutoff": satCutoff,
-          "valueCutoff": valueCutoff
-        }
-      else:
-        return {
-          "success": bool(plotResult),
-          "colorData": colorDataFlat,  # Full dataset for histograms
-          "colorSpace": colorSpace,
-          "satCutoff": satCutoff,
-          "valueCutoff": valueCutoff
-        }
+      return {
+        "success": True,
+        "reducedData": reducedData,
+        "specimenNames": specimenNames,
+        "nFaces": plotNFaces,
+        "colorSpace": colorSpace,
+        "algorithm": dimRedAlgo,
+        "originalColorData": dimRedData,  # Filtered data for plotting
+        "colorData": colorDataFlat,  # Full dataset for histograms
+        "satCutoff": satCutoff,
+        "valueCutoff": valueCutoff,
+        "enhanceColors": enhanceColors
+      }
 
     except Exception as e:
       if logCallback:
@@ -8235,25 +8583,18 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(90)
 
-      # Create plot
       if logCallback:
-        logCallback("Creating population analysis plot...")
-
-      plotResult = self._createPopulationPlot(reducedData, textureNames, dimReductionMethod)
+        logCallback(f"Population analysis data preparation completed successfully!")
+        logCallback(f"Prepared data for {len(textureNames)} textures in 2D {dimReductionMethod} space")
 
       if progressCallback:
         progressCallback(100)
-
-      if logCallback:
-        logCallback(f"Population analysis completed successfully!")
-        logCallback(f"Plotted {len(textureNames)} textures in 2D {dimReductionMethod} space")
 
       return {
         "success": True,
         "reduced_data": reducedData,
         "texture_names": textureNames,
-        "method": dimReductionMethod,
-        "plot_result": plotResult
+        "method": dimReductionMethod
       }
 
     except Exception as e:
@@ -8263,101 +8604,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return {"success": False}
 
-  def _createPopulationPlot(self, reducedData, textureNames, method):
-    """
-    Create a population analysis plot using Slicer's plotting functionality
-    with equal X/Y numeric ranges.
-    """
-    try:
-      # --- series ---
-      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-      plotSeriesNode.SetName(f"{method}")
 
-      xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
-      yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
-      xArray.SetNumberOfTuples(len(reducedData))
-      yArray.SetNumberOfTuples(len(reducedData))
-      labelsArray = vtk.vtkStringArray(); labelsArray.SetName("Texture Names")
-      labelsArray.SetNumberOfTuples(len(reducedData))
-
-      for i, (point, name) in enumerate(zip(reducedData, textureNames)):
-        xArray.SetValue(i, float(point[0]))
-        yArray.SetValue(i, float(point[1]))
-        labelsArray.SetValue(i, name)
-
-      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
-      tableNode.SetName(f"MultiRecolor_Population_Data_{method}")
-      tableNode.AddColumn(xArray); tableNode.AddColumn(yArray); tableNode.AddColumn(labelsArray)
-
-      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
-      plotSeriesNode.SetXColumnName(xArray.GetName())
-      plotSeriesNode.SetYColumnName(yArray.GetName())
-      plotSeriesNode.SetLabelColumnName(labelsArray.GetName())
-      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
-      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCircle)
-      plotSeriesNode.SetMarkerSize(8)
-      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
-      plotSeriesNode.SetColor(0.2, 0.6, 0.8)
-
-      # --- chart ---
-      plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-      plotChartNode.SetName(f"MultiRecolor_Population_Chart_{method}")
-      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
-      plotChartNode.SetTitle(f"Multi-Texture Population Analysis ({method})")
-      plotChartNode.SetXAxisTitle(f"{method} Component 1")
-      plotChartNode.SetYAxisTitle(f"{method} Component 2")
-
-      # Disable auto-range BEFORE setting manual ranges
-      if hasattr(plotChartNode, "SetXAxisRangeAuto"):
-        plotChartNode.SetXAxisRangeAuto(False)
-      if hasattr(plotChartNode, "SetYAxisRangeAuto"):
-        plotChartNode.SetYAxisRangeAuto(False)
-
-      # Equal numeric span on both axes
-      x_min, x_max = float(np.min(reducedData[:,0])), float(np.max(reducedData[:,0]))
-      y_min, y_max = float(np.min(reducedData[:,1])), float(np.max(reducedData[:,1]))
-      x_center = (x_min + x_max) / 2.0
-      y_center = (y_min + y_max) / 2.0
-      span = max(x_max - x_min, y_max - y_min)
-      span = max(span, 1e-6)  # avoid zero span
-      span *= 1.2  # 20% padding
-
-      plotChartNode.SetXAxisRange(x_center - span/2.0, x_center + span/2.0)
-      plotChartNode.SetYAxisRange(y_center - span/2.0, y_center + span/2.0)
-      plotChartNode.Modified()
-
-      # show
-      layoutManager = slicer.app.layoutManager()
-      if layoutManager is None:
-        print("Layout manager not available")
-        return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
-
-      # Ensure we have a layout that supports plots
-      layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpPlotView)
-
-      plotWidget = layoutManager.plotWidget(0)
-      if plotWidget is None:
-        print("Plot widget not available, trying alternative layout...")
-        # Try a different layout that includes plots
-        layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutTabbedSliceView)
-        layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpPlotView)
-        plotWidget = layoutManager.plotWidget(0)
-
-      if plotWidget is not None:
-        plotViewNode = plotWidget.mrmlPlotViewNode()
-        if plotViewNode is not None:
-          plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-        else:
-          print("Plot view node not available")
-      else:
-        print("Could not create plot widget - plot will be available in Data module")
-
-      return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
-
-    except Exception as e:
-      print(f"Error creating population plot: {e}")
-      import traceback; traceback.print_exc()
-      return {"success": False}
 
 
   def applyQuantizedFaceColorsFromTexture(self, modelNode, texturePath, numClusters, useHighContrastPalette=False, progressCallback=None, logCallback=None):
