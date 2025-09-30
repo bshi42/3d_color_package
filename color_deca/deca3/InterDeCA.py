@@ -1212,6 +1212,75 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorFaceAreas = None
     self.multiRecolorTextureFiles = []
     self.faceAreasCache = {}  # Cache face areas by model node ID
+    
+    # Restore saved texture directories from previous sessions
+    self.restoreTextureDirectories()
+
+  def restoreTextureDirectories(self):
+    """Restore texture directory paths from saved settings"""
+    # Restore DeCA texture directory (only if empty)
+    savedDecaTexture = self.settings.value("textureDirectoryDC", "")
+    if savedDecaTexture and not self.textureDirectoryDC.currentPath:
+      self.textureDirectoryDC.setCurrentPath(savedDecaTexture)
+    
+    # For Colors EDA, Recolor, and MultiRecolor: share texture directories
+    # Try to restore from saved settings, or sync from other tabs if empty
+    savedBakedTextures = self.settings.value("bakedTexturesDirectory", "")
+    savedRecolor = self.settings.value("recolorTexturesDirectory", "")
+    savedMultiRecolor = self.settings.value("multiRecolorTextureDirectory", "")
+    
+    # Use the first available non-empty path as the common texture directory
+    commonTexturePath = savedBakedTextures or savedRecolor or savedMultiRecolor
+    
+    if commonTexturePath:
+      # Set all three texture directories to the common path
+      self.bakedTexturesDirectorySelector.setCurrentPath(commonTexturePath)
+      self.recolorTexturesDirectorySelector.setCurrentPath(commonTexturePath)
+      self.multiRecolorTextureDirectorySelector.setCurrentPath(commonTexturePath)
+  
+  def saveTextureDirectory(self, key, path):
+    """Save a texture directory path to settings and sync across tabs"""
+    if path:
+      self.settings.setValue(key, path)
+      # Sync texture directories across Colors EDA, Recolor, and MultiRecolor tabs
+      self.syncTextureDirectories(key, path)
+  
+  def syncTextureDirectories(self, sourceKey, path):
+    """Sync texture directory across Colors EDA, Recolor, and MultiRecolor tabs"""
+    if not path:
+      return
+    
+    # Sync between Colors EDA, Recolor, and MultiRecolor (not DeCA)
+    # Only update if the target directory is empty
+    if sourceKey == "bakedTexturesDirectory":
+      # Update Recolor if empty
+      if not self.recolorTexturesDirectorySelector.currentPath:
+        self.recolorTexturesDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("recolorTexturesDirectory", path)
+      # Update MultiRecolor if empty
+      if not self.multiRecolorTextureDirectorySelector.currentPath:
+        self.multiRecolorTextureDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("multiRecolorTextureDirectory", path)
+    
+    elif sourceKey == "recolorTexturesDirectory":
+      # Update Colors EDA if empty
+      if not self.bakedTexturesDirectorySelector.currentPath:
+        self.bakedTexturesDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("bakedTexturesDirectory", path)
+      # Update MultiRecolor if empty
+      if not self.multiRecolorTextureDirectorySelector.currentPath:
+        self.multiRecolorTextureDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("multiRecolorTextureDirectory", path)
+    
+    elif sourceKey == "multiRecolorTextureDirectory":
+      # Update Colors EDA if empty
+      if not self.bakedTexturesDirectorySelector.currentPath:
+        self.bakedTexturesDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("bakedTexturesDirectory", path)
+      # Update Recolor if empty
+      if not self.recolorTexturesDirectorySelector.currentPath:
+        self.recolorTexturesDirectorySelector.setCurrentPath(path)
+        self.settings.setValue("recolorTexturesDirectory", path)
 
   def onExistingSegmentationChanged(self):
     """Handle selection of existing segmentation"""
@@ -1427,8 +1496,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if valid and count > 0:
       self.validateTextureMatching()
 
-    # Save the directory path
-    self.settings.setValue("textureDirectory", directory)
+    # Save the directory path for persistence
+    self.saveTextureDirectory("textureDirectoryDC", directory)
     self.onParameterSelectDC()
 
   def restoreSavedDirectories(self):
@@ -3818,6 +3887,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     texturesSelected = bool(self.bakedTexturesDirectorySelector.currentPath and
                            os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
     self.sampleDataButton.enabled = atlasSelected and texturesSelected
+    
+    # Save the texture directory for persistence
+    if self.bakedTexturesDirectorySelector.currentPath:
+      self.saveTextureDirectory("bakedTexturesDirectory", self.bakedTexturesDirectorySelector.currentPath)
 
   def onSampleDataButton(self):
     """Sample faces and calculate color averages from textures"""
@@ -4384,6 +4457,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.recolorTextureSelector.addItems(textureFiles)
       self.recolorTextureSelector.enabled = True
       self.recolorLogInfo.appendPlainText(f"Found {len(textureFiles)} texture files")
+    
+    # Save the texture directory for persistence and sync with other tabs
+    if directory:
+      self.saveTextureDirectory("recolorTexturesDirectory", directory)
     else:
       self.recolorLogInfo.appendPlainText("No texture files found in directory")
 
@@ -4499,6 +4576,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Enable cluster button if atlas and texture directory are selected
     self.clusterButton.enabled = atlasSelected and textureDirectorySelected
+    
+    # Save the texture directory for persistence
+    if self.multiRecolorTextureDirectorySelector.currentPath:
+      self.saveTextureDirectory("multiRecolorTextureDirectory", self.multiRecolorTextureDirectorySelector.currentPath)
 
     # Update texture file list when directory changes
     if textureDirectorySelected:
