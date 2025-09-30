@@ -403,6 +403,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       # Select output model
       self.meshSelect = slicer.qMRMLNodeComboBox()
+      self.meshSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.meshSelect.nodeTypes = (("vtkMRMLModelNode"), "")
       self.meshSelect.setToolTip("Select model node with result arrays")
       self.meshSelect.selectNodeUponCreation = False
@@ -415,6 +416,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       # Select Subject ID
       self.subjectIDBox=qt.QComboBox()
+      self.subjectIDBox.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.subjectIDBox.enabled = False
       self.heatmapFrameLayout.addRow("Subject ID: ", self.subjectIDBox)
 
@@ -426,6 +428,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       # Atlas model (target of interpolation)
       self.atlasModelSelect = slicer.qMRMLNodeComboBox()
+      self.atlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.atlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
       self.atlasModelSelect.setToolTip("Select the atlas or mean shape model")
       self.atlasModelSelect.selectNodeUponCreation = False
@@ -443,6 +446,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.interpolationFrameLayout.addRow("Resampled Model Directory:", self.visOriginalModelDirSelector)
 
       self.visOriginalModelFileSelector = qt.QComboBox()
+      self.visOriginalModelFileSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.visOriginalModelFileSelector.setToolTip("Select a resampled subject model from the directory above")
       self.visOriginalModelFileSelector.enabled = False
       self.interpolationFrameLayout.addRow("Resampled Subject Model:", self.visOriginalModelFileSelector)
@@ -459,6 +463,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
 
       self.previewTextureCombo = qt.QComboBox()
+      self.previewTextureCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.previewTextureCombo.setToolTip("Preview a xbaked atlas-space PNG on the atlas model.")
       visualizeWidgetLayout.addRow("Preview baked texture:", self.previewTextureCombo)
       self.previewTextureCombo.connect("currentIndexChanged(int)", self.onPreviewTextureSelected)
@@ -496,6 +501,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
       # Target mesh selector for region selection
       self.regionMeshSelector = slicer.qMRMLNodeComboBox()
+      self.regionMeshSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
       self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
       self.regionMeshSelector.selectNodeUponCreation = False
@@ -508,6 +514,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
       # Selection method combo
       self.selectionMethodCombo = qt.QComboBox()
+      self.selectionMethodCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.selectionMethodCombo.addItems([
           "Segment Editor (Paint/Scissors)", 
           "Landmark + Radius",
@@ -523,6 +530,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
       # Existing segmentation selector for loading saved work
       self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
+      self.existingSegmentationSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
       self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
       self.existingSegmentationSelector.selectNodeUponCreation = False
@@ -572,6 +580,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
       # Markup selector for selection points
       self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
+      self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
       self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
       self.selectionMarkupSelector.setToolTip("Select markup points to define region centers")
       self.selectionMarkupSelector.selectNodeUponCreation = False
@@ -696,6 +705,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Atlas model selector for Colors EDA
     self.colorsAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.colorsAtlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.colorsAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
     self.colorsAtlasModelSelect.setToolTip("Select the atlas model for color analysis")
     self.colorsAtlasModelSelect.selectNodeUponCreation = False
@@ -864,6 +874,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.histLayout.setSpacing(4)
 
     self.histChannelSelector = qt.QComboBox()
+    self.histChannelSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.histChannelSelector.addItems(["Channel 1", "Channel 2", "Channel 3"])  # Labels updated after run
     self.histChannelSelector.setEnabled(False)
     self.histLayout.addRow("Channel:", self.histChannelSelector)
@@ -959,6 +970,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Atlas model selector for Recolor
     self.recolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.recolorAtlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.recolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
     self.recolorAtlasModelSelect.setToolTip("Select the atlas model for recoloring")
     self.recolorAtlasModelSelect.selectNodeUponCreation = False
@@ -977,6 +989,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Texture selection dropdown
     self.recolorTextureSelector = qt.QComboBox()
+    self.recolorTextureSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.recolorTextureSelector.setToolTip("Select a texture to apply to the model")
     self.recolorTextureSelector.enabled = False
     recolorWidgetLayout.addRow("Select Texture: ", self.recolorTextureSelector)
@@ -1056,6 +1069,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Atlas model selector for MultiRecolor
     self.multiRecolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
+    self.multiRecolorAtlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.multiRecolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
     self.multiRecolorAtlasModelSelect.setToolTip("Select the atlas model for multi-texture analysis")
     self.multiRecolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
@@ -1106,6 +1120,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Texture selector dropdown
     self.individualTextureSelector = qt.QComboBox()
+    self.individualTextureSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
     self.individualTextureSelector.setToolTip("Select a texture to visualize with the clustered palette")
     self.individualTextureSelector.enabled = False
     individualWidgetLayout.addRow("Select Texture: ", self.individualTextureSelector)
@@ -8884,4 +8899,36 @@ class ColorTheme:
             color: {color}; 
             font-style: italic;
         }}
+        """
+    
+    @staticmethod
+    def getComboBoxStyle():
+        """Get combobox/dropdown style with theme-aware colors (for both QComboBox and qMRMLNodeComboBox)"""
+        return """
+        QComboBox, qMRMLNodeComboBox {
+            color: palette(window-text);
+            background-color: palette(base);
+            border: 1px solid palette(mid);
+            border-radius: 3px;
+            padding: 3px 5px;
+        }
+        QComboBox:on, qMRMLNodeComboBox:on {
+            color: palette(window-text);
+        }
+        QComboBox:hover, qMRMLNodeComboBox:hover {
+            border: 1px solid palette(highlight);
+        }
+        QComboBox:disabled, qMRMLNodeComboBox:disabled {
+            color: palette(disabled-text);
+            background-color: palette(window);
+        }
+        QComboBox::drop-down, qMRMLNodeComboBox::drop-down {
+            border: none;
+        }
+        QComboBox QAbstractItemView, qMRMLNodeComboBox QAbstractItemView {
+            color: palette(window-text);
+            background-color: palette(base);
+            selection-background-color: palette(highlight);
+            selection-color: palette(highlighted-text);
+        }
         """
