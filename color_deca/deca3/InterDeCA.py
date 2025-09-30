@@ -339,7 +339,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")
     self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"
     self.applyButtonDC.enabled = False
-    self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     DeCATabLayout.addRow(self.applyButtonDC)
 
 
@@ -725,6 +725,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.sampleDataButton = qt.QPushButton("Sample Data")
     self.sampleDataButton.toolTip = "Sample faces and calculate color averages from textures"
     self.sampleDataButton.enabled = False
+    self.sampleDataButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     dataSamplingWidgetLayout.addRow(self.sampleDataButton)
 
     # Sampling progress and status
@@ -755,7 +756,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
     analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
     analysisWidget.text = "Phase 2: Analysis & Plotting"  # Second step: analyze patterns
-    analysisWidget.enabled = False  # Disabled until data is sampled
+    analysisWidget.collapsed = True  
     colorsEDATabLayout.addRow(analysisWidget)
 
     # Color space selection - compact layout
@@ -838,6 +839,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.plotButton = qt.QPushButton("Plot")
     self.plotButton.toolTip = "Generate plots from sampled data using selected analysis settings"
     self.plotButton.enabled = False
+    self.plotButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     analysisWidgetLayout.addRow(self.plotButton)
 
     # Analysis progress and log information
@@ -912,9 +914,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.histChartNodes = []
 
     analysisWidgetLayout.addRow(self.histCollapsible)
+    
+    # Hide histogram options by default (only show when Channel Histograms view mode is selected)
+    self.histCollapsible.setVisible(False)
 
     # Store reference to analysis widget for enabling/disabling
     self.analysisWidget = analysisWidget
+    
+    # Note: Following MultiRecolor pattern - don't disable parent collapsible,
+    # only disable individual interactive controls
 
     # Connections for histogram controls
     self.histChannelSelector.connect("currentIndexChanged(int)", self.onHistChannelChanged)
@@ -1005,6 +1013,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.applyRecolorButton = qt.QPushButton("Apply Texture")
     self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
     self.applyRecolorButton.enabled = False
+    self.applyRecolorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     recolorWidgetLayout.addRow(self.applyRecolorButton)
 
     # Progress and log information for Recolor
@@ -1069,6 +1078,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.clusterButton = qt.QPushButton("Cluster")
     self.clusterButton.setToolTip("Process all textures and create color clusters")
     self.clusterButton.enabled = False
+    self.clusterButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     clusteringWidgetLayout.addRow(self.clusterButton)
 
     # Progress bar for clustering
@@ -1111,6 +1121,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.applyIndividualTextureButton = qt.QPushButton("Apply Texture")
     self.applyIndividualTextureButton.setToolTip("Apply selected texture with clustered palette")
     self.applyIndividualTextureButton.enabled = False
+    self.applyIndividualTextureButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     individualWidgetLayout.addRow(self.applyIndividualTextureButton)
 
     # Progress bar for individual visualization
@@ -1155,6 +1166,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.compareTexturesButton = qt.QPushButton("Compare Textures")
     self.compareTexturesButton.setToolTip("Analyze all textures and create population comparison plot")
     self.compareTexturesButton.enabled = False
+    self.compareTexturesButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
     populationWidgetLayout.addRow(self.compareTexturesButton)
 
     # Progress bar for population analysis
@@ -3828,9 +3840,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
         self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('success'))
 
-        # Enable analysis phase
-        self.analysisWidget.enabled = True
+        # Enable analysis phase (following MultiRecolor pattern)
         self.plotButton.enabled = True
+        
+        # Expand the analysis widget to show it's now active
+        self.analysisWidget.collapsed = False
 
         self.colorsEDALogInfo.appendPlainText(f"Data sampling completed successfully!")
         self.colorsEDALogInfo.appendPlainText(f"Sampled {nFaces} faces ({samplePercent:.1f}%) from {nSpecimens} specimens")
@@ -4096,6 +4110,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   def onViewModeChanged(self, button):
     """Handle view mode radio button changes"""
     try:
+      # Show/hide channel histogram options based on view mode
+      if self.viewChannelRadio.isChecked():
+        self.histCollapsible.setVisible(True)
+      else:
+        self.histCollapsible.setVisible(False)
+      
+      # Switch the actual plot view if data is available
       if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace'):
         if self.viewChannelRadio.isChecked():
           # Switch to channel histogram view
@@ -8782,14 +8803,21 @@ class ColorTheme:
         theme = ColorTheme.getTheme()
         return f"""
         ctkCollapsibleButton {{ 
+            border: 1px solid palette(mid);
+            border-radius: 4px;
+            background-color: palette(window);
+        }}
+        /* Style the QToolButton which is the actual header/title */
+        ctkCollapsibleButton QToolButton {{
             font-weight: bold; 
             color: {theme['text_primary']}; 
             background-color: palette(alternate-base);
-            border: 1px solid palette(mid);
-            border-radius: 4px;
             padding: 4px;
+            border: none;
+            text-align: left;
         }}
-        ctkCollapsibleButton:hover {{
+        /* Hover effect only on the header button */
+        ctkCollapsibleButton QToolButton:hover {{
             background-color: palette(highlight);
             color: palette(highlighted-text);
         }}
