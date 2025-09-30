@@ -201,6 +201,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.inputDirCollapsibleButton = ctk.ctkCollapsibleButton()
     self.inputDirCollapsibleButton.text = "Input Directories"
     self.inputDirCollapsibleButton.collapsed = False
+    self.inputDirCollapsibleButton.setStyleSheet(ColorTheme.getHeaderStyle())
     DeCATabLayout.addRow(self.inputDirCollapsibleButton)
     inputDirLayout = qt.QFormLayout(self.inputDirCollapsibleButton)
     
@@ -245,7 +246,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Add validation status label for textures
     self.textureValidationLabelDC = qt.QLabel()
-    self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
+    self.textureValidationLabelDC.setStyleSheet(ColorTheme.getValidationLabelStyle('neutral'))
     self.textureValidationLabelDC.setText("No directory selected")
     
     textureDirWidget = qt.QWidget()
@@ -269,6 +270,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.blenderGroup = ctk.ctkCollapsibleButton()
     self.blenderGroup.text = "Blender (cleanup, UV, bake)"
     self.blenderGroup.collapsed = True
+    self.blenderGroup.setStyleSheet(ColorTheme.getHeaderStyle())
     DeCATabLayout.addRow(self.blenderGroup)
     blForm = qt.QFormLayout(self.blenderGroup)
 
@@ -337,27 +339,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")
     self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"
     self.applyButtonDC.enabled = False
-    self.applyButtonDC.setStyleSheet("""
-      QPushButton {
-        background-color: #87CEEB;
-        color: #2C3E50;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #6BB6E8;
-      }
-      QPushButton:pressed {
-        background-color: #4FA8D8;
-      }
-      QPushButton:disabled {
-        background-color: #CCCCCC;
-        color: #666666;
-      }
-    """)
+    self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
     DeCATabLayout.addRow(self.applyButtonDC)
 
 
@@ -391,6 +373,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       visualizeWidget=ctk.ctkCollapsibleButton()
       visualizeWidgetLayout = qt.QFormLayout(visualizeWidget)
       visualizeWidget.text = "Visualize Results"
+      visualizeWidget.setStyleSheet(ColorTheme.getHeaderStyle())
       visualizeTabLayout.addRow(visualizeWidget)
 
     #
@@ -492,23 +475,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
       self.landmarkLockButton = qt.QPushButton("Lock Landmarks")
       self.landmarkLockButton.setToolTip("Lock/unlock all landmarks to prevent accidental movement")
-      self.landmarkLockButton.setStyleSheet("""
-        QPushButton {
-          background-color: #ff6b6b;
-          color: white;
-          font-weight: bold;
-          border: none;
-          border-radius: 5px;
-          padding: 6px 12px;
-          min-height: 25px;
-        }
-        QPushButton:hover {
-          background-color: #ff5252;
-        }
-        QPushButton:pressed {
-          background-color: #e53935;
-        }
-      """)
+      self.landmarkLockButton.setStyleSheet(ColorTheme.getButtonStyle('danger'))
       self.landmarkLockButton.connect('clicked(bool)', self.onToggleLandmarkLock)
       landmarkControlLayout.addWidget(self.landmarkLockButton)
     
@@ -523,6 +490,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.regionSelectionWidget = ctk.ctkCollapsibleButton()
       self.regionSelectionWidget.text = "Mesh Region Selection"
       self.regionSelectionWidget.collapsed = True
+      self.regionSelectionWidget.setStyleSheet(ColorTheme.getHeaderStyle())
       visualizeWidgetLayout.addRow(self.regionSelectionWidget)
       regionLayout = qt.QFormLayout(self.regionSelectionWidget)
     
@@ -677,23 +645,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       #
       self.startVisualizationButton = qt.QPushButton("Start Visualization")
       self.startVisualizationButton.toolTip = "Prepare the 3D scene for visualization and show markups"
-      self.startVisualizationButton.setStyleSheet("""
-        QPushButton {
-          background-color: #87CEEB;
-          color: #2C3E50;
-          font-weight: bold;
-          border: none;
-          border-radius: 5px;
-          padding: 8px 16px;
-          min-height: 30px;
-        }
-        QPushButton:hover {
-          background-color: #6BB6E8;
-        }
-        QPushButton:pressed {
-          background-color: #4FA8D8;
-        }
-        """)
+      self.startVisualizationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
       visualizeWidgetLayout.addRow(self.startVisualizationButton)
 
       self.lastBakedTexturesPath = None
@@ -733,7 +685,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Creates interface for sampling color data from textured models
     dataSamplingWidget = ctk.ctkCollapsibleButton()
     dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    dataSamplingWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f0f8ff; }")
+    dataSamplingWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     dataSamplingWidgetLayout = qt.QFormLayout(dataSamplingWidget)
     dataSamplingWidgetLayout.setVerticalSpacing(6)
     dataSamplingWidgetLayout.setHorizontalSpacing(8)
@@ -781,14 +733,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     dataSamplingWidgetLayout.addRow("Sampling Progress: ", self.samplingProgressBar)
 
     self.samplingStatusLabel = qt.QLabel("No data sampled")
-    self.samplingStatusLabel.setStyleSheet("color: #666; font-style: italic;")
+    self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('neutral'))
     dataSamplingWidgetLayout.addRow("Status: ", self.samplingStatusLabel)
 
     # Add visual separator between phases
     separatorLine = qt.QFrame()
     separatorLine.setFrameShape(qt.QFrame.HLine)
     separatorLine.setFrameShadow(qt.QFrame.Sunken)
-    separatorLine.setStyleSheet("QFrame { color: #cccccc; margin: 10px 0px; }")
+    separatorLine.setStyleSheet(ColorTheme.getSeparatorStyle())
     colorsEDATabLayout.addRow(separatorLine)
 
     ################################### Phase 2: Analysis & Plotting ###################################
@@ -796,7 +748,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Creates interface for statistical analysis and visualization of color data
     analysisWidget = ctk.ctkCollapsibleButton()
     analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    analysisWidget.setStyleSheet("ctkCollapsibleButton { font-weight: bold; background-color: #f8fff0; }")
+    analysisWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     analysisWidgetLayout = qt.QFormLayout(analysisWidget)
     analysisWidgetLayout.setVerticalSpacing(6)
     analysisWidgetLayout.setHorizontalSpacing(8)
@@ -904,6 +856,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.histCollapsible.text = "Channel Histogram Options"
     self.histCollapsible.collapsed = False
     self.histCollapsible.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    self.histCollapsible.setStyleSheet(ColorTheme.getHeaderStyle())
     self.histLayout = qt.QFormLayout(self.histCollapsible)
     self.histLayout.setContentsMargins(0, 0, 0, 0)
     self.histLayout.setSpacing(4)
@@ -920,7 +873,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # HSV Options section
     self.hsvOptionsLabel = qt.QLabel("HSV Options:")
-    self.hsvOptionsLabel.setStyleSheet("font-weight: bold; color: #666;")
+    self.hsvOptionsLabel.setStyleSheet(ColorTheme.getSectionLabelStyle())
     self.histLayout.addRow(self.hsvOptionsLabel)
 
     # Color enhancement option for 2D plots
@@ -931,7 +884,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # HSV Filtering section
     self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
-    self.hsvFilterLabel.setStyleSheet("font-weight: bold; color: #666; margin-top: 10px;")
+    self.hsvFilterLabel.setStyleSheet(ColorTheme.getSectionLabelStyle())
     self.histLayout.addRow(self.hsvFilterLabel)
 
     # Saturation cutoff (percent)
@@ -987,6 +940,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Layout within the Recolor tab
     recolorWidget = ctk.ctkCollapsibleButton()
     recolorWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    recolorWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     recolorWidgetLayout = qt.QFormLayout(recolorWidget)
     recolorWidgetLayout.setVerticalSpacing(4)
     recolorWidgetLayout.setHorizontalSpacing(8)
@@ -1082,6 +1036,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Step 1: Multi-texture clustering section
     clusteringWidget = ctk.ctkCollapsibleButton()
     clusteringWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    clusteringWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     clusteringWidgetLayout = qt.QFormLayout(clusteringWidget)
     clusteringWidgetLayout.setVerticalSpacing(4)
     clusteringWidgetLayout.setHorizontalSpacing(8)
@@ -1130,6 +1085,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Step 2: Individual visualization section
     individualWidget = ctk.ctkCollapsibleButton()
     individualWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    individualWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     individualWidgetLayout = qt.QFormLayout(individualWidget)
     individualWidgetLayout.setVerticalSpacing(4)
     individualWidgetLayout.setHorizontalSpacing(8)
@@ -1171,6 +1127,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Step 3: Population analysis section
     populationWidget = ctk.ctkCollapsibleButton()
     populationWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
+    populationWidget.setStyleSheet(ColorTheme.getHeaderStyle())
     populationWidgetLayout = qt.QFormLayout(populationWidget)
     populationWidgetLayout.setVerticalSpacing(4)
     populationWidgetLayout.setHorizontalSpacing(8)
@@ -1386,7 +1343,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Validate directory contents and update status label"""
     if not directory or not os.path.isdir(directory):
       label.setText("No directory selected")
-      label.setStyleSheet("QLabel { color: palette(disabled-text); font-style: italic; }")
+      label.setStyleSheet(ColorTheme.getValidationLabelStyle('neutral'))
       return False, 0
     
     try:
@@ -1401,15 +1358,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       count = len(matching_files)
       if count == 0:
         label.setText("No files found")
-        label.setStyleSheet("QLabel { color: palette(negative); }")
+        label.setStyleSheet(ColorTheme.getValidationLabelStyle('error'))
         return False, 0
       else:
         label.setText(f"{count} found")
-        label.setStyleSheet("QLabel { color: palette(positive); }")
+        label.setStyleSheet(ColorTheme.getValidationLabelStyle('success'))
         return True, count
     except Exception as e:
       label.setText(f"Error reading directory")
-      label.setStyleSheet("QLabel { color: palette(negative); }")
+      label.setStyleSheet(ColorTheme.getValidationLabelStyle('error'))
       return False, 0
   
   def onMeshDirectoryChangedDC(self, directory):
@@ -1519,14 +1476,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if matching_textures:
         match_count = len(matching_textures)
         total_subjects = len(subject_basenames)
-        self.textureValidationLabelDC.setText(f"{len(texture_files)} found ({match_count}/{total_subjects} matched)")
+        self.textureValidationLabelDC.setText(f"{len(texture_files)} found")
         if match_count == total_subjects:
-          self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(positive); }")
+          self.textureValidationLabelDC.setStyleSheet(ColorTheme.getValidationLabelStyle('success'))
         else:
-          self.textureValidationLabelDC.setStyleSheet("QLabel { color: #ff8c00; }")  # Orange color that works in both themes
+          self.textureValidationLabelDC.setStyleSheet(ColorTheme.getValidationLabelStyle('warning'))
       else:
         self.textureValidationLabelDC.setText(f"{len(texture_files)} found (no matches)")
-        self.textureValidationLabelDC.setStyleSheet("QLabel { color: palette(negative); }")
+        self.textureValidationLabelDC.setStyleSheet(ColorTheme.getValidationLabelStyle('error'))
   
   def updateProgressDC(self, value, text="", showCancel=False):
     """Update progress bar (text moved to logs)"""
@@ -2327,23 +2284,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       
       # Update the button text to indicate visualization is active
       self.startVisualizationButton.setText("Visualization Active")
-      self.startVisualizationButton.setStyleSheet("""
-        QPushButton {
-          background-color: #90EE90;
-          color: #2C3E50;
-          font-weight: bold;
-          border: none;
-          border-radius: 5px;
-          padding: 8px 16px;
-          min-height: 30px;
-        }
-        QPushButton:hover {
-          background-color: #7FDD7F;
-        }
-        QPushButton:pressed {
-          background-color: #6ECC6E;
-        }
-      """)
+      self.startVisualizationButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
       
       print("Visualization started - markups hidden and models made visible")
       
@@ -2669,23 +2610,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if not SHOW_VISUALIZE_RESULTS:
       return
     self.startVisualizationButton.setText("Start Visualization")
-    self.startVisualizationButton.setStyleSheet("""
-      QPushButton {
-        background-color: #87CEEB;
-        color: #2C3E50;
-        font-weight: bold;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-        min-height: 30px;
-      }
-      QPushButton:hover {
-        background-color: #6BB6E8;
-      }
-      QPushButton:pressed {
-        background-color: #4FA8D8;
-      }
-    """)
+    self.startVisualizationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
 
   def onToggleLandmarkLock(self):
     """Toggle landmark lock state"""
@@ -2772,42 +2697,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     try:
       if locked:
         self.landmarkLockButton.setText("Unlock Landmarks")
-        self.landmarkLockButton.setStyleSheet("""
-          QPushButton {
-            background-color: #4CAF50;
-            color: white;
-            font-weight: bold;
-            border: none;
-            border-radius: 5px;
-            padding: 6px 12px;
-            min-height: 25px;
-          }
-          QPushButton:hover {
-            background-color: #45a049;
-          }
-          QPushButton:pressed {
-            background-color: #3d8b40;
-          }
-        """)
+        self.landmarkLockButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
       else:
         self.landmarkLockButton.setText("Lock Landmarks")
-        self.landmarkLockButton.setStyleSheet("""
-          QPushButton {
-            background-color: #ff6b6b;
-            color: white;
-            font-weight: bold;
-            border: none;
-            border-radius: 5px;
-            padding: 6px 12px;
-            min-height: 25px;
-          }
-          QPushButton:hover {
-            background-color: #ff5252;
-          }
-          QPushButton:pressed {
-            background-color: #e53935;
-          }
-        """)
+        self.landmarkLockButton.setStyleSheet(ColorTheme.getButtonStyle('danger'))
     except Exception as e:
       print(f"Warning: Could not update landmark lock UI: {e}")
 
@@ -3913,7 +3806,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       samplePercent = float(self.faceSamplePercentSpin.value)
 
       self.samplingStatusLabel.setText("Sampling in progress...")
-      self.samplingStatusLabel.setStyleSheet("color: #0066cc; font-style: italic;")
+      self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('progress'))
 
       # Run the sampling
       logic = InterDeCALogic()
@@ -3933,7 +3826,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         nSpecimens = len(self.sampledSpecimenNames)
         nFaces = len(self.sampledFaceIndices)
         self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
-        self.samplingStatusLabel.setStyleSheet("color: #006600; font-weight: bold;")
+        self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('success'))
 
         # Enable analysis phase
         self.analysisWidget.enabled = True
@@ -3943,7 +3836,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.colorsEDALogInfo.appendPlainText(f"Sampled {nFaces} faces ({samplePercent:.1f}%) from {nSpecimens} specimens")
       else:
         self.samplingStatusLabel.setText("Sampling failed")
-        self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+        self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('error'))
         self.colorsEDALogInfo.appendPlainText("Data sampling failed - check log for details")
 
       self.samplingProgressBar.setVisible(False)
@@ -3953,7 +3846,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.samplingProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
       self.samplingStatusLabel.setText("Sampling failed")
-      self.samplingStatusLabel.setStyleSheet("color: #cc0000; font-weight: bold;")
+      self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('error'))
       self.colorsEDALogInfo.appendPlainText(f"Error during sampling: {str(e)}")
       slicer.util.errorDisplay(f"Data sampling failed: {str(e)}")
       import traceback
@@ -8882,3 +8775,85 @@ class ColorTheme:
             color: palette(link); 
             font-weight: bold; 
         }"""
+    
+    @staticmethod
+    def getHeaderStyle():
+        """Get header/collapsible button style with theme-aware colors"""
+        theme = ColorTheme.getTheme()
+        return f"""
+        ctkCollapsibleButton {{ 
+            font-weight: bold; 
+            color: {theme['text_primary']}; 
+            background-color: palette(alternate-base);
+            border: 1px solid palette(mid);
+            border-radius: 4px;
+            padding: 4px;
+        }}
+        ctkCollapsibleButton:hover {{
+            background-color: palette(highlight);
+            color: palette(highlighted-text);
+        }}
+        """
+    
+    @staticmethod
+    def getSectionLabelStyle():
+        """Get section label style with theme-aware colors"""
+        theme = ColorTheme.getTheme()
+        return f"""
+        QLabel {{ 
+            font-weight: bold; 
+            color: {theme['text_primary']}; 
+            margin-top: 10px;
+        }}
+        """
+    
+    @staticmethod
+    def getStatusLabelStyle(status_type='neutral'):
+        """Get status label style with theme-aware colors"""
+        theme = ColorTheme.getTheme()
+        if status_type == 'success':
+            color = theme['primary']
+        elif status_type == 'error':
+            color = theme['danger']
+        elif status_type == 'warning':
+            color = '#ff8c00'  # Orange that works in both themes
+        elif status_type == 'progress':
+            color = theme['secondary']
+        else:  # neutral
+            color = theme['text_secondary']
+        
+        return f"""
+        QLabel {{ 
+            color: {color}; 
+            font-style: italic;
+        }}
+        """
+    
+    @staticmethod
+    def getSeparatorStyle():
+        """Get separator line style with theme-aware colors"""
+        return """
+        QFrame { 
+            color: palette(mid); 
+            margin: 10px 0px; 
+        }
+        """
+    
+    @staticmethod
+    def getValidationLabelStyle(validation_type='neutral'):
+        """Get validation label style with theme-aware colors"""
+        if validation_type == 'success':
+            color = 'palette(positive)'
+        elif validation_type == 'error':
+            color = 'palette(negative)'
+        elif validation_type == 'warning':
+            color = '#ff8c00'  # Orange that works in both themes
+        else:  # neutral
+            color = 'palette(disabled-text)'
+        
+        return f"""
+        QLabel {{ 
+            color: {color}; 
+            font-style: italic;
+        }}
+        """
