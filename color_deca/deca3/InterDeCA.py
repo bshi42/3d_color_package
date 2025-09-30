@@ -312,6 +312,158 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Add spacing
     DeCATabLayout.addRow(" ", qt.QLabel())
 
+    # --- Mesh Region Selection Section ---
+    # Region selection section for selecting and exporting mesh regions
+    self.regionSelectionWidget = ctk.ctkCollapsibleButton()
+    self.regionSelectionWidget.text = "Mesh Region Selection"
+    self.regionSelectionWidget.collapsed = False  # Make it visible by default
+    self.regionSelectionWidget.setStyleSheet(ColorTheme.getHeaderStyle())
+    DeCATabLayout.addRow(self.regionSelectionWidget)
+    regionLayout = qt.QFormLayout(self.regionSelectionWidget)
+  
+    # Target mesh selector for region selection
+    self.regionMeshSelector = slicer.qMRMLNodeComboBox()
+    self.regionMeshSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
+    self.regionMeshSelector.selectNodeUponCreation = False
+    self.regionMeshSelector.noneEnabled = True
+    self.regionMeshSelector.addEnabled = False
+    self.regionMeshSelector.removeEnabled = False
+    self.regionMeshSelector.showHidden = False
+    self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
+    regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
+  
+    # Selection method combo
+    self.selectionMethodCombo = qt.QComboBox()
+    self.selectionMethodCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.selectionMethodCombo.addItems([
+        "Landmarks + Radius",
+        "Segment Editor (Paint/Scissors)"
+    ])
+    self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh: Segment Editor for painting/scissors, or Landmarks for radius-based selection")
+    regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
+  
+    # --- Segment Editor Method Controls ---
+    self.segmentEditorFrame = qt.QFrame()
+    self.segmentEditorLayout = qt.QFormLayout()
+    self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
+    self.segmentEditorFrame.setVisible(False)  # Hidden by default
+  
+    # Existing segmentation selector for loading saved work
+    self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
+    self.existingSegmentationSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
+    self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
+    self.existingSegmentationSelector.selectNodeUponCreation = False
+    self.existingSegmentationSelector.noneEnabled = True
+    self.existingSegmentationSelector.addEnabled = False
+    self.existingSegmentationSelector.removeEnabled = False
+    self.existingSegmentationSelector.showHidden = False
+    self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
+    self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
+  
+    self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
+    self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
+    self.loadSegmentationButton.enabled = False
+    self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.segmentEditorLayout.addRow(self.loadSegmentationButton)
+  
+    # Add a separator line
+    separator1 = qt.QFrame()
+    separator1.setFrameShape(qt.QFrame.HLine)
+    separator1.setFrameShadow(qt.QFrame.Sunken)
+    self.segmentEditorLayout.addRow(separator1)
+  
+    self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
+    self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
+    self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
+  
+    # Add another separator line
+    separator2 = qt.QFrame()
+    separator2.setFrameShape(qt.QFrame.HLine)
+    separator2.setFrameShadow(qt.QFrame.Sunken)
+    self.segmentEditorLayout.addRow(separator2)
+  
+    self.exportSelectionButton = qt.QPushButton("Export Selected Region")
+    self.exportSelectionButton.setToolTip("Export painted region back to a model")
+    self.exportSelectionButton.enabled = False
+    self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.segmentEditorLayout.addRow(self.exportSelectionButton)
+  
+    regionLayout.addRow(self.segmentEditorFrame)
+  
+    # --- Landmark Method Controls ---
+    self.landmarkFrame = qt.QFrame()
+    self.landmarkLayout = qt.QFormLayout()
+    self.landmarkFrame.setLayout(self.landmarkLayout)
+    self.landmarkFrame.setVisible(True)  # Visible by default since Landmarks + Radius is first
+  
+    # Markup selector for selection points
+    self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
+    self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
+    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers (supports single or multiple landmarks)")
+    self.selectionMarkupSelector.selectNodeUponCreation = False
+    self.selectionMarkupSelector.noneEnabled = True
+    self.selectionMarkupSelector.addEnabled = True
+    self.selectionMarkupSelector.removeEnabled = False
+    self.selectionMarkupSelector.showHidden = False
+    self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
+    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
+  
+    # Radius control
+    self.selectionRadiusSlider = ctk.ctkSliderWidget()
+    self.selectionRadiusSlider.minimum = 0.0001
+    self.selectionRadiusSlider.maximum = 0.1
+    self.selectionRadiusSlider.singleStep = 0.0001  # Set after min/max to avoid bounds issues
+    self.selectionRadiusSlider.value = 0.01
+    try:
+        self.selectionRadiusSlider.decimals = 4
+    except AttributeError:
+        pass  # Some versions might not have this property
+    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
+    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+  
+    # Selected points display (for single point mode)
+    self.selectedPointsLabel = qt.QLabel("No points selected")
+    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
+    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
+  
+    # Apply landmark selection button
+    self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
+    self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
+    self.applyLandmarkSelectionButton.enabled = False
+    self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
+  
+    # Export landmark selection button
+    self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
+    self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
+    self.exportLandmarkSelectionButton.enabled = False
+    self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
+  
+    regionLayout.addRow(self.landmarkFrame)
+  
+    # --- Common Controls ---
+    # Clear selection button
+    self.clearSelectionButton = qt.QPushButton("Clear Selection")
+    self.clearSelectionButton.setToolTip("Clear the current region selection")
+    self.clearSelectionButton.enabled = False
+    self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
+    regionLayout.addRow(self.clearSelectionButton)
+  
+    # Selection info label
+    self.selectionInfoLabel = qt.QLabel("No region selected")
+    self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
+
+    # Add spacing
+    DeCATabLayout.addRow(" ", qt.QLabel())
+
     #
     # Progress tracking widgets
     #
@@ -363,6 +515,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)
     self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)
+    
+    # Connect region selection events
+    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
+    self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
+    self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
+    self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
+    self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
+    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
+    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
 
     # Restore previously saved directory paths
     self.restoreSavedDirectories()
@@ -490,166 +655,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       visualizeWidgetLayout.addRow(" ", qt.QLabel())
 
       #
-      # --- Mesh Region Selection Section ---
-      #
-      self.regionSelectionWidget = ctk.ctkCollapsibleButton()
-      self.regionSelectionWidget.text = "Mesh Region Selection"
-      self.regionSelectionWidget.collapsed = True
-      self.regionSelectionWidget.setStyleSheet(ColorTheme.getHeaderStyle())
-      visualizeWidgetLayout.addRow(self.regionSelectionWidget)
-      regionLayout = qt.QFormLayout(self.regionSelectionWidget)
-    
-      # Target mesh selector for region selection
-      self.regionMeshSelector = slicer.qMRMLNodeComboBox()
-      self.regionMeshSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-      self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
-      self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
-      self.regionMeshSelector.selectNodeUponCreation = False
-      self.regionMeshSelector.noneEnabled = True
-      self.regionMeshSelector.addEnabled = False
-      self.regionMeshSelector.removeEnabled = False
-      self.regionMeshSelector.showHidden = False
-      self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
-      regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
-    
-      # Selection method combo
-      self.selectionMethodCombo = qt.QComboBox()
-      self.selectionMethodCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
-      self.selectionMethodCombo.addItems([
-          "Segment Editor (Paint/Scissors)", 
-          "Landmark + Radius",
-          "Multiple Landmarks + Radius"
-      ])
-      self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh")
-      regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
-    
-      # --- Segment Editor Method Controls ---
-      self.segmentEditorFrame = qt.QFrame()
-      self.segmentEditorLayout = qt.QFormLayout()
-      self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
-    
-      # Existing segmentation selector for loading saved work
-      self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
-      self.existingSegmentationSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-      self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
-      self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
-      self.existingSegmentationSelector.selectNodeUponCreation = False
-      self.existingSegmentationSelector.noneEnabled = True
-      self.existingSegmentationSelector.addEnabled = False
-      self.existingSegmentationSelector.removeEnabled = False
-      self.existingSegmentationSelector.showHidden = False
-      self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
-      self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
-    
-      self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
-      self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
-      self.loadSegmentationButton.enabled = False
-      self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-      self.segmentEditorLayout.addRow(self.loadSegmentationButton)
-    
-      # Add a separator line
-      separator1 = qt.QFrame()
-      separator1.setFrameShape(qt.QFrame.HLine)
-      separator1.setFrameShadow(qt.QFrame.Sunken)
-      self.segmentEditorLayout.addRow(separator1)
-    
-      self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
-      self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
-      self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-      self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
-    
-      # Add another separator line
-      separator2 = qt.QFrame()
-      separator2.setFrameShape(qt.QFrame.HLine)
-      separator2.setFrameShadow(qt.QFrame.Sunken)
-      self.segmentEditorLayout.addRow(separator2)
-    
-      self.exportSelectionButton = qt.QPushButton("Export Selected Region")
-      self.exportSelectionButton.setToolTip("Export painted region back to a model")
-      self.exportSelectionButton.enabled = False
-      self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-      self.segmentEditorLayout.addRow(self.exportSelectionButton)
-    
-      regionLayout.addRow(self.segmentEditorFrame)
-    
-      # --- Landmark Method Controls ---
-      self.landmarkFrame = qt.QFrame()
-      self.landmarkLayout = qt.QFormLayout()
-      self.landmarkFrame.setLayout(self.landmarkLayout)
-      self.landmarkFrame.setVisible(False)  # Hidden by default
-    
-      # Markup selector for selection points
-      self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
-      self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-      self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
-      self.selectionMarkupSelector.setToolTip("Select markup points to define region centers")
-      self.selectionMarkupSelector.selectNodeUponCreation = False
-      self.selectionMarkupSelector.noneEnabled = True
-      self.selectionMarkupSelector.addEnabled = True
-      self.selectionMarkupSelector.removeEnabled = False
-      self.selectionMarkupSelector.showHidden = False
-      self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
-      self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
-    
-      # Radius control
-      self.selectionRadiusSlider = ctk.ctkSliderWidget()
-      self.selectionRadiusSlider.minimum = 0.01
-      self.selectionRadiusSlider.maximum = 10.0
-      self.selectionRadiusSlider.singleStep = 0.01  # Set after min/max to avoid bounds issues
-      self.selectionRadiusSlider.value = 0.5
-      try:
-          self.selectionRadiusSlider.decimals = 2
-      except AttributeError:
-          pass  # Some versions might not have this property
-      self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
-      self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
-    
-      # Selected points display (for single point mode)
-      self.selectedPointsLabel = qt.QLabel("No points selected")
-      self.selectedPointsLabel.setToolTip("Currently selected landmark points")
-      self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
-      self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
-    
-      # Click to select landmark button
-      self.clickSelectLandmarkButton = qt.QPushButton("Click to Select Landmark")
-      self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
-      self.clickSelectLandmarkButton.enabled = False
-      self.clickSelectLandmarkButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-      self.landmarkLayout.addRow("", self.clickSelectLandmarkButton)
-    
-      # Apply landmark selection button
-      self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
-      self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
-      self.applyLandmarkSelectionButton.enabled = False
-      self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-      self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
-    
-      # Export landmark selection button
-      self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
-      self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
-      self.exportLandmarkSelectionButton.enabled = False
-      self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-      self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
-    
-      regionLayout.addRow(self.landmarkFrame)
-    
-      # --- Common Controls ---
-      # Clear selection button
-      self.clearSelectionButton = qt.QPushButton("Clear Selection")
-      self.clearSelectionButton.setToolTip("Clear the current region selection")
-      self.clearSelectionButton.enabled = False
-      self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
-      regionLayout.addRow(self.clearSelectionButton)
-    
-      # Selection info label
-      self.selectionInfoLabel = qt.QLabel("No region selected")
-      self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
-      regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
-
-      # Add spacing before the visualization button
-      visualizeWidgetLayout.addRow(" ", qt.QLabel())
-
-      #
       # Start Visualization Button (at bottom)
       #
       self.startVisualizationButton = qt.QPushButton("Start Visualization")
@@ -672,19 +677,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
       self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
       self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
-    
-      # Region selection connections
-      self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-      self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
-      self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
-      self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
-      self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
-      self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
-      self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-      self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
-      self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
-      self.clickSelectLandmarkButton.connect('clicked(bool)', self.onClickSelectLandmark)
-      self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
 
     # Auto-detect Blender executable on startup
     self.autoDetectBlender()
@@ -1624,7 +1616,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     hasMarkup = bool(self.selectionMarkupSelector.currentNode())
     self.applyLandmarkSelectionButton.enabled = hasModel and hasMarkup
     self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
-    self.clickSelectLandmarkButton.enabled = hasModel and hasMarkup
     
     # Update selected points display
     if hasMarkup:
@@ -1639,17 +1630,33 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if method == "Segment Editor (Paint/Scissors)":
       self.segmentEditorFrame.setVisible(True)
       self.landmarkFrame.setVisible(False)
-    else:  # Landmark methods
+    else:  # Landmarks + Radius method
       self.segmentEditorFrame.setVisible(False)
       self.landmarkFrame.setVisible(True)
-      
-      # Show/hide point index selector based on method
-      if method == "Landmark + Radius":
-        self.pointIndexSpinBox.enabled = True
-        self.pointIndexSpinBox.setToolTip("Index of the point to use for selection (0-based)")
-      else:  # Multiple Landmarks + Radius
-        self.pointIndexSpinBox.enabled = False
-        self.pointIndexSpinBox.setToolTip("All points will be used for selection")
+
+  def onMarkupNodeChanged(self):
+    """Handle markup node change and set up observers for point selection updates"""
+    # Clean up previous observers
+    if hasattr(self, '_currentMarkupNode') and self._currentMarkupNode:
+      if hasattr(self, '_markupObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupObserver)
+      if hasattr(self, '_markupSelectionObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupSelectionObserver)
+    
+    # Set up observers for new markup node
+    markupNode = self.selectionMarkupSelector.currentNode()
+    if markupNode:
+      self._currentMarkupNode = markupNode
+      # Observe point selection changes
+      self._markupObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onMarkupPointModified)
+      self._markupSelectionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointSelectionChangedEvent, self._onMarkupPointModified)
+    
+    # Update display
+    self._updateSelectedPointsDisplay()
+
+  def _onMarkupPointModified(self, caller, event):
+    """Handle markup point modification events"""
+    self._updateSelectedPointsDisplay()
   
   def onSetupSegmentEditor(self):
     """Setup Segment Editor for region selection"""
@@ -1908,18 +1915,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Get selected landmark points
       selectedPoints = self._getSelectedPoints(markupNode)
       
+      # If no points are explicitly selected, use all available points
       if not selectedPoints:
-        slicer.util.errorDisplay("No landmark points are selected. Please select some points first.")
-        return
+        numPoints = markupNode.GetNumberOfControlPoints()
+        selectedPoints = list(range(numPoints))
       
-      if method == "Landmark + Radius":
-        if len(selectedPoints) > 1:
-          slicer.util.warningDisplay(f"Multiple points selected ({len(selectedPoints)}), but using single point mode. Using first selected point: {selectedPoints[0]}")
-        pointIndex = selectedPoints[0]
-        selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
-      else:  # Multiple Landmarks + Radius
-        # Use only the selected points
-        selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
+      # Use all selected points for region selection
+      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
       
       # Visualize the selection
       self.visualizeRegionSelection(modelNode, selectedVertices)
@@ -1961,19 +1963,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Get selected landmark points
       selectedPoints = self._getSelectedPoints(markupNode)
       
+      # If no points are explicitly selected, use all available points
       if not selectedPoints:
-        slicer.util.errorDisplay("No landmark points are selected. Please select some points first.")
-        return
+        numPoints = markupNode.GetNumberOfControlPoints()
+        selectedPoints = list(range(numPoints))
       
-      # Get selected vertices
-      if method == "Landmark + Radius":
-        if len(selectedPoints) > 1:
-          slicer.util.warningDisplay(f"Multiple points selected ({len(selectedPoints)}), but using single point mode. Using first selected point: {selectedPoints[0]}")
-        pointIndex = selectedPoints[0]
-        selectedVertices = self.selectMeshRegionByRadius(modelNode, markupNode, pointIndex, radius)
-      else:  # Multiple Landmarks + Radius
-        # Use only the selected points
-        selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
+      # Use all selected points for region selection
+      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
       
       if not selectedVertices:
         slicer.util.warningDisplay("No vertices were selected. Try adjusting the radius or landmark positions.")
@@ -2012,94 +2008,27 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.exportLandmarkSelectionButton.enabled = False
       print("Region selection cleared")
   
-  def onClickSelectLandmark(self):
-    """Enable click-to-select mode for landmarks"""
-    if not hasattr(self, '_clickSelectMode') or not self._clickSelectMode:
-      # Enable click-to-select mode
-      self._clickSelectMode = True
-      self._setupClickSelectMode()
-      self.clickSelectLandmarkButton.setText("Cancel Click Selection")
-      self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it, or click this button to cancel")
-      slicer.util.infoDisplay("Click-to-select mode enabled. Click on a landmark point in the 3D view to select it.")
-    else:
-      # Disable click-to-select mode
-      self._disableClickSelectMode()
-  
-  def _setupClickSelectMode(self):
-    """Setup the click-to-select interaction"""
-    markupNode = self.selectionMarkupSelector.currentNode()
-    if not markupNode:
-      slicer.util.errorDisplay("Please select markup points first.")
-      return
-    
-    # Store original interaction mode
-    self._originalInteractionMode = slicer.app.applicationLogic().GetInteractionNode().GetCurrentInteractionMode()
-    
-    # Enable interaction mode for clicking
-    slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.ViewTransform)
-    
-    # Connect to markup selection events using Slicer's built-in system
-    self._setupMarkupSelectionObserver()
-  
-  def _disableClickSelectMode(self):
-    """Disable click-to-select mode"""
-    self._clickSelectMode = False
-    self.clickSelectLandmarkButton.setText("Click to Select Landmark")
-    self.clickSelectLandmarkButton.setToolTip("Click on a landmark in the 3D view to select it for region selection")
-    
-    # Restore original interaction mode
-    if hasattr(self, '_originalInteractionMode'):
-      slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(self._originalInteractionMode)
-    
-    # Disconnect from markup selection observers
-    markupNode = self.selectionMarkupSelector.currentNode()
-    if markupNode:
-      if hasattr(self, '_markupObserver'):
-        markupNode.RemoveObserver(self._markupObserver)
-      if hasattr(self, '_markupSelectionObserver'):
-        markupNode.RemoveObserver(self._markupSelectionObserver)
-  
-  def _setupMarkupSelectionObserver(self):
-    """Setup observer for markup point selection events"""
-    markupNode = self.selectionMarkupSelector.currentNode()
-    if not markupNode:
-      return
-    
-    # Add observer for markup point selection events
-    # Use the correct event names for Slicer
-    self._markupObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onMarkupPointInteraction)
-    
-    # Also observe for point selection events
-    self._markupSelectionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self._onMarkupPointInteraction)
-  
-  
-  def _onMarkupPointInteraction(self, caller, event):
-    """Handle markup point interaction events"""
-    if not self._clickSelectMode:
-      return
-    
-    markupNode = self.selectionMarkupSelector.currentNode()
-    if not markupNode:
-      return
-    
-    # Update the selected points display
-    self._updateSelectedPointsDisplay()
   
   def _updateSelectedPointsDisplay(self):
     """Update the display of selected landmark points"""
     markupNode = self.selectionMarkupSelector.currentNode()
     if not markupNode:
-      self.selectedPointsLabel.setText("No points selected")
+      self.selectedPointsLabel.setText("No markup points loaded")
       return
     
-    # Get list of selected points
-    selectedPoints = self._getSelectedPoints(markupNode)
-    
-    if selectedPoints:
-      pointsText = ", ".join(map(str, selectedPoints))
-      self.selectedPointsLabel.setText(f"Points: {pointsText}")
+    # Show count of selected points
+    numPoints = markupNode.GetNumberOfControlPoints()
+    if numPoints > 0:
+      # Get list of selected points
+      selectedPoints = self._getSelectedPoints(markupNode)
+      selectedCount = len(selectedPoints)
+      
+      if selectedCount > 0:
+        self.selectedPointsLabel.setText(f"{selectedCount} of {numPoints} points selected")
+      else:
+        self.selectedPointsLabel.setText(f"All {numPoints} points available for selection")
     else:
-      self.selectedPointsLabel.setText("No points selected")
+      self.selectedPointsLabel.setText("No landmark points available")
   
   def _getSelectedPoints(self, markupNode):
     """Get list of selected landmark point indices"""
