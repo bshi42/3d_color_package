@@ -1664,192 +1664,361 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if not modelNode:
       slicer.util.errorDisplay("Please select a mesh first.")
       return
-    
+
     try:
-      # Create a reference volume from the model bounds to enable paint tools
+      # Check if we already have a cached segmentation for this model
+      cachedSegmentation = self._getCachedSegmentation(modelNode)
+      if cachedSegmentation:
+        self._setupExistingSegmentation(cachedSegmentation)
+        return
+
+      # Create optimized reference volume with adaptive spacing
       bounds = [0, 0, 0, 0, 0, 0]
       modelNode.GetBounds(bounds)
-      
-      # Create a small reference volume that covers the model
+
       referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
       referenceVolumeNode.SetName(f"{modelNode.GetName()}_ReferenceVolume")
-      
-      # Set up the volume geometry with tighter bounds around the model
-      spacing = [0.2, 0.2, 0.2]  # Even finer spacing for better surface constraint
-      # Add small margin around model bounds
-      margin = 2.0  # 2mm margin
+
+      # Adaptive spacing based on model size for performance
+      modelSize = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
+      if modelSize > 100:  # Large models
+        spacing = [1.0, 1.0, 1.0]  # Coarser spacing for speed
+      elif modelSize > 50:  # Medium models
+        spacing = [0.5, 0.5, 0.5]
+      else:  # Small models
+        spacing = [0.3, 0.3, 0.3]
+
+      # Minimal margin for faster processing
+      margin = max(1.0, modelSize * 0.01)  # 1% of model size, min 1mm
       imageSize = [
-        max(20, int((bounds[1] - bounds[0] + 2*margin) / spacing[0]) + 1),
-        max(20, int((bounds[3] - bounds[2] + 2*margin) / spacing[1]) + 1), 
-        max(20, int((bounds[5] - bounds[4] + 2*margin) / spacing[2]) + 1)
+        max(10, int((bounds[1] - bounds[0] + 2*margin) / spacing[0]) + 1),
+        max(10, int((bounds[3] - bounds[2] + 2*margin) / spacing[1]) + 1),
+        max(10, int((bounds[5] - bounds[4] + 2*margin) / spacing[2]) + 1)
       ]
-      
-      # Create the image data with margin
+
+      # Limit maximum volume size for performance
+      maxDim = 200  # Maximum 200 voxels per dimension
+      imageSize = [min(size, maxDim) for size in imageSize]
+
+      # Create optimized image data
       imageData = vtk.vtkImageData()
       imageData.SetDimensions(imageSize)
       imageData.SetSpacing(spacing)
       imageData.SetOrigin(bounds[0] - margin, bounds[2] - margin, bounds[4] - margin)
       imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
-      imageData.GetPointData().GetScalars().Fill(0)  # Start with zeros for better surface constraint
-      
+      imageData.GetPointData().GetScalars().Fill(0)
+
       referenceVolumeNode.SetAndObserveImageData(imageData)
-      
-      # Create segmentation from model
+
+      # Fast segmentation creation - skip redundant operations
       segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
       segmentationNode.SetName(f"{modelNode.GetName()}_Segmentation")
-      
-      # Set the reference geometry from our volume
       segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
-      
-      # Import model to segmentation as the base segment
-      slicer.modules.segmentations.logic().ImportModelToSegmentationNode(modelNode, segmentationNode)
-      
-      # Create a new empty segment for selection
-      segmentationNode.GetSegmentation().AddEmptySegment("SelectedRegion")
-      
-      # CRITICAL: Create a surface mask to constrain painting to model surface
-      try:
-        # Get the model's polydata
-        modelPolyData = modelNode.GetPolyData()
-        if modelPolyData:
-          # Create a binary mask from the model surface
-          segmentationLogic = slicer.modules.segmentations.logic()
-          # This creates a proper surface constraint for painting
-          segmentationLogic.CreateBinaryLabelmapRepresentation(segmentationNode)
-          
-          # Set the segmentation to use the model as a constraint
-          segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
-      except Exception as e:
-        print(f"Warning: Could not create surface constraint: {e}")
-        # Continue anyway
-      
-      # Ensure the segmentation has both representations for 3D painting
+
+      # Optimized model import - only create what we need
       segmentationLogic = slicer.modules.segmentations.logic()
+      segmentationLogic.ImportModelToSegmentationNode(modelNode, segmentationNode)
+
+      # Create selection segment
+      segmentationNode.GetSegmentation().AddEmptySegment("SelectedRegion")
+
+      # Single-pass representation creation for performance
       try:
-        # Create closed surface representation for 3D painting
+        # Only create closed surface representation initially for 3D painting
         segmentationLogic.CreateClosedSurfaceRepresentation(segmentationNode)
-        # Ensure binary labelmap representation exists for volume painting
-        if not segmentationNode.GetSegmentation().ContainsRepresentation("Binary labelmap"):
-          segmentationLogic.CreateBinaryLabelmapRepresentation(segmentationNode)
+        # Binary labelmap will be created on-demand when needed
       except Exception as e:
         print(f"Warning: Could not create segmentation representations: {e}")
-        # Continue anyway
       
-      # Configure segmentation display for 3D painting
-      segmentationDisplayNode = segmentationNode.GetDisplayNode()
-      if segmentationDisplayNode:
-        # Enable 3D display with proper opacity
-        segmentationDisplayNode.SetVisibility3D(True)
-        segmentationDisplayNode.SetOpacity3D(0.8)  # More opaque for better visibility
-        
-        # Enable surface representation for 3D painting
-        try:
-          # Use the segmentation logic to get the correct representation name
-          segmentationLogic = slicer.modules.segmentations.logic()
-          closedSurfaceReprName = segmentationLogic.GetSegmentationClosedSurfaceRepresentationName()
-          segmentationDisplayNode.SetPreferredDisplayRepresentationName3D(closedSurfaceReprName)
-        except:
-          # Fallback approach - try common representation names
-          try:
-            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
-          except:
-            # Final fallback
-            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Binary labelmap")
-        
-        # Enable slice fill for 2D views
-        segmentationDisplayNode.SetVisibility2DFill(True)
-        segmentationDisplayNode.SetVisibility2DOutline(True)
-        
-        # Ensure segments are visible by default
-        segmentationDisplayNode.SetAllSegmentsVisibility3D(True)
-        segmentationDisplayNode.SetAllSegmentsVisibility2DFill(True)
-        segmentationDisplayNode.SetAllSegmentsVisibility2DOutline(True)
-      
-      # Switch to Segment Editor module
-      slicer.util.selectModule("SegmentEditor")
-      
-      # Set up segment editor widget
-      segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
-      segmentEditorWidget.setSegmentationNode(segmentationNode)
-      segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)  # Set the reference volume
-      
-      # Select the new segment for editing
-      segmentEditorWidget.setCurrentSegmentID("SelectedRegion")
-      
-      # Configure segment editor for 3D painting
-      try:
-        # Enable 3D painting in segment editor
-        segmentEditorWidget.setActiveEffectByName("Paint")
-        paintEffect = segmentEditorWidget.activeEffect()
-        if paintEffect:
-          # Set sphere brush for better 3D painting
-          paintEffect.setParameter("BrushType", "Sphere")
-          # Enable 3D painting mode
-          paintEffect.setParameter("BrushSphere", "1")
-          # Set a reasonable brush size
-          paintEffect.setParameter("BrushAbsoluteDiameter", "3.0")  # Smaller brush for precision
-          # CRITICAL: Enable surface constraint to prevent overflow
-          paintEffect.setParameter("PaintOver", "0")  # Don't paint over existing segments
-          paintEffect.setParameter("Threshold", "0.5")  # Surface threshold for better constraint
-      except Exception as e:
-        print(f"Warning: Could not configure paint effect: {e}")
-        # Continue anyway
-      
-      # Configure the segment color and visibility
-      segmentation = segmentationNode.GetSegmentation()
-      selectedSegment = segmentation.GetSegment("SelectedRegion")
-      if selectedSegment and segmentationDisplayNode:
-        # Set a bright, visible color for the segment
-        selectedSegment.SetColor(1.0, 0.0, 0.0)  # Red color
-        # Ensure the segment is visible
-        try:
-          segmentationDisplayNode.SetSegmentVisibility3D("SelectedRegion", True)
-          segmentationDisplayNode.SetSegmentVisibility2DFill("SelectedRegion", True)
-          segmentationDisplayNode.SetSegmentVisibility2DOutline("SelectedRegion", True)
-        except Exception as e:
-          print(f"Warning: Could not set segment visibility: {e}")
-          # Continue anyway - the segment should still work
-      
-      # Keep reference volume visible but very transparent for 3D painting to work
-      if referenceVolumeNode.GetDisplayNode():
-        referenceVolumeNode.GetDisplayNode().SetVisibility(True)
-        referenceVolumeNode.GetDisplayNode().SetOpacity(0.01)  # Almost invisible but still there
-        # This is important: the reference volume needs to be visible for 3D painting to work properly
-      
-      # Configure 3D view for painting
-      layoutManager = slicer.app.layoutManager()
-      if layoutManager:
-        threeDWidget = layoutManager.threeDWidget(0)
-        if threeDWidget:
-          threeDView = threeDWidget.threeDView()
-          threeDViewNode = threeDView.mrmlViewNode()
-          if threeDViewNode:
-            # Set 3D view to perspective mode for better painting
-            try:
-              threeDViewNode.SetRenderMode(threeDViewNode.Perspective)
-            except:
-              # Fallback - just ensure the view is properly configured
-              pass
-      
-      # Force update the segmentation display
-      try:
-        segmentationNode.Modified()
-        if segmentationDisplayNode:
-          segmentationDisplayNode.Modified()
-      except Exception as e:
-        print(f"Warning: Could not update segmentation display: {e}")
-        # Continue anyway
-      
+      # Cache this segmentation for faster reuse
+      self._cacheSegmentation(modelNode, segmentationNode, referenceVolumeNode)
+
+      # Fast display setup - only essential configurations
+      self._setupSegmentationDisplay(segmentationNode, referenceVolumeNode)
+
       # Enable export button
       self.exportSelectionButton.enabled = True
       self.currentSegmentationNode = segmentationNode
       self.currentReferenceVolumeNode = referenceVolumeNode
-      
-     
-      
+
+      slicer.util.infoDisplay("Fast segmentation setup complete! You can now paint on the 3D model.")
+
     except Exception as e:
       slicer.util.errorDisplay(f"Error setting up Segment Editor: {str(e)}")
       print(f"Segment Editor setup error: {e}")
+
+  def _getCachedSegmentation(self, modelNode):
+    """Check if we have a cached segmentation for this model"""
+    if not hasattr(self, '_segmentationCache'):
+      self._segmentationCache = {}
+
+    modelId = modelNode.GetID()
+    return self._segmentationCache.get(modelId)
+
+  def _cacheSegmentation(self, modelNode, segmentationNode, referenceVolumeNode):
+    """Cache segmentation for faster reuse"""
+    if not hasattr(self, '_segmentationCache'):
+      self._segmentationCache = {}
+
+    modelId = modelNode.GetID()
+    self._segmentationCache[modelId] = {
+      'segmentation': segmentationNode,
+      'referenceVolume': referenceVolumeNode
+    }
+
+  def _setupExistingSegmentation(self, cachedData):
+    """Setup existing cached segmentation"""
+    segmentationNode = cachedData['segmentation']
+    referenceVolumeNode = cachedData['referenceVolume']
+
+    # Reset the selection segment
+    segmentation = segmentationNode.GetSegmentation()
+    if segmentation.GetSegment("SelectedRegion"):
+      segmentation.RemoveSegment("SelectedRegion")
+    segmentation.AddEmptySegment("SelectedRegion")
+
+    self._setupSegmentationDisplay(segmentationNode, referenceVolumeNode)
+
+    self.exportSelectionButton.enabled = True
+    self.currentSegmentationNode = segmentationNode
+    self.currentReferenceVolumeNode = referenceVolumeNode
+
+  def _setupSegmentationDisplay(self, segmentationNode, referenceVolumeNode):
+    """Optimized display setup for segmentation"""
+    # Switch to Segment Editor module
+    slicer.util.selectModule("SegmentEditor")
+
+    # Set up segment editor widget
+    segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
+    segmentEditorWidget.setSegmentationNode(segmentationNode)
+    segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)
+    segmentEditorWidget.setCurrentSegmentID("SelectedRegion")
+
+    # Quick display configuration
+    segmentationDisplayNode = segmentationNode.GetDisplayNode()
+    if segmentationDisplayNode:
+      segmentationDisplayNode.SetVisibility3D(True)
+      segmentationDisplayNode.SetOpacity3D(0.8)
+      try:
+        segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
+      except:
+        pass
+
+    # Set up painting tool with optimized settings
+    try:
+      segmentEditorWidget.setActiveEffectByName("Paint")
+      paintEffect = segmentEditorWidget.activeEffect()
+      if paintEffect:
+        paintEffect.setParameter("BrushType", "Sphere")
+        paintEffect.setParameter("BrushAbsoluteDiameter", "2.0")  # Smaller for precision
+    except:
+      pass
+
+    # Configure segment color
+    segmentation = segmentationNode.GetSegmentation()
+    selectedSegment = segmentation.GetSegment("SelectedRegion")
+    if selectedSegment:
+      selectedSegment.SetColor(1.0, 0.0, 0.0)  # Red color
+
+  def onFastSurfacePaint(self):
+    """Fast surface-based selection using model scalar overlays - no volume conversion needed"""
+    modelNode = self.regionMeshSelector.currentNode()
+    if not modelNode:
+      slicer.util.errorDisplay("Please select a mesh first.")
+      return
+
+    try:
+      # Create a copy of the model for selection overlay
+      modelCopy = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+      modelCopy.SetName(f"{modelNode.GetName()}_SelectionOverlay")
+
+      # Copy the mesh data
+      modelPolyData = modelNode.GetPolyData()
+      if not modelPolyData:
+        slicer.util.errorDisplay("Model has no mesh data.")
+        return
+
+      # Create a copy of the polydata
+      copiedPolyData = vtk.vtkPolyData()
+      copiedPolyData.DeepCopy(modelPolyData)
+
+      # Add scalar array for selection painting
+      numPoints = copiedPolyData.GetNumberOfPoints()
+      selectionArray = vtk.vtkFloatArray()
+      selectionArray.SetName("Selection")
+      selectionArray.SetNumberOfComponents(1)
+      selectionArray.SetNumberOfTuples(numPoints)
+      selectionArray.Fill(0.0)  # Initialize with no selection
+
+      copiedPolyData.GetPointData().SetScalars(selectionArray)
+      modelCopy.SetAndObservePolyData(copiedPolyData)
+
+      # Set up display for interactive painting
+      displayNode = modelCopy.GetDisplayNode()
+      if not displayNode:
+        displayNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelDisplayNode")
+        modelCopy.SetAndObserveDisplayNodeID(displayNode.GetID())
+
+      # Configure for scalar-based coloring
+      displayNode.SetScalarVisibility(True)
+      displayNode.SetActiveScalarName("Selection")
+      displayNode.SetScalarRangeFlag(displayNode.UseManualScalarRange)
+      displayNode.SetScalarRange(0.0, 1.0)
+
+      # Set up color map for selection visualization
+      colorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLColorTableNode")
+      colorNode.SetTypeToUser()
+      colorNode.SetNumberOfColors(256)
+      colorNode.SetName("SelectionColors")
+
+      # Create color map: transparent for 0, red for 1
+      for i in range(256):
+        value = i / 255.0
+        if value < 0.1:  # Unselected
+          colorNode.SetColor(i, 0.8, 0.8, 0.8, 0.3)  # Light gray, transparent
+        else:  # Selected
+          colorNode.SetColor(i, 1.0, 0.0, 0.0, 0.8)  # Red, opaque
+
+      displayNode.SetAndObserveColorNodeID(colorNode.GetID())
+
+      # Hide original model to avoid confusion
+      originalDisplay = modelNode.GetDisplayNode()
+      if originalDisplay:
+        originalDisplay.SetVisibility(False)
+
+      # Store references
+      self.currentSurfaceModel = modelCopy
+      self.currentOriginalModel = modelNode
+      self.exportSelectionButton.enabled = True
+
+      # Set up interactive painting using Markups
+      self._setupSurfacePainting(modelCopy)
+
+      slicer.util.infoDisplay(
+        "Fast surface selection ready!\n\n"
+        "• Place markup points on the model to select regions\n"
+        "• Use the radius slider to control selection size\n"
+        "• Click 'Export Selected Region' when done\n\n"
+        "This method is much faster than volume conversion!"
+      )
+
+    except Exception as e:
+      slicer.util.errorDisplay(f"Error setting up fast surface painting: {str(e)}")
+      print(f"Fast surface painting error: {e}")
+
+  def _setupSurfacePainting(self, modelNode):
+    """Setup interactive surface painting using markups"""
+    # Create markup points for painting
+    markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+    markupNode.SetName(f"{modelNode.GetName()}_PaintPoints")
+
+    # Configure markup display
+    markupDisplay = markupNode.GetDisplayNode()
+    if markupDisplay:
+      markupDisplay.SetGlyphType(markupDisplay.Sphere3D)
+      markupDisplay.SetGlyphScale(2.0)
+      markupDisplay.SetSelectedColor(1.0, 0.0, 0.0)  # Red
+      markupDisplay.SetOpacity(0.8)
+
+    # Add painting controls to UI
+    if not hasattr(self, 'surfacePaintingFrame'):
+      self._createSurfacePaintingControls()
+
+    self.surfacePaintingFrame.setVisible(True)
+    self.currentPaintMarkup = markupNode
+
+    # Connect markup modification to painting
+    markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onPaintPointModified)
+    markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointAddedEvent, self._onPaintPointAdded)
+
+  def _createSurfacePaintingControls(self):
+    """Create UI controls for surface painting"""
+    self.surfacePaintingFrame = qt.QFrame()
+    self.surfacePaintingFrame.setFrameStyle(qt.QFrame.StyledPanel)
+    self.surfacePaintingLayout = qt.QFormLayout(self.surfacePaintingFrame)
+
+    # Paint radius control
+    self.paintRadiusSlider = ctk.ctkDoubleSlider()
+    self.paintRadiusSlider.minimum = 1.0
+    self.paintRadiusSlider.maximum = 20.0
+    self.paintRadiusSlider.value = 5.0
+    self.paintRadiusSlider.setToolTip("Radius of painting brush in mm")
+    self.surfacePaintingLayout.addRow("Paint Radius (mm):", self.paintRadiusSlider)
+
+    # Clear selection button
+    self.clearSurfaceSelectionButton = qt.QPushButton("Clear Selection")
+    self.clearSurfaceSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.clearSurfaceSelectionButton.connect('clicked(bool)', self._onClearSurfaceSelection)
+    self.surfacePaintingLayout.addRow(self.clearSurfaceSelectionButton)
+
+    # Add to main layout
+    self.segmentEditorLayout.addRow("Surface Painting:", self.surfacePaintingFrame)
+    self.surfacePaintingFrame.setVisible(False)
+
+  def _onPaintPointAdded(self, caller, event):
+    """Handle new paint point added"""
+    self._updateSurfaceSelection()
+
+  def _onPaintPointModified(self, caller, event):
+    """Handle paint point moved"""
+    self._updateSurfaceSelection()
+
+  def _updateSurfaceSelection(self):
+    """Update surface selection based on markup points"""
+    if not hasattr(self, 'currentSurfaceModel') or not hasattr(self, 'currentPaintMarkup'):
+      return
+
+    modelNode = self.currentSurfaceModel
+    markupNode = self.currentPaintMarkup
+    polyData = modelNode.GetPolyData()
+
+    if not polyData:
+      return
+
+    # Get selection array
+    selectionArray = polyData.GetPointData().GetScalars("Selection")
+    if not selectionArray:
+      return
+
+    # Clear previous selection
+    selectionArray.Fill(0.0)
+
+    # Paint around each markup point
+    radius = self.paintRadiusSlider.value
+    numPoints = polyData.GetNumberOfPoints()
+
+    for i in range(markupNode.GetNumberOfControlPoints()):
+      if markupNode.GetNthControlPointVisibility(i):
+        markupPos = [0, 0, 0]
+        markupNode.GetNthControlPointPosition(i, markupPos)
+
+        # Find points within radius
+        for ptId in range(numPoints):
+          point = polyData.GetPoint(ptId)
+          distance = vtk.vtkMath.Distance2BetweenPoints(point, markupPos)
+
+          if distance <= radius * radius:
+            selectionArray.SetValue(ptId, 1.0)  # Mark as selected
+
+    # Update display
+    selectionArray.Modified()
+    polyData.Modified()
+    modelNode.Modified()
+
+  def _onClearSurfaceSelection(self):
+    """Clear all surface selection"""
+    if hasattr(self, 'currentSurfaceModel'):
+      polyData = self.currentSurfaceModel.GetPolyData()
+      if polyData:
+        selectionArray = polyData.GetPointData().GetScalars("Selection")
+        if selectionArray:
+          selectionArray.Fill(0.0)
+          selectionArray.Modified()
+          polyData.Modified()
+          self.currentSurfaceModel.Modified()
+
+    if hasattr(self, 'currentPaintMarkup'):
+      self.currentPaintMarkup.RemoveAllControlPoints()
   
   def onExportSelection(self):
     """Export the painted region as a new model"""
