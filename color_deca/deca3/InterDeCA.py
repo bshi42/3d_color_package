@@ -73,6 +73,170 @@ except ImportError as e:
 
 print(f'Final decaLogic value: {decaLogic}')
 
+def checkAndOfferPackageInstallation():
+    """
+    Checks for missing optional packages and offers to install them.
+    Returns a tuple of (missing_packages, all_available)
+    """
+    import datetime
+
+    print(f"\n--- InterDeCA Package Check ({datetime.datetime.now().strftime('%H:%M:%S')}) ---")
+
+    missing_packages = []
+    available_packages = []
+    package_info = {
+        'numpy': {'import_test': lambda: __import__('numpy'), 'pip_name': 'numpy'},
+        'sklearn': {'import_test': lambda: __import__('sklearn'), 'pip_name': 'scikit-learn'},
+        'umap': {'import_test': lambda: __import__('umap'), 'pip_name': 'umap-learn'},
+        'skimage': {'import_test': lambda: __import__('skimage'), 'pip_name': 'scikit-image'},
+        'imageio': {'import_test': lambda: __import__('imageio'), 'pip_name': 'imageio'}
+    }
+
+    # Check which packages are missing
+    for package_name, info in package_info.items():
+        try:
+            info['import_test']()
+            available_packages.append(info['pip_name'])
+            print(f"✓ {info['pip_name']} - Available")
+        except ImportError:
+            missing_packages.append({
+                'name': package_name,
+                'pip_name': info['pip_name'],
+                'description': {
+                    'numpy': 'Core numerical computing library (usually included with Slicer)',
+                    'sklearn': 'Required for PCA, t-SNE, and clustering in Colors EDA',
+                    'umap': 'Required for UMAP dimensionality reduction in Colors EDA',
+                    'skimage': 'Required for advanced color quantization and analysis',
+                    'imageio': 'Required for texture and image processing'
+                }.get(package_name, 'Optional package for enhanced functionality')
+            })
+            print(f"✗ {info['pip_name']} - Missing")
+
+    print(f"Package Status: {len(available_packages)} available, {len(missing_packages)} missing")
+    if available_packages:
+        print(f"Available: {', '.join(available_packages)}")
+    if missing_packages:
+        print(f"Missing: {', '.join([pkg['pip_name'] for pkg in missing_packages])}")
+    print("--- End Package Check ---\n")
+
+    return missing_packages, available_packages
+
+def installMissingPackages(missing_packages):
+    """
+    Installs the specified missing packages using Slicer's pip functionality.
+
+    Args:
+        missing_packages: List of package dictionaries with 'pip_name' keys
+    """
+    import subprocess
+    import datetime
+
+    success_count = 0
+    failed_packages = []
+    installed_packages = []
+
+    # Log installation start
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n{'='*60}")
+    print(f"InterDeCA Package Installation Started - {timestamp}")
+    print(f"{'='*60}")
+    print(f"Packages to install: {len(missing_packages)}")
+    for package in missing_packages:
+        print(f"  • {package['pip_name']}: {package['description']}")
+    print(f"{'='*60}\n")
+
+    # Show progress dialog
+    progressDialog = slicer.util.createProgressDialog(
+        windowTitle="Installing Packages",
+        maximum=len(missing_packages)
+    )
+
+    try:
+        for i, package in enumerate(missing_packages):
+            package_name = package['pip_name']
+            progressDialog.labelText = f"Installing {package_name}..."
+            progressDialog.value = i
+            slicer.app.processEvents()
+
+            print(f"[{i+1}/{len(missing_packages)}] Installing {package_name}...")
+
+            try:
+                # Use Slicer's pip_install utility
+                slicer.util.pip_install(package_name)
+                success_count += 1
+                installed_packages.append(package_name)
+                print(f"✓ Successfully installed {package_name}")
+
+                # Verify installation by trying to import
+                try:
+                    if package_name == 'scikit-learn':
+                        import sklearn
+                        print(f"  → Verified sklearn version: {sklearn.__version__}")
+                    elif package_name == 'umap-learn':
+                        import umap
+                        print(f"  → Verified umap-learn installation")
+                    elif package_name == 'scikit-image':
+                        import skimage
+                        print(f"  → Verified skimage version: {skimage.__version__}")
+                    elif package_name == 'imageio':
+                        import imageio
+                        print(f"  → Verified imageio version: {imageio.__version__}")
+                except ImportError as verify_error:
+                    print(f"  ⚠ Warning: Could not verify {package_name} import: {verify_error}")
+
+            except Exception as e:
+                print(f"✗ Failed to install {package_name}: {e}")
+                failed_packages.append(package_name)
+
+        progressDialog.close()
+
+        # Log installation summary
+        end_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n{'='*60}")
+        print(f"InterDeCA Package Installation Summary - {end_timestamp}")
+        print(f"{'='*60}")
+
+        if success_count > 0:
+            print(f"✓ Successfully installed {success_count} package(s):")
+            for pkg in installed_packages:
+                print(f"    • {pkg}")
+
+        if failed_packages:
+            print(f"\n✗ Failed to install {len(failed_packages)} package(s):")
+            for pkg in failed_packages:
+                print(f"    • {pkg}")
+
+        print(f"\nTotal packages processed: {len(missing_packages)}")
+        print(f"Success rate: {(success_count/len(missing_packages)*100):.1f}%")
+
+        if success_count > 0:
+            print(f"\n⚠ IMPORTANT: Restart Slicer to use newly installed packages")
+
+        print(f"{'='*60}\n")
+
+        # Show results to user
+        if success_count > 0:
+            success_msg = f"Successfully installed {success_count} package(s)."
+            if failed_packages:
+                success_msg += f"\n\nFailed to install: {', '.join(failed_packages)}"
+                success_msg += "\nYou may need to restart Slicer for changes to take effect."
+            else:
+                success_msg += "\n\nPlease restart Slicer to use the new functionality."
+
+            success_msg += f"\n\nCheck the Python console for detailed installation log."
+            slicer.util.infoDisplay(success_msg, windowTitle="Installation Complete")
+        else:
+            slicer.util.errorDisplay(
+                f"Failed to install packages: {', '.join(failed_packages)}\n\nCheck the Python console for details.",
+                windowTitle="Installation Failed"
+            )
+
+    except Exception as e:
+        progressDialog.close()
+        print(f"\n✗ INSTALLATION ERROR: {e}")
+        print(f"Check the Python console for details.\n")
+        slicer.util.errorDisplay(f"Installation process failed: {e}\n\nCheck the Python console for details.", windowTitle="Installation Error")
+
 #
 # InterDeCA
 #
@@ -192,6 +356,32 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
 
     self.layout.addWidget(tabsWidget)
+
+    # Package Management Section
+    packageWidget = ctk.ctkCollapsibleButton()
+    packageWidget.text = "Package Management"
+    packageWidget.collapsed = True
+    packageWidgetLayout = qt.QFormLayout(packageWidget)
+    self.layout.addWidget(packageWidget)
+
+    # Package status label
+    self.packageStatusLabel = qt.QLabel()
+    packageWidgetLayout.addRow("Status:", self.packageStatusLabel)
+
+    # Install missing packages button
+    self.installPackagesButton = qt.QPushButton("Check & Install Missing Packages")
+    self.installPackagesButton.toolTip = "Check for missing optional packages and offer to install them"
+    self.installPackagesButton.connect('clicked(bool)', self.onInstallPackagesClicked)
+    packageWidgetLayout.addRow(self.installPackagesButton)
+
+    # Quick install all button
+    self.installAllButton = qt.QPushButton("Install All Recommended Packages")
+    self.installAllButton.toolTip = "Install all recommended packages for full InterDeCA functionality"
+    self.installAllButton.connect('clicked(bool)', self.onInstallAllPackagesClicked)
+    packageWidgetLayout.addRow(self.installAllButton)
+
+    # Update package status after all widgets are created
+    self.updatePackageStatus()
 
     ################################### DeCA Tab ###################################
 
