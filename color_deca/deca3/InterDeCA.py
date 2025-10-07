@@ -38,24 +38,24 @@ import colorsys
 
 # Attempts to import optional machine learning libraries
 try:
-    from sklearn.decomposition import PCA, FastICA
-    from sklearn.manifold import TSNE
-    from sklearn.cluster import KMeans, MiniBatchKMeans
-    import umap
-    SKLEARN_AVAILABLE = True
-    UMAP_AVAILABLE = True
+    from sklearn.decomposition import PCA, FastICA  # Imports dimensionality reduction algorithms
+    from sklearn.manifold import TSNE  # Imports t-SNE for non-linear dimensionality reduction
+    from sklearn.cluster import KMeans, MiniBatchKMeans  # Imports clustering algorithms for color analysis
+    import umap  # Imports UMAP for advanced manifold learning
+    SKLEARN_AVAILABLE = True  # Sets flag indicating scikit-learn is available
+    UMAP_AVAILABLE = True  # Sets flag indicating UMAP is available
 except ImportError:
-    SKLEARN_AVAILABLE = False
-    UMAP_AVAILABLE = False
+    SKLEARN_AVAILABLE = False  # Disables scikit-learn dependent features
+    UMAP_AVAILABLE = False  # Disables UMAP dependent features
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
 
 # Attempts to import scikit-image for color quantization
 try:
-    from skimage import color as skimage_color
-    from skimage.color import deltaE_ciede2000
-    SKIMAGE_AVAILABLE = True
+    from skimage import color as skimage_color  # Imports color space conversion utilities
+    from skimage.color import deltaE_ciede2000  # Imports perceptual color difference metric
+    SKIMAGE_AVAILABLE = True  # Sets flag for advanced color features
 except ImportError:
-    SKIMAGE_AVAILABLE = False
+    SKIMAGE_AVAILABLE = False  # Disables color quantization features
     print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
 # Imports functions from the original DeCA module to avoid code duplication
@@ -92,17 +92,18 @@ def checkAndOfferPackageInstallation():
         'imageio': {'import_test': lambda: __import__('imageio'), 'pip_name': 'imageio'}
     }
 
-    # Check which packages are missing
+    # Checks which packages are missing by attempting imports
     for package_name, info in package_info.items():
         try:
-            info['import_test']()
-            available_packages.append(info['pip_name'])
+            info['import_test']()  # Attempts to import the package
+            available_packages.append(info['pip_name'])  # Adds to available list if import succeeds
             print(f"✓ {info['pip_name']} - Available")
         except ImportError:
+            # Builds package info dictionary when import fails
             missing_packages.append({
                 'name': package_name,
                 'pip_name': info['pip_name'],
-                'description': {
+                'description': {  # Maps package names to user-friendly descriptions
                     'numpy': 'Core numerical computing library (usually included with Slicer)',
                     'sklearn': 'Required for PCA, t-SNE, and clustering in Colors EDA',
                     'umap': 'Required for UMAP dimensionality reduction in Colors EDA',
@@ -110,7 +111,7 @@ def checkAndOfferPackageInstallation():
                     'imageio': 'Required for texture and image processing'
                 }.get(package_name, 'Optional package for enhanced functionality')
             })
-            print(f"✗ {info['pip_name']} - Missing")
+            print(f"✗ {info['pip_name']} - Missing")  # Indicates missing package
 
     print(f"Package Status: {len(available_packages)} available, {len(missing_packages)} missing")
     if available_packages:
@@ -145,10 +146,10 @@ def installMissingPackages(missing_packages):
         print(f"  • {package['pip_name']}: {package['description']}")
     print(f"{'='*60}\n")
 
-    # Show progress dialog
+    # Shows progress dialog to track installation status
     progressDialog = slicer.util.createProgressDialog(
         windowTitle="Installing Packages",
-        maximum=len(missing_packages)
+        maximum=len(missing_packages)  # Sets maximum value for progress bar
     )
 
     try:
@@ -161,28 +162,28 @@ def installMissingPackages(missing_packages):
             print(f"[{i+1}/{len(missing_packages)}] Installing {package_name}...")
 
             try:
-                # Use Slicer's pip_install utility
-                slicer.util.pip_install(package_name)
-                success_count += 1
-                installed_packages.append(package_name)
+                # Uses Slicer's pip_install utility to install package
+                slicer.util.pip_install(package_name)  # Executes pip install command
+                success_count += 1  # Increments success counter
+                installed_packages.append(package_name)  # Tracks successfully installed packages
                 print(f"✓ Successfully installed {package_name}")
 
-                # Verify installation by trying to import
+                # Verifies installation by attempting to import the newly installed package
                 try:
                     if package_name == 'scikit-learn':
-                        import sklearn
-                        print(f"  → Verified sklearn version: {sklearn.__version__}")
+                        import sklearn  # Attempts sklearn import
+                        print(f"  → Verified sklearn version: {sklearn.__version__}")  # Confirms version
                     elif package_name == 'umap-learn':
-                        import umap
+                        import umap  # Attempts umap import
                         print(f"  → Verified umap-learn installation")
                     elif package_name == 'scikit-image':
-                        import skimage
+                        import skimage  # Attempts skimage import
                         print(f"  → Verified skimage version: {skimage.__version__}")
                     elif package_name == 'imageio':
-                        import imageio
+                        import imageio  # Attempts imageio import
                         print(f"  → Verified imageio version: {imageio.__version__}")
                 except ImportError as verify_error:
-                    print(f"  ⚠ Warning: Could not verify {package_name} import: {verify_error}")
+                    print(f"  ⚠ Warning: Could not verify {package_name} import: {verify_error}")  # Warns if verification fails
 
             except Exception as e:
                 print(f"✗ Failed to install {package_name}: {e}")
@@ -316,30 +317,30 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     ScriptedLoadableModuleWidget.setup(self)
 
     # Initializes variables for interpolation visualization
-    self.interpolatedModelNode = None  # Temporary model for interpolation
-    self.selectedOriginalModelNode = None  # Selected resampled model
-    self.lastDeCAAlignedModelsPath = None  # Path to aligned models
-    
-    # Progress tracking
-    self.progressBar = None
-    
-    # Initialize persistent data storage
-    self.settings = qt.QSettings()
-    self.settings.beginGroup("InterDeCA")
-    self.progressLabel = None
-    self.cancelButton = None
-    self.currentOperation = None
+    self.interpolatedModelNode = None  # Stores temporary model for interpolation display
+    self.selectedOriginalModelNode = None  # Stores selected resampled model reference
+    self.lastDeCAAlignedModelsPath = None  # Caches path to aligned models directory
 
-    # Sets up tabs to organize complex workflow
-    tabsWidget = qt.QTabWidget()
-    self.tabsWidget = tabsWidget
-    DeCATab = qt.QWidget()
-    DeCATabLayout = qt.QFormLayout(DeCATab)
+    # Initializes progress tracking components
+    self.progressBar = None  # Stores progress bar widget reference
 
-    # Conditionally create visualize tab based on constant
-    if SHOW_VISUALIZE_RESULTS:
-      visualizeTab = qt.QWidget()
-      visualizeTabLayout = qt.QFormLayout(visualizeTab)
+    # Initializes persistent data storage for settings
+    self.settings = qt.QSettings()  # Creates QSettings object for persistent storage
+    self.settings.beginGroup("InterDeCA")  # Groups all InterDeCA settings together
+    self.progressLabel = None  # Stores progress label widget reference
+    self.cancelButton = None  # Stores cancel button widget reference
+    self.currentOperation = None  # Tracks current operation for cancellation
+
+    # Sets up tabs to organize complex workflow into logical sections
+    tabsWidget = qt.QTabWidget()  # Creates main tab widget container
+    self.tabsWidget = tabsWidget  # Stores reference for later access
+    DeCATab = qt.QWidget()  # Creates widget for DeCA workflow
+    DeCATabLayout = qt.QFormLayout(DeCATab)  # Sets form layout for organized controls
+
+    # Conditionally creates visualize tab based on feature flag
+    if SHOW_VISUALIZE_RESULTS:  # Checks if visualization feature is enabled
+      visualizeTab = qt.QWidget()  # Creates widget for visualization tools
+      visualizeTabLayout = qt.QFormLayout(visualizeTab)  # Sets form layout for controls
 
     colorsEDATab = qt.QWidget()
     colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
@@ -499,63 +500,63 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.bakeMarginPxSpin.setToolTip("Bake dilation margin (pixels).")
     blForm.addRow("Bake margin (px):", self.bakeMarginPxSpin)
 
-    # Add spacing
-    DeCATabLayout.addRow(" ", qt.QLabel())
+    # Adds spacing between sections for visual clarity
+    DeCATabLayout.addRow(" ", qt.QLabel())  # Creates empty row as separator
 
     #
     # Progress tracking widgets
     #
-    self.progressWidgetDC = qt.QWidget()
-    self.progressWidgetDC.setVisible(False)
-    progressLayout = qt.QVBoxLayout(self.progressWidgetDC)
-    progressLayout.setContentsMargins(0, 0, 0, 0)
+    self.progressWidgetDC = qt.QWidget()  # Creates container widget for progress controls
+    self.progressWidgetDC.setVisible(False)  # Hides progress widget initially
+    progressLayout = qt.QVBoxLayout(self.progressWidgetDC)  # Sets vertical layout for progress elements
+    progressLayout.setContentsMargins(0, 0, 0, 0)  # Removes margins for compact display
 
-    self.progressBarDC = qt.QProgressBar()
-    self.progressBarDC.setRange(0, 100)
-    self.progressBarDC.setValue(0)
-    progressLayout.addWidget(self.progressBarDC)
+    self.progressBarDC = qt.QProgressBar()  # Creates progress bar widget
+    self.progressBarDC.setRange(0, 100)  # Sets percentage range
+    self.progressBarDC.setValue(0)  # Initializes at 0%
+    progressLayout.addWidget(self.progressBarDC)  # Adds to layout
 
 
-    self.cancelButtonDC = qt.QPushButton("Cancel Operation")
-    self.cancelButtonDC.setMaximumWidth(120)
-    self.cancelButtonDC.setVisible(False)
-    progressLayout.addWidget(self.cancelButtonDC)
+    self.cancelButtonDC = qt.QPushButton("Cancel Operation")  # Creates cancel button
+    self.cancelButtonDC.setMaximumWidth(120)  # Limits button width
+    self.cancelButtonDC.setVisible(False)  # Hides initially until operation starts
+    progressLayout.addWidget(self.cancelButtonDC)  # Adds to progress layout
 
     DeCATabLayout.addRow("Progress: ", self.progressWidgetDC)
 
     #
     # Run DeCA Button
     #
-    self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")
-    self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"
-    self.applyButtonDC.enabled = False
-    self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    DeCATabLayout.addRow(self.applyButtonDC)
+    self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")  # Creates main execution button
+    self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"  # Sets helpful tooltip
+    self.applyButtonDC.enabled = False  # Disables until required inputs are provided
+    self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('primary'))  # Applies primary button styling
+    DeCATabLayout.addRow(self.applyButtonDC)  # Adds button to form layout
 
 
     #
     # Log Information
     #
-    self.logInfoDC = qt.QPlainTextEdit()
-    self.logInfoDC.setPlaceholderText("DeCA log information")
-    self.logInfoDC.setReadOnly(True)
-    DeCATabLayout.addRow(self.logInfoDC)
+    self.logInfoDC = qt.QPlainTextEdit()  # Creates text area for log output
+    self.logInfoDC.setPlaceholderText("DeCA log information")  # Shows placeholder when empty
+    self.logInfoDC.setReadOnly(True)  # Prevents user editing of log content
+    DeCATabLayout.addRow(self.logInfoDC)  # Adds log widget to layout
 
-    # Connections
-    self.meshDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.meshDirectoryDC.connect('currentPathChanged(QString)', self.onMeshDirectoryChangedDC)
-    self.landmarkDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.landmarkDirectoryDC.connect('currentPathChanged(QString)', self.onLandmarkDirectoryChangedDC)
-    self.outputDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.outputDirectoryDC.connect('currentPathChanged(QString)', self.onOutputDirectoryChangedDC)
-    self.applyButtonDC.connect('clicked(bool)', self.onDCApplyButton)
-    self.textureDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)
-    self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)
-    self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)
+    # Connects UI signals to handler functions
+    self.meshDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates mesh directory input
+    self.meshDirectoryDC.connect('currentPathChanged(QString)', self.onMeshDirectoryChangedDC)  # Handles mesh path changes
+    self.landmarkDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates landmark directory
+    self.landmarkDirectoryDC.connect('currentPathChanged(QString)', self.onLandmarkDirectoryChangedDC)  # Handles landmark path changes
+    self.outputDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates output directory
+    self.outputDirectoryDC.connect('currentPathChanged(QString)', self.onOutputDirectoryChangedDC)  # Handles output path changes
+    self.applyButtonDC.connect('clicked(bool)', self.onDCApplyButton)  # Connects run button to execution handler
+    self.textureDirectoryDC.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates texture directory
+    self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)  # Handles texture path changes
+    self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates Blender executable path
+    self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)  # Connects cancel button to handler
 
-    # Restore previously saved directory paths
-    self.restoreSavedDirectories()
+    # Restores previously saved directory paths from persistent settings
+    self.restoreSavedDirectories()  # Loads saved paths for user convenience
 
     ################################### Visualize Tab ###################################
     if SHOW_VISUALIZE_RESULTS:
@@ -1656,22 +1657,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       return False, 0
   
   def onMeshDirectoryChangedDC(self, directory):
-    """Validate mesh directory when changed"""
-    model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']
-    self.validateDirectory(directory, model_extensions, self.meshValidationLabelDC, "models")
-    # Update texture matching if textures are already loaded
-    if self.textureDirectoryDC.currentPath:
+    """Validates mesh directory when path changes.
+
+    Checks for supported 3D model file formats and updates validation status.
+
+    Args:
+      directory: Path to the directory containing mesh files
+    """
+    model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']  # Defines supported model formats
+    self.validateDirectory(directory, model_extensions, self.meshValidationLabelDC, "models")  # Validates directory contents
+    # Updates texture matching if textures are already loaded
+    if self.textureDirectoryDC.currentPath:  # Checks if textures exist
       self.validateTextureMatching()
     # Save the directory path
     self.settings.setValue("meshDirectory", directory)
     self.onParameterSelectDC()
   
   def onLandmarkDirectoryChangedDC(self, directory):
-    """Validate landmark directory when changed"""
-    landmark_extensions = ['.fcsv', '.json', '.mrk.json']
-    self.validateDirectory(directory, landmark_extensions, self.landmarkValidationLabelDC, "landmarks")
-    # Update texture matching if textures are already loaded
-    if self.textureDirectoryDC.currentPath:
+    """Validates landmark directory when path changes.
+
+    Checks for supported landmark file formats and updates validation status.
+
+    Args:
+      directory: Path to the directory containing landmark files
+    """
+    landmark_extensions = ['.fcsv', '.json', '.mrk.json']  # Defines supported landmark formats
+    self.validateDirectory(directory, landmark_extensions, self.landmarkValidationLabelDC, "landmarks")  # Validates directory contents
+    # Updates texture matching if landmarks are paired with textures
+    if self.textureDirectoryDC.currentPath:  # Checks if textures exist
       self.validateTextureMatching()
     # Save the directory path
     self.settings.setValue("landmarkDirectory", directory)
@@ -3295,16 +3308,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     InterDeCALogic().applyTextureToModel(self.atlasModel, png)
 
   def onDCApplyButton(self):
-    logic = InterDeCALogic()
+    """Executes main DeCA analysis workflow when Run button is clicked.
 
-    # Start progress tracking
-    self.applyButtonDC.enabled = False
-    self.updateProgressDC(0, "Initializing DeCA analysis...")
+    Performs the following steps:
+    1. Validates input directories and parameters
+    2. Creates output directory structure
+    3. Runs DeCA alignment algorithm
+    4. Processes textures through Blender if available
+    5. Generates atlas model and correspondence maps
+    6. Updates visualization and reports results
+    """
+    logic = InterDeCALogic()  # Creates logic instance for analysis
 
-    # Folders
-    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, False)
+    # Starts progress tracking for user feedback
+    self.applyButtonDC.enabled = False  # Disables button during processing
+    self.updateProgressDC(0, "Initializing DeCA analysis...")  # Shows initial progress
+
+    # Creates folder structure for organized output
+    self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, False)  # Sets up directory hierarchy
     if not self.folderNames:
-      self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
+      self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')  # Reports creation failure
       self.resetProgressDC()
       self.applyButtonDC.enabled = True
       return
@@ -3566,21 +3589,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     threeDView.resetCamera()
     threeDView.resetFocalPoint()
 
-    # Force a render update
-    slicer.app.processEvents()
+    # Forces a render update to refresh display
+    slicer.app.processEvents()  # Processes pending UI events
 
     # ---- 7) Fill Visualize dropdown ----
-    self.updateProgressDC(100, "Finalizing results...")
+    self.updateProgressDC(100, "Finalizing results...")  # Shows completion progress
     if SHOW_VISUALIZE_RESULTS:
-      self.updateBakedPreviewList()
+      self.updateBakedPreviewList()  # Updates preview list with results
 
     # ---- 8) Update UI after DeCA completion ----
-    self.updateUIAfterDeCACompletion()
+    self.updateUIAfterDeCACompletion()  # Refreshes UI elements
 
-    # Success - reset progress and re-enable button
-    self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")
-    self.resetProgressDC()
-    self.applyButtonDC.enabled = True
+    # Reports success and resets UI state
+    self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")  # Shows success message
+    self.resetProgressDC()  # Resets progress bar
+    self.applyButtonDC.enabled = True  # Re-enables run button
 
   def maximize3DViewer(self, logWidget=None):
     """
@@ -3609,7 +3632,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       success = widget.maximize3DViewer()
     """
     if logWidget is None:
-      logWidget = getattr(self, 'logInfoDC', None)
+      logWidget = getattr(self, 'logInfoDC', None)  # Uses default log widget if none provided
 
     try:
       layoutManager = slicer.app.layoutManager()
@@ -5428,26 +5451,40 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 #
 
 class InterDeCALogic(ScriptedLoadableModuleLogic):
-  """This class should implement all the actual
-    computation done by your module.  The interface
-    should be such that other python code can import
-    this class and make use of the functionality without
-    requiring an instance of the Widget.
-    Uses ScriptedLoadableModuleLogic base class, available at:
-    https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+  """Logic class implementing InterDeCA analysis algorithms.
+
+  This class contains the core computational methods for:
+  - Dense correspondence analysis
+  - Texture processing and color extraction
+  - Landmark manipulation and subsampling
+  - Atlas generation and alignment
+  - Statistical analysis of shape and color patterns
+
+  The interface is designed to be independent of the GUI widget,
+  allowing batch processing and scripted automation.
+
+  Uses ScriptedLoadableModuleLogic base class, available at:
+  https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
+  """
   def runSubsetLandmarks(self, baseNode, lmDirectory, lmDirectorySubset):
-    deletionIndex = []
+    """Creates subset of landmarks based on selected points.
+
+    Args:
+      baseNode: Markup node with selected/unselected points
+      lmDirectory: Source directory containing landmark files
+      lmDirectorySubset: Output directory for subset landmarks
+    """
+    deletionIndex = []  # Collects indices of unselected points
     for i in range(baseNode.GetNumberOfControlPoints()):
-      if not baseNode.GetNthControlPointSelected(i):
-        deletionIndex.append(i)
+      if not baseNode.GetNthControlPointSelected(i):  # Checks selection status
+        deletionIndex.append(i)  # Marks for deletion
     for lmFileName in os.listdir(lmDirectory):
-      if(not lmFileName.startswith(".")):
-        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))
-        for index in reversed(deletionIndex):
-          currentLMNode.RemoveNthControlPoint(index)
-      slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))
-      slicer.mrmlScene.RemoveNode(currentLMNode)
+      if(not lmFileName.startswith(".")):  # Skips hidden files
+        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))  # Loads landmark file
+        for index in reversed(deletionIndex):  # Removes points in reverse order
+          currentLMNode.RemoveNthControlPoint(index)  # Deletes unselected point
+      slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))  # Saves subset
+      slicer.mrmlScene.RemoveNode(currentLMNode)  # Cleans up scene
 
   def runCheckPoints(self, atlasNode, spacingTolerance):
     spacingPercentage = spacingTolerance/100
@@ -9153,19 +9190,28 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       return False
 
 class ColorTheme:
-    """Centralized color theme management for InterDeCA"""
-    
+    """Centralized color theme management for InterDeCA.
+
+    Provides consistent styling across the module interface with
+    support for both light and dark themes that adapt to Slicer's
+    current appearance settings.
+    """
+
     @staticmethod
     def getTheme():
-        """Get color theme based on Slicer's current theme"""
-        # Check if Slicer is in dark mode
-        palette = qt.QApplication.palette()
-        isDarkMode = palette.color(qt.QPalette.Window).lightness() < 128
-        
+        """Gets color theme based on Slicer's current theme.
+
+        Returns:
+            dict: Theme colors appropriate for current mode
+        """
+        # Checks if Slicer is in dark mode by examining window palette
+        palette = qt.QApplication.palette()  # Gets application palette
+        isDarkMode = palette.color(qt.QPalette.Window).lightness() < 128  # Determines if dark
+
         if isDarkMode:
-            return ColorTheme.getDarkTheme()
+            return ColorTheme.getDarkTheme()  # Returns dark theme colors
         else:
-            return ColorTheme.getLightTheme()
+            return ColorTheme.getLightTheme()  # Returns light theme colors
     
     @staticmethod
     def getLightTheme():
