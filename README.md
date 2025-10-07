@@ -48,7 +48,27 @@ This demo branch contains the **InterDeCA (Interactive Dense Correspondence Anal
 ## System Architecture
 
 ```
-InterDeCA Module
+3D Fish Color Modeling Package
+├── color_deca/
+│   ├── deca/                    # Original DeCA module
+│   │   ├── deca.py              # Core DeCA implementation
+│   │   ├── Resources/           # Module resources
+│   │   └── CMakeLists.txt       # Build configuration
+│   ├── deca3/                   # Enhanced InterDeCA module
+│   │   ├── InterDeCA.py         # Extended DeCA with color analysis
+│   │   ├── Resources/           # Module resources
+│   │   └── CMakeLists.txt       # Build configuration
+│   └── reporting/               # Reporting utilities
+│       ├── __init__.py          # Package initialization
+│       ├── results_reporter.py  # HTML report generation
+│       └── example_usage.py     # Working example/tutorial
+└── ModelColors-main/            # Color analysis utilities
+```
+
+### Module Structure
+
+```
+InterDeCA System
 ├── Core Analysis Engine
 │   ├── Dense Correspondence (DeCA)
 │   ├── Landmarking (DeCAL)
@@ -328,22 +348,59 @@ def clusterColors(colors, n_clusters=5):
 
 ## Results Reporting
 
-### ResultsReporter.py
+The reporting module is located in `color_deca/reporting/` and provides comprehensive HTML report generation for analysis results.
 
-Basic reporting module that generates simple HTML summaries:
+### Quick Start
 
-```python
-class ResultsReporter:
-    def __init__(self, output_directory)
-    def generate_simple_report(parameters=None)
-    def _scan_output_files()
-    def _create_html_report(files, parameters)
+A complete working example is provided in `color_deca/reporting/example_usage.py`:
+
+```bash
+# Run the example to see how it works
+python color_deca/reporting/example_usage.py
 ```
 
-### ResultsReporter.py
+This example script:
+- Creates sample DeCA output files
+- Generates a comprehensive HTML report
+- Shows proper usage of all parameters
+- Demonstrates best practices
 
-Comprehensive reporting with advanced features:
+### Basic Usage
 
+```python
+# Import the reporting module
+# Note: The file is results_reporter.py but we import the ResultsReporter class
+from color_deca.reporting import ResultsReporter
+
+# Alternative import methods:
+# from color_deca.reporting.results_reporter import ResultsReporter
+# import color_deca.reporting.results_reporter as reporter
+
+# Create reporter instance
+reporter = ResultsReporter(output_directory)
+
+# Generate comprehensive report
+report_path = reporter.generate_comprehensive_report(
+    parameters=analysis_params,
+    analysis_stats=results_stats
+)
+```
+
+### results_reporter.py
+
+Located in `color_deca/reporting/results_reporter.py`, this module provides:
+
+#### Dependencies
+The results_reporter module uses only Python standard library modules:
+- `os` - File system operations
+- `json` - JSON data handling
+- `datetime` - Timestamp generation
+- `pathlib` - Path manipulation
+- `hashlib` - File hashing (if needed)
+
+No external packages required - works with base Python installation!
+
+#### Class Methods
 ```python
 class ResultsReporter:
     def generate_comprehensive_report(parameters=None, analysis_stats=None)
