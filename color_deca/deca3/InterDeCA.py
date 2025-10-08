@@ -315,6 +315,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """
     ScriptedLoadableModuleWidget.setup(self)
 
+    # Suppress VTK warnings about painting lines with <2 points (harmless markup visualization warnings)
+    try:
+      import vtk
+      vtkOutput = vtk.vtkOutputWindow()
+      vtkOutput.SetInstance(None)
+    except:
+      pass  # If this fails, warnings will still appear but won't affect functionality
+
     # Initializes variables for interpolation visualization
     self.interpolatedModelNode = None  # Temporary model for interpolation
     self.selectedOriginalModelNode = None  # Selected resampled model
@@ -502,157 +510,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Add spacing
     DeCATabLayout.addRow(" ", qt.QLabel())
 
-    # --- Mesh Region Selection Section ---
-    # Region selection section for selecting and exporting mesh regions
-    self.regionSelectionWidget = ctk.ctkCollapsibleButton()
-    self.regionSelectionWidget.text = "Mesh Region Selection"
-    self.regionSelectionWidget.collapsed = False  # Make it visible by default
-    self.regionSelectionWidget.setStyleSheet(ColorTheme.getHeaderStyle())
-    DeCATabLayout.addRow(self.regionSelectionWidget)
-    regionLayout = qt.QFormLayout(self.regionSelectionWidget)
-  
-    # Target mesh selector for region selection
-    self.regionMeshSelector = slicer.qMRMLNodeComboBox()
-    self.regionMeshSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
-    self.regionMeshSelector.selectNodeUponCreation = False
-    self.regionMeshSelector.noneEnabled = True
-    self.regionMeshSelector.addEnabled = False
-    self.regionMeshSelector.removeEnabled = False
-    self.regionMeshSelector.showHidden = False
-    self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
-    regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
-  
-    # Selection method combo
-    self.selectionMethodCombo = qt.QComboBox()
-    self.selectionMethodCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.selectionMethodCombo.addItems([
-        "Landmarks + Radius",
-        "Segment Editor (Paint/Scissors)"
-    ])
-    self.selectionMethodCombo.setToolTip("Choose how to select regions on the mesh: Segment Editor for painting/scissors, or Landmarks for radius-based selection")
-    regionLayout.addRow("Selection Method:", self.selectionMethodCombo)
-  
-    # --- Segment Editor Method Controls ---
-    self.segmentEditorFrame = qt.QFrame()
-    self.segmentEditorLayout = qt.QFormLayout()
-    self.segmentEditorFrame.setLayout(self.segmentEditorLayout)
-    self.segmentEditorFrame.setVisible(False)  # Hidden by default
-  
-    # Existing segmentation selector for loading saved work
-    self.existingSegmentationSelector = slicer.qMRMLNodeComboBox()
-    self.existingSegmentationSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.existingSegmentationSelector.nodeTypes = (("vtkMRMLSegmentationNode"), "")
-    self.existingSegmentationSelector.setToolTip("Load existing segmentation data to continue working")
-    self.existingSegmentationSelector.selectNodeUponCreation = False
-    self.existingSegmentationSelector.noneEnabled = True
-    self.existingSegmentationSelector.addEnabled = False
-    self.existingSegmentationSelector.removeEnabled = False
-    self.existingSegmentationSelector.showHidden = False
-    self.existingSegmentationSelector.setMRMLScene(slicer.mrmlScene)
-    self.segmentEditorLayout.addRow("Load Existing Segmentation:", self.existingSegmentationSelector)
-  
-    self.loadSegmentationButton = qt.QPushButton("Load Segmentation")
-    self.loadSegmentationButton.setToolTip("Load and configure existing segmentation for editing")
-    self.loadSegmentationButton.enabled = False
-    self.loadSegmentationButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.segmentEditorLayout.addRow(self.loadSegmentationButton)
-  
-    # Add a separator line
-    separator1 = qt.QFrame()
-    separator1.setFrameShape(qt.QFrame.HLine)
-    separator1.setFrameShadow(qt.QFrame.Sunken)
-    self.segmentEditorLayout.addRow(separator1)
-  
-    self.setupSegmentEditorButton = qt.QPushButton("Setup New Segmentation")
-    self.setupSegmentEditorButton.setToolTip("Create new segmentation from model and open Segment Editor")
-    self.setupSegmentEditorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    self.segmentEditorLayout.addRow(self.setupSegmentEditorButton)
-  
-    # Add another separator line
-    separator2 = qt.QFrame()
-    separator2.setFrameShape(qt.QFrame.HLine)
-    separator2.setFrameShadow(qt.QFrame.Sunken)
-    self.segmentEditorLayout.addRow(separator2)
-  
-    self.exportSelectionButton = qt.QPushButton("Export Selected Region")
-    self.exportSelectionButton.setToolTip("Export painted region back to a model")
-    self.exportSelectionButton.enabled = False
-    self.exportSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.segmentEditorLayout.addRow(self.exportSelectionButton)
-  
-    regionLayout.addRow(self.segmentEditorFrame)
-  
-    # --- Landmark Method Controls ---
-    self.landmarkFrame = qt.QFrame()
-    self.landmarkLayout = qt.QFormLayout()
-    self.landmarkFrame.setLayout(self.landmarkLayout)
-    self.landmarkFrame.setVisible(True)  # Visible by default since Landmarks + Radius is first
-  
-    # Markup selector for selection points
-    self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
-    self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
-    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers (supports single or multiple landmarks)")
-    self.selectionMarkupSelector.selectNodeUponCreation = False
-    self.selectionMarkupSelector.noneEnabled = True
-    self.selectionMarkupSelector.addEnabled = True
-    self.selectionMarkupSelector.removeEnabled = False
-    self.selectionMarkupSelector.showHidden = False
-    self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
-    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
-  
-    # Radius control
-    self.selectionRadiusSlider = ctk.ctkSliderWidget()
-    self.selectionRadiusSlider.minimum = 0.0001
-    self.selectionRadiusSlider.maximum = 0.1
-    self.selectionRadiusSlider.singleStep = 0.0001  # Set after min/max to avoid bounds issues
-    self.selectionRadiusSlider.value = 0.01
-    try:
-        self.selectionRadiusSlider.decimals = 4
-    except AttributeError:
-        pass  # Some versions might not have this property
-    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
-    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
-  
-    # Selected points display (for single point mode)
-    self.selectedPointsLabel = qt.QLabel("No points selected")
-    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
-    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
-    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
-  
-    # Apply landmark selection button
-    self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
-    self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
-    self.applyLandmarkSelectionButton.enabled = False
-    self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
-  
-    # Export landmark selection button
-    self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
-    self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
-    self.exportLandmarkSelectionButton.enabled = False
-    self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
-    self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
-  
-    regionLayout.addRow(self.landmarkFrame)
-  
-    # --- Common Controls ---
-    # Clear selection button
-    self.clearSelectionButton = qt.QPushButton("Clear Selection")
-    self.clearSelectionButton.setToolTip("Clear the current region selection")
-    self.clearSelectionButton.enabled = False
-    self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
-    regionLayout.addRow(self.clearSelectionButton)
-  
-    # Selection info label
-    self.selectionInfoLabel = qt.QLabel("No region selected")
-    self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
-    regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
-
-    # Add spacing
-    DeCATabLayout.addRow(" ", qt.QLabel())
 
     #
     # Progress tracking widgets
@@ -705,19 +562,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)
     self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)
     self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)
-    
-    # Connect region selection events
-    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.selectionMethodCombo.connect("currentIndexChanged(int)", self.onSelectionMethodChanged)
-    self.existingSegmentationSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onExistingSegmentationChanged)
-    self.loadSegmentationButton.connect('clicked(bool)', self.onLoadSegmentation)
-    self.setupSegmentEditorButton.connect('clicked(bool)', self.onSetupSegmentEditor)
-    self.exportSelectionButton.connect('clicked(bool)', self.onExportSelection)
-    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
-    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
-    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
-    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
 
     # Restore previously saved directory paths
     self.restoreSavedDirectories()
@@ -929,12 +773,114 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('neutral'))
     dataSamplingWidgetLayout.addRow("Status: ", self.samplingStatusLabel)
 
+    # Add visual separator
+    separatorLine1 = qt.QFrame()
+    separatorLine1.setFrameShape(qt.QFrame.HLine)
+    separatorLine1.setFrameShadow(qt.QFrame.Sunken)
+    separatorLine1.setStyleSheet(ColorTheme.getSeparatorStyle())
+    colorsEDATabLayout.addRow(separatorLine1)
+
+    ################################### Mesh Region Selection ###################################
+    # Region selection section for selecting and analyzing mesh regions
+    self.regionSelectionWidget = ctk.ctkCollapsibleButton()
+    self.regionSelectionWidget.text = "Mesh Region Selection"
+    self.regionSelectionWidget.collapsed = True  # Collapsed by default
+    self.regionSelectionWidget.setStyleSheet(ColorTheme.getHeaderStyle())
+    colorsEDATabLayout.addRow(self.regionSelectionWidget)
+    regionLayout = qt.QFormLayout(self.regionSelectionWidget)
+
+    # Target mesh selector for region selection
+    self.regionMeshSelector = slicer.qMRMLNodeComboBox()
+    self.regionMeshSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.regionMeshSelector.nodeTypes = (("vtkMRMLModelNode"), "")
+    self.regionMeshSelector.setToolTip("Select the mesh to perform region selection on")
+    self.regionMeshSelector.selectNodeUponCreation = False
+    self.regionMeshSelector.noneEnabled = True
+    self.regionMeshSelector.addEnabled = False
+    self.regionMeshSelector.removeEnabled = False
+    self.regionMeshSelector.showHidden = False
+    self.regionMeshSelector.setMRMLScene(slicer.mrmlScene)
+    regionLayout.addRow("Target Mesh:", self.regionMeshSelector)
+
+    # --- Landmark Method Controls ---
+    self.landmarkFrame = qt.QFrame()
+    self.landmarkLayout = qt.QFormLayout()
+    self.landmarkFrame.setLayout(self.landmarkLayout)
+    self.landmarkFrame.setVisible(True)  # Visible by default
+
+    # Markup selector for selection points
+    self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
+    self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
+    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
+    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers (supports single or multiple landmarks)")
+    self.selectionMarkupSelector.selectNodeUponCreation = False
+    self.selectionMarkupSelector.noneEnabled = True
+    self.selectionMarkupSelector.addEnabled = True
+    self.selectionMarkupSelector.removeEnabled = False
+    self.selectionMarkupSelector.showHidden = False
+    self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
+    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
+
+    # Radius control
+    self.selectionRadiusSlider = ctk.ctkSliderWidget()
+    self.selectionRadiusSlider.minimum = 0.0001
+    self.selectionRadiusSlider.maximum = 0.1
+    self.selectionRadiusSlider.singleStep = 0.0001  # Set after min/max to avoid bounds issues
+    self.selectionRadiusSlider.value = 0.01
+    try:
+        self.selectionRadiusSlider.decimals = 4
+    except AttributeError:
+        pass  # Some versions might not have this property
+    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
+    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+
+    # Selected points display (for single point mode)
+    self.selectedPointsLabel = qt.QLabel("No points selected")
+    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
+    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
+
+    # Apply landmark selection button
+    self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
+    self.applyLandmarkSelectionButton.setToolTip("Apply region selection using landmarks")
+    self.applyLandmarkSelectionButton.enabled = False
+    self.applyLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.landmarkLayout.addRow(self.applyLandmarkSelectionButton)
+
+    # Export landmark selection button
+    self.exportLandmarkSelectionButton = qt.QPushButton("Export Selected Region as Model")
+    self.exportLandmarkSelectionButton.setToolTip("Export the selected region as a separate model")
+    self.exportLandmarkSelectionButton.enabled = False
+    self.exportLandmarkSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.landmarkLayout.addRow(self.exportLandmarkSelectionButton)
+
+    regionLayout.addRow(self.landmarkFrame)
+
+    # --- Common Controls ---
+    # Clear selection button
+    self.clearSelectionButton = qt.QPushButton("Clear Selection")
+    self.clearSelectionButton.setToolTip("Clear the current region selection")
+    self.clearSelectionButton.enabled = False
+    self.clearSelectionButton.setStyleSheet(ColorTheme.getButtonStyle('neutral'))
+    regionLayout.addRow(self.clearSelectionButton)
+
+    # Selection info label
+    self.selectionInfoLabel = qt.QLabel("No region selected")
+    self.selectionInfoLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    regionLayout.addRow("Selection Info:", self.selectionInfoLabel)
+
+    # Use region for analysis checkbox
+    self.useRegionForAnalysisCheckbox = qt.QCheckBox("Use selected region for analysis")
+    self.useRegionForAnalysisCheckbox.setToolTip("When enabled, analysis will only include faces from the selected region")
+    self.useRegionForAnalysisCheckbox.setEnabled(False)
+    regionLayout.addRow(self.useRegionForAnalysisCheckbox)
+
     # Add visual separator between phases
-    separatorLine = qt.QFrame()
-    separatorLine.setFrameShape(qt.QFrame.HLine)
-    separatorLine.setFrameShadow(qt.QFrame.Sunken)
-    separatorLine.setStyleSheet(ColorTheme.getSeparatorStyle())
-    colorsEDATabLayout.addRow(separatorLine)
+    separatorLine2 = qt.QFrame()
+    separatorLine2.setFrameShape(qt.QFrame.HLine)
+    separatorLine2.setFrameShadow(qt.QFrame.Sunken)
+    separatorLine2.setStyleSheet(ColorTheme.getSeparatorStyle())
+    colorsEDATabLayout.addRow(separatorLine2)
 
     ################################### Phase 2: Analysis & Plotting ###################################
     # Analysis section
@@ -1128,6 +1074,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Connections for Phase 2: Analysis & Plotting
     self.plotButton.connect('clicked(bool)', self.onPlotButton)
     self.viewModeButtonGroup.connect('buttonClicked(QAbstractButton*)', self.onViewModeChanged)
+
+    # Connections for Region Selection
+    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
+    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
+    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
 
     # Initialize sampled data storage
     self.sampledColorData = None
@@ -1398,6 +1352,16 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Restore saved texture directories from previous sessions
     self.restoreTextureDirectories()
 
+    # Collapse Data Probe panel by default
+    try:
+      mainWindow = slicer.util.mainWindow()
+      if mainWindow:
+        dataProbeWidget = mainWindow.findChild('DataProbeCollapsibleWidget')
+        if dataProbeWidget:
+          dataProbeWidget.collapsed = True
+    except Exception as e:
+      print(f"Note: Could not collapse Data Probe panel: {e}")
+
   def restoreTextureDirectories(self):
     """Restore texture directory paths from saved settings"""
     # Restore DeCA texture directory (only if empty)
@@ -1464,141 +1428,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.recolorTexturesDirectorySelector.setCurrentPath(path)
         self.settings.setValue("recolorTexturesDirectory", path)
 
-  def onExistingSegmentationChanged(self):
-    """Handle selection of existing segmentation"""
-    segmentationNode = self.existingSegmentationSelector.currentNode()
-    self.loadSegmentationButton.enabled = (segmentationNode is not None)
-    
-  def onLoadSegmentation(self):
-    """Load and configure existing segmentation for editing"""
-    segmentationNode = self.existingSegmentationSelector.currentNode()
-    if not segmentationNode:
-      slicer.util.errorDisplay("Please select a segmentation to load.")
-      return
-    
-    try:
-      # Get the reference volume from the segmentation if it exists
-      referenceVolumeNode = segmentationNode.GetNodeReference("referenceImageGeometryRef")
-      
-      # If no reference volume, try to find one with matching name
-      if not referenceVolumeNode:
-        # Look for reference volume with similar name
-        segmentationName = segmentationNode.GetName()
-        possibleRefVolumeName = f"{segmentationName.replace('_Segmentation', '')}_ReferenceVolume"
-        referenceVolumeNode = slicer.util.getFirstNodeByName(possibleRefVolumeName)
-        
-        # If still no reference volume, create a minimal one from segmentation bounds
-        if not referenceVolumeNode:
-          bounds = [0, 0, 0, 0, 0, 0]
-          segmentationNode.GetBounds(bounds)
-          
-          referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-          referenceVolumeNode.SetName(f"{segmentationName}_ReferenceVolume")
-          
-          # Set up minimal volume geometry
-          spacing = [0.5, 0.5, 0.5]
-          imageSize = [
-            max(20, int((bounds[1] - bounds[0]) / spacing[0]) + 1),
-            max(20, int((bounds[3] - bounds[2]) / spacing[1]) + 1), 
-            max(20, int((bounds[5] - bounds[4]) / spacing[2]) + 1)
-          ]
-          
-          imageData = vtk.vtkImageData()
-          imageData.SetDimensions(imageSize)
-          imageData.SetSpacing(spacing)
-          imageData.SetOrigin(bounds[0], bounds[2], bounds[4])
-          imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
-          imageData.GetPointData().GetScalars().Fill(100)
-          
-          referenceVolumeNode.SetAndObserveImageData(imageData)
-          
-          # Set reference geometry for the segmentation
-          segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
-      
-      # Configure segmentation display for 3D painting
-      segmentationDisplayNode = segmentationNode.GetDisplayNode()
-      if segmentationDisplayNode:
-        # Enable 3D display with proper opacity
-        segmentationDisplayNode.SetVisibility3D(True)
-        segmentationDisplayNode.SetOpacity3D(0.8)  # More opaque for better visibility
-        
-        # Enable surface representation for 3D painting
-        try:
-          # Use the segmentation logic to get the correct representation name
-          segmentationLogic = slicer.modules.segmentations.logic()
-          closedSurfaceReprName = segmentationLogic.GetSegmentationClosedSurfaceRepresentationName()
-          segmentationDisplayNode.SetPreferredDisplayRepresentationName3D(closedSurfaceReprName)
-        except:
-          # Fallback approach - try common representation names
-          try:
-            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
-          except:
-            # Final fallback
-            segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Binary labelmap")
-        
-        # Enable slice fill for 2D views
-        segmentationDisplayNode.SetVisibility2DFill(True)
-        segmentationDisplayNode.SetVisibility2DOutline(True)
-        
-        # Ensure segments are visible by default
-        segmentationDisplayNode.SetAllSegmentsVisibility3D(True)
-        segmentationDisplayNode.SetAllSegmentsVisibility2DFill(True)
-        segmentationDisplayNode.SetAllSegmentsVisibility2DOutline(True)
-      
-      # Switch to Segment Editor module
-      slicer.util.selectModule("SegmentEditor")
-      
-      # Set up segment editor widget
-      segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
-      segmentEditorWidget.setSegmentationNode(segmentationNode)
-      segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)
-      
-      # Select the first editable segment or create one if none exists
-      segmentation = segmentationNode.GetSegmentation()
-      segmentIDs = vtk.vtkStringArray()
-      segmentation.GetSegmentIDs(segmentIDs)
-      
-      if segmentIDs.GetNumberOfValues() == 0:
-        # No segments exist, create one
-        segmentation.AddEmptySegment("LoadedRegion")
-        segmentEditorWidget.setCurrentSegmentID("LoadedRegion")
-      else:
-        # Use the first segment
-        firstSegmentID = segmentIDs.GetValue(0)
-        segmentEditorWidget.setCurrentSegmentID(firstSegmentID)
-      
-      # Hide the reference volume completely to avoid conflicts
-      if referenceVolumeNode.GetDisplayNode():
-        referenceVolumeNode.GetDisplayNode().SetVisibility(False)
-      
-      # Configure 3D view for painting
-      layoutManager = slicer.app.layoutManager()
-      if layoutManager:
-        threeDWidget = layoutManager.threeDWidget(0)
-        if threeDWidget:
-          threeDView = threeDWidget.threeDView()
-          threeDViewNode = threeDView.mrmlViewNode()
-          if threeDViewNode:
-            # Set 3D view to perspective mode for better painting
-            try:
-              threeDViewNode.SetRenderMode(threeDViewNode.Perspective)
-            except:
-              # Fallback - just ensure the view is properly configured
-              pass
-      
-      # Enable export button
-      self.exportSelectionButton.enabled = True
-      self.currentSegmentationNode = segmentationNode
-      self.currentReferenceVolumeNode = referenceVolumeNode
-      
-      slicer.util.infoDisplay(f"Loaded segmentation '{segmentationNode.GetName()}' successfully!\n\n"
-                            "You can now continue editing the loaded segmentation.\n"
-                            "Use Paint, Erase, or other tools to modify your selection.\n\n"
-                            "When done, click 'Export Selected Region' to create a new model.")
-      
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error loading segmentation: {str(e)}")
-      print(f"Load segmentation error: {e}")
 
   def autoDetectBlender(self):
     """Automatically detect and set Blender executable path if not already set."""
@@ -1978,31 +1807,29 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   def onRegionSelectionInputChanged(self):
     """Update button states when region selection inputs change"""
     hasModel = bool(self.regionMeshSelector.currentNode())
-    
-    # Update segment editor button
-    self.setupSegmentEditorButton.enabled = hasModel
-    
+
+    # Auto-select the first available markup node if none is selected
+    if hasModel and not self.selectionMarkupSelector.currentNode():
+      # Find first available fiducial markup node
+      numNodes = slicer.mrmlScene.GetNumberOfNodesByClass('vtkMRMLMarkupsFiducialNode')
+      if numNodes > 0:
+        for i in range(numNodes):
+          markupNode = slicer.mrmlScene.GetNthNodeByClass(i, 'vtkMRMLMarkupsFiducialNode')
+          if markupNode and markupNode.GetNumberOfControlPoints() > 0:
+            self.selectionMarkupSelector.setCurrentNode(markupNode)
+            break
+
     # Update landmark selection button
     hasMarkup = bool(self.selectionMarkupSelector.currentNode())
     self.applyLandmarkSelectionButton.enabled = hasModel and hasMarkup
     self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
-    
+
     # Update selected points display
     if hasMarkup:
       self._updateSelectedPointsDisplay()
     else:
       self.selectedPointsLabel.setText("No points selected")
   
-  def onSelectionMethodChanged(self):
-    """Handle selection method change"""
-    method = self.selectionMethodCombo.currentText
-    
-    if method == "Segment Editor (Paint/Scissors)":
-      self.segmentEditorFrame.setVisible(True)
-      self.landmarkFrame.setVisible(False)
-    else:  # Landmarks + Radius method
-      self.segmentEditorFrame.setVisible(False)
-      self.landmarkFrame.setVisible(True)
 
   def onMarkupNodeChanged(self):
     """Handle markup node change and set up observers for point selection updates"""
@@ -2010,17 +1837,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if hasattr(self, '_currentMarkupNode') and self._currentMarkupNode:
       if hasattr(self, '_markupObserver'):
         self._currentMarkupNode.RemoveObserver(self._markupObserver)
-      if hasattr(self, '_markupSelectionObserver'):
-        self._currentMarkupNode.RemoveObserver(self._markupSelectionObserver)
-    
+
     # Set up observers for new markup node
     markupNode = self.selectionMarkupSelector.currentNode()
     if markupNode:
       self._currentMarkupNode = markupNode
-      # Observe point selection changes
+      # Observe point modifications (added, removed, or moved)
       self._markupObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onMarkupPointModified)
-      self._markupSelectionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointSelectionChangedEvent, self._onMarkupPointModified)
-    
+
     # Update display
     self._updateSelectedPointsDisplay()
 
@@ -2028,167 +1852,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     """Handle markup point modification events"""
     self._updateSelectedPointsDisplay()
   
-  def onSetupSegmentEditor(self):
-    """Setup Segment Editor for region selection"""
-    modelNode = self.regionMeshSelector.currentNode()
-    if not modelNode:
-      slicer.util.errorDisplay("Please select a mesh first.")
-      return
-
-    try:
-      # Check if we already have a cached segmentation for this model
-      cachedSegmentation = self._getCachedSegmentation(modelNode)
-      if cachedSegmentation:
-        self._setupExistingSegmentation(cachedSegmentation)
-        return
-
-      # Create optimized reference volume with adaptive spacing
-      bounds = [0, 0, 0, 0, 0, 0]
-      modelNode.GetBounds(bounds)
-
-      referenceVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-      referenceVolumeNode.SetName(f"{modelNode.GetName()}_ReferenceVolume")
-
-      # Adaptive spacing based on model size for performance
-      modelSize = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
-      if modelSize > 100:  # Large models
-        spacing = [1.0, 1.0, 1.0]  # Coarser spacing for speed
-      elif modelSize > 50:  # Medium models
-        spacing = [0.5, 0.5, 0.5]
-      else:  # Small models
-        spacing = [0.3, 0.3, 0.3]
-
-      # Minimal margin for faster processing
-      margin = max(1.0, modelSize * 0.01)  # 1% of model size, min 1mm
-      imageSize = [
-        max(10, int((bounds[1] - bounds[0] + 2*margin) / spacing[0]) + 1),
-        max(10, int((bounds[3] - bounds[2] + 2*margin) / spacing[1]) + 1),
-        max(10, int((bounds[5] - bounds[4] + 2*margin) / spacing[2]) + 1)
-      ]
-
-      # Limit maximum volume size for performance
-      maxDim = 200  # Maximum 200 voxels per dimension
-      imageSize = [min(size, maxDim) for size in imageSize]
-
-      # Create optimized image data
-      imageData = vtk.vtkImageData()
-      imageData.SetDimensions(imageSize)
-      imageData.SetSpacing(spacing)
-      imageData.SetOrigin(bounds[0] - margin, bounds[2] - margin, bounds[4] - margin)
-      imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
-      imageData.GetPointData().GetScalars().Fill(0)
-
-      referenceVolumeNode.SetAndObserveImageData(imageData)
-
-      # Fast segmentation creation - skip redundant operations
-      segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
-      segmentationNode.SetName(f"{modelNode.GetName()}_Segmentation")
-      segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(referenceVolumeNode)
-
-      # Optimized model import - only create what we need
-      segmentationLogic = slicer.modules.segmentations.logic()
-      segmentationLogic.ImportModelToSegmentationNode(modelNode, segmentationNode)
-
-      # Create selection segment
-      segmentationNode.GetSegmentation().AddEmptySegment("SelectedRegion")
-
-      # Single-pass representation creation for performance
-      try:
-        # Only create closed surface representation initially for 3D painting
-        segmentationLogic.CreateClosedSurfaceRepresentation(segmentationNode)
-        # Binary labelmap will be created on-demand when needed
-      except Exception as e:
-        print(f"Warning: Could not create segmentation representations: {e}")
-      
-      # Cache this segmentation for faster reuse
-      self._cacheSegmentation(modelNode, segmentationNode, referenceVolumeNode)
-
-      # Fast display setup - only essential configurations
-      self._setupSegmentationDisplay(segmentationNode, referenceVolumeNode)
-
-      # Enable export button
-      self.exportSelectionButton.enabled = True
-      self.currentSegmentationNode = segmentationNode
-      self.currentReferenceVolumeNode = referenceVolumeNode
-
-      slicer.util.infoDisplay("Fast segmentation setup complete! You can now paint on the 3D model.")
-
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error setting up Segment Editor: {str(e)}")
-      print(f"Segment Editor setup error: {e}")
-
-  def _getCachedSegmentation(self, modelNode):
-    """Check if we have a cached segmentation for this model"""
-    if not hasattr(self, '_segmentationCache'):
-      self._segmentationCache = {}
-
-    modelId = modelNode.GetID()
-    return self._segmentationCache.get(modelId)
-
-  def _cacheSegmentation(self, modelNode, segmentationNode, referenceVolumeNode):
-    """Cache segmentation for faster reuse"""
-    if not hasattr(self, '_segmentationCache'):
-      self._segmentationCache = {}
-
-    modelId = modelNode.GetID()
-    self._segmentationCache[modelId] = {
-      'segmentation': segmentationNode,
-      'referenceVolume': referenceVolumeNode
-    }
-
-  def _setupExistingSegmentation(self, cachedData):
-    """Setup existing cached segmentation"""
-    segmentationNode = cachedData['segmentation']
-    referenceVolumeNode = cachedData['referenceVolume']
-
-    # Reset the selection segment
-    segmentation = segmentationNode.GetSegmentation()
-    if segmentation.GetSegment("SelectedRegion"):
-      segmentation.RemoveSegment("SelectedRegion")
-    segmentation.AddEmptySegment("SelectedRegion")
-
-    self._setupSegmentationDisplay(segmentationNode, referenceVolumeNode)
-
-    self.exportSelectionButton.enabled = True
-    self.currentSegmentationNode = segmentationNode
-    self.currentReferenceVolumeNode = referenceVolumeNode
-
-  def _setupSegmentationDisplay(self, segmentationNode, referenceVolumeNode):
-    """Optimized display setup for segmentation"""
-    # Switch to Segment Editor module
-    slicer.util.selectModule("SegmentEditor")
-
-    # Set up segment editor widget
-    segmentEditorWidget = slicer.modules.segmenteditor.widgetRepresentation().self().editor
-    segmentEditorWidget.setSegmentationNode(segmentationNode)
-    segmentEditorWidget.setSourceVolumeNode(referenceVolumeNode)
-    segmentEditorWidget.setCurrentSegmentID("SelectedRegion")
-
-    # Quick display configuration
-    segmentationDisplayNode = segmentationNode.GetDisplayNode()
-    if segmentationDisplayNode:
-      segmentationDisplayNode.SetVisibility3D(True)
-      segmentationDisplayNode.SetOpacity3D(0.8)
-      try:
-        segmentationDisplayNode.SetPreferredDisplayRepresentationName3D("Closed surface")
-      except:
-        pass
-
-    # Set up painting tool with optimized settings
-    try:
-      segmentEditorWidget.setActiveEffectByName("Paint")
-      paintEffect = segmentEditorWidget.activeEffect()
-      if paintEffect:
-        paintEffect.setParameter("BrushType", "Sphere")
-        paintEffect.setParameter("BrushAbsoluteDiameter", "2.0")  # Smaller for precision
-    except:
-      pass
-
-    # Configure segment color
-    segmentation = segmentationNode.GetSegmentation()
-    selectedSegment = segmentation.GetSegment("SelectedRegion")
-    if selectedSegment:
-      selectedSegment.SetColor(1.0, 0.0, 0.0)  # Red color
 
   def onFastSurfacePaint(self):
     """Fast surface-based selection using model scalar overlays - no volume conversion needed"""
@@ -2259,7 +1922,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Store references
       self.currentSurfaceModel = modelCopy
       self.currentOriginalModel = modelNode
-      self.exportSelectionButton.enabled = True
 
       # Set up interactive painting using Markups
       self._setupSurfacePainting(modelCopy)
@@ -2321,8 +1983,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.clearSurfaceSelectionButton.connect('clicked(bool)', self._onClearSurfaceSelection)
     self.surfacePaintingLayout.addRow(self.clearSurfaceSelectionButton)
 
-    # Add to main layout
-    self.segmentEditorLayout.addRow("Surface Painting:", self.surfacePaintingFrame)
+    # Surface painting frame is now standalone (segmentEditorLayout removed)
     self.surfacePaintingFrame.setVisible(False)
 
   def _onPaintPointAdded(self, caller, event):
@@ -2390,49 +2051,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if hasattr(self, 'currentPaintMarkup'):
       self.currentPaintMarkup.RemoveAllControlPoints()
   
-  def onExportSelection(self):
-    """Export the painted region as a new model"""
-    if not hasattr(self, 'currentSegmentationNode') or not self.currentSegmentationNode:
-      slicer.util.errorDisplay("No segmentation found. Please setup Segment Editor first.")
-      return
-    
-    try:
-      # Export selected segment to model
-      shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
-      exportFolderItemId = shNode.CreateFolderItem(shNode.GetSceneItemID(), "Selected Regions")
-      
-      slicer.modules.segmentations.logic().ExportAllSegmentsToModels(
-        self.currentSegmentationNode, exportFolderItemId)
-      
-      # Get the exported model
-      exportedModels = []
-      childIds = vtk.vtkIdList()
-      shNode.GetItemChildren(exportFolderItemId, childIds)
-      
-      for i in range(childIds.GetNumberOfIds()):
-        childId = childIds.GetId(i)
-        modelNode = shNode.GetItemDataNode(childId)
-        if modelNode and modelNode.IsA("vtkMRMLModelNode"):
-          exportedModels.append(modelNode)
-      
-      if exportedModels:
-        # Enable clear button
-        self.clearSelectionButton.enabled = True
-        
-        # Update info
-        modelNode = exportedModels[0]
-        numVertices = modelNode.GetPolyData().GetNumberOfPoints()
-        self.selectionInfoLabel.setText(f"Exported model: {numVertices} vertices")
-        
-        slicer.util.infoDisplay(f"Successfully exported selected region!\n"
-                              f"New model: {modelNode.GetName()}\n"
-                              f"Vertices: {numVertices}")
-      else:
-        slicer.util.warningDisplay("No segments were exported. Make sure you painted some regions.")
-        
-    except Exception as e:
-      slicer.util.errorDisplay(f"Error exporting selection: {str(e)}")
-      print(f"Export selection error: {e}")
   
   def onApplyLandmarkSelection(self):
     """Apply region selection using landmarks and radius"""
@@ -2448,7 +2066,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       return
     
     try:
-      method = self.selectionMethodCombo.currentText
       radius = self.selectionRadiusSlider.value
       
       # Get selected landmark points
@@ -2461,22 +2078,68 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       
       # Use all selected points for region selection
       selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
-      
+
+      # Check if any vertices were selected
+      if len(selectedVertices) == 0:
+        slicer.util.warningDisplay("No vertices selected. Try increasing the selection radius.")
+        return
+
+      # Store selected vertices and model
+      self.selectedRegionVertices = selectedVertices
+      self.selectedRegionModel = modelNode
+
+      # Get face indices that contain vertices from the selected region
+      polyData = modelNode.GetPolyData()
+      nTotalFaces = polyData.GetNumberOfCells()
+      regionFaces = []
+      regionVertexSet = set(selectedVertices)
+
+      for faceIdx in range(nTotalFaces):
+        cell = polyData.GetCell(faceIdx)
+        pointIds = cell.GetPointIds()
+        numPoints = pointIds.GetNumberOfIds()
+
+        # Check if all vertices of this face are in the region
+        allInRegion = True
+        for j in range(numPoints):
+          if pointIds.GetId(j) not in regionVertexSet:
+            allInRegion = False
+            break
+
+        if allInRegion:
+          regionFaces.append(faceIdx)
+
+      self.selectedRegionFaces = set(regionFaces)
+      print(f"Region contains {len(regionFaces)} faces")
+
       # Visualize the selection
       self.visualizeRegionSelection(modelNode, selectedVertices)
-      
+
       # Update info label
       numVertices = len(selectedVertices)
       totalVertices = modelNode.GetPolyData().GetNumberOfPoints()
       percentage = (numVertices / totalVertices) * 100 if totalVertices > 0 else 0
       self.selectionInfoLabel.setText(f"Selected: {numVertices}/{totalVertices} vertices ({percentage:.1f}%)")
-      
+
       # Enable clear and export buttons
       self.clearSelectionButton.enabled = True
       self.exportLandmarkSelectionButton.enabled = True
-      
+      self.useRegionForAnalysisCheckbox.setEnabled(True)
+
+      # Auto-check the region checkbox
+      self.useRegionForAnalysisCheckbox.setChecked(True)
+
+      # Switch to 3D-only view to see the region selection
+      try:
+        layoutManager = slicer.app.layoutManager()
+        if layoutManager:
+          layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUp3DView)
+      except Exception as e:
+        print(f"Note: Could not switch to 3D view: {e}")
+
       print(f"Landmark region selection completed: {numVertices} vertices selected")
-      
+      print(f"Region checkbox enabled and checked: {self.useRegionForAnalysisCheckbox.isEnabled()}")
+
     except Exception as e:
       slicer.util.errorDisplay(f"Error during landmark selection: {str(e)}")
       print(f"Landmark selection error: {e}")
@@ -2496,7 +2159,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     try:
       # Get the current selection parameters
-      method = self.selectionMethodCombo.currentText
       radius = self.selectionRadiusSlider.value
       
       # Get selected landmark points
@@ -2545,6 +2207,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.selectionInfoLabel.setText("No region selected")
       self.clearSelectionButton.enabled = False
       self.exportLandmarkSelectionButton.enabled = False
+      self.useRegionForAnalysisCheckbox.setEnabled(False)
+      self.useRegionForAnalysisCheckbox.setChecked(False)
+
+      # Clear stored region data
+      if hasattr(self, 'selectedRegionVertices'):
+        delattr(self, 'selectedRegionVertices')
+      if hasattr(self, 'selectedRegionModel'):
+        delattr(self, 'selectedRegionModel')
+      if hasattr(self, 'selectedRegionFaces'):
+        delattr(self, 'selectedRegionFaces')
+
       print("Region selection cleared")
   
   
@@ -4355,7 +4028,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     texturesSelected = bool(self.bakedTexturesDirectorySelector.currentPath and
                            os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
     self.sampleDataButton.enabled = atlasSelected and texturesSelected
-    
+
+    # Auto-select the atlas model in region selection target mesh
+    atlasModel = self.colorsAtlasModelSelect.currentNode()
+    if atlasModel:
+      # Only auto-select if the region mesh selector is empty or different
+      currentRegionMesh = self.regionMeshSelector.currentNode()
+      if not currentRegionMesh or currentRegionMesh.GetID() != atlasModel.GetID():
+        self.regionMeshSelector.setCurrentNode(atlasModel)
+
     # Save the texture directory for persistence
     if self.bakedTexturesDirectorySelector.currentPath:
       self.saveTextureDirectory("bakedTexturesDirectory", self.bakedTexturesDirectorySelector.currentPath)
@@ -4376,7 +4057,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.samplingStatusLabel.setText("Sampling in progress...")
       self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('progress'))
 
-      # Run the sampling
+      # Run the sampling (always samples full model)
       logic = InterDeCALogic()
       result = logic.sampleColorData(
         atlasModel, texturesDir, randomSeed, samplePercent,
@@ -4393,12 +4074,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         # Update status
         nSpecimens = len(self.sampledSpecimenNames)
         nFaces = len(self.sampledFaceIndices)
+
         self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
         self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('success'))
 
         # Enable analysis phase (following MultiRecolor pattern)
         self.plotButton.enabled = True
-        
+
         # Expand the analysis widget to show it's now active
         self.analysisWidget.collapsed = False
 
@@ -4472,6 +4154,30 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.analysisProgressBar.setVisible(True)
       self.analysisProgressBar.setValue(0)
 
+      # Filter data to region if checkbox is enabled and checked
+      colorDataToAnalyze = self.sampledColorData
+      faceIndicesToAnalyze = self.sampledFaceIndices
+      useRegion = self.useRegionForAnalysisCheckbox.isEnabled() and self.useRegionForAnalysisCheckbox.isChecked()
+
+      if useRegion and hasattr(self, 'selectedRegionFaces'):
+        # Filter faces to only those in the selected region
+        regionFaceSet = self.selectedRegionFaces
+
+        # Find which sampled face indices are in the region
+        maskIndices = [i for i, faceIdx in enumerate(self.sampledFaceIndices) if faceIdx in regionFaceSet]
+
+        if len(maskIndices) == 0:
+          slicer.util.warningDisplay("No sampled faces found in selected region. Using full dataset.")
+          self.colorsEDALogInfo.appendPlainText("Warning: No sampled faces in region, using full dataset")
+        else:
+          # Filter the color data to only include region faces
+          colorDataToAnalyze = self.sampledColorData[:, maskIndices, :]
+          faceIndicesToAnalyze = [self.sampledFaceIndices[i] for i in maskIndices]
+
+          nRegionFaces = len(faceIndicesToAnalyze)
+          nTotalFaces = len(self.sampledFaceIndices)
+          self.colorsEDALogInfo.appendPlainText(f"Using selected region: {nRegionFaces}/{nTotalFaces} sampled faces ({100*nRegionFaces/nTotalFaces:.1f}%)")
+
       # Get analysis parameters
       colorSpace = "HSV" if self.hsvRadio.isChecked() else "RGB"
 
@@ -4491,10 +4197,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
       self.colorsEDALogInfo.appendPlainText(f"Dimensionality reduction: {dimRedAlgo}")
 
-      # Run the analysis on pre-sampled data
+      # Run the analysis on pre-sampled (and optionally filtered) data
       logic = InterDeCALogic()
       result = logic.runColorsEDAFromSampledData(
-        self.sampledColorData, self.sampledSpecimenNames, colorSpace, dimRedAlgo,
+        colorDataToAnalyze, self.sampledSpecimenNames, colorSpace, dimRedAlgo,
         progressCallback=self.updateAnalysisProgress,
         logCallback=self.logAnalysisMessage,
         satCutoff=satCutoff,
@@ -4505,6 +4211,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if result and isinstance(result, dict) and result.get('success'):
         self.colorsEDALogInfo.appendPlainText("Analysis completed successfully!")
 
+        # Get model name for plot title
+        atlasModel = self.colorsAtlasModelSelect.currentNode()
+        modelName = atlasModel.GetName() if atlasModel else "Unknown Model"
+
         # Create plot using Widget's plot creation method
         plotResult = self.createColorsEDAPlot(
           result['reducedData'],
@@ -4513,7 +4223,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           result['colorSpace'],
           result['algorithm'],
           result.get('originalColorData'),
-          result.get('enhanceColors', False)
+          result.get('enhanceColors', False),
+          modelName=modelName,
+          useRegion=useRegion
         )
 
         # Save color data and enable histogram selector
@@ -5344,7 +5056,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   # ================================ PLOT CREATION METHODS ================================
   # These methods handle UI aspects of plotting and were moved from Logic class
 
-  def _createStandardPlot(self, reducedData, algorithm, colorSpace):
+  def _createStandardPlot(self, reducedData, algorithm, colorSpace, modelName="", useRegion=False):
     """Create a standard single-series scatter plot"""
     try:
       # Create a scatter plot node
@@ -5384,7 +5096,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
       plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
       plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
-      plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors")
+
+      # Build title with model name and region info
+      regionText = " (Selected Region)" if useRegion else ""
+      title = f"{modelName}: {algorithm} on {colorSpace} Face Colors{regionText}"
+      plotChartNode.SetTitle(title)
       plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
       plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
 
@@ -5400,7 +5116,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       print(f"Error creating standard plot: {e}")
       return {"success": False, "chartNode": None}
 
-  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False):
+  def _createColoredScatterPlot(self, reducedData, originalColorData, algorithm, colorSpace, enhanceColors=False, modelName="", useRegion=False):
     """
     Render colored scatter by quantizing hue into bins and creating one series per bin.
     This avoids the 'single color per series' limitation in Slicer plots.
@@ -5434,8 +5150,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         # 4) Make a chart and populate one series per bin
         plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
         plotChartNode.SetName(f"Colors_EDA_Chart_{algorithm}_{colorSpace}")
-        plotChartNode.SetTitle(f"Color Analysis: {algorithm} on {colorSpace} Face Colors"
-                               + (" (Enhanced Colors)" if enhanceColors else " (Actual Colors)"))
+
+        # Build title with model name, region info, and color enhancement
+        regionText = " (Selected Region)" if useRegion else ""
+        colorText = " (Enhanced Colors)" if enhanceColors else " (Actual Colors)"
+        title = f"{modelName}: {algorithm} on {colorSpace} Face Colors{regionText}{colorText}"
+        plotChartNode.SetTitle(title)
         plotChartNode.SetXAxisTitle(f"{algorithm} Component 1")
         plotChartNode.SetYAxisTitle(f"{algorithm} Component 2")
         plotChartNode.SetLegendVisibility(False)
@@ -5489,7 +5209,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         print(f"Error creating colored scatter plot: {e}")
         return {"success": False, "chartNode": None}
 
-  def createColorsEDAPlot(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False):
+  def createColorsEDAPlot(self, reducedData, specimenNames, nFaces, colorSpace, algorithm, originalColorData=None, enhanceColors=False, modelName="", useRegion=False):
     """
     Create a Colors EDA plot using Slicer's plotting functionality.
 
@@ -5504,6 +5224,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         algorithm: "PCA", "ICA", or "UMAP"
         originalColorData: numpy array of original color data for hue-based coloring (optional)
         enhanceColors: whether to enhance colors for visibility
+        modelName: name of the model being analyzed
+        useRegion: whether region-based analysis is active
 
     Returns:
         dict: {"success": bool, "chartNode": node} if successful
@@ -5511,10 +5233,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     try:
       # Create enhanced plot with color information when HSV data is available
       if colorSpace == "HSV" and originalColorData is not None and originalColorData.shape[1] >= 4:
-        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors)
+        return self._createColoredScatterPlot(reducedData, originalColorData, algorithm, colorSpace, enhanceColors, modelName, useRegion)
 
       # Standard single-series plot for RGB or when no color data available
-      return self._createStandardPlot(reducedData, algorithm, colorSpace)
+      return self._createStandardPlot(reducedData, algorithm, colorSpace, modelName, useRegion)
 
     except Exception as e:
       print(f"Error creating Colors EDA plot: {e}")
@@ -7621,6 +7343,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       # Get total number of faces
       nTotalFaces = atlasPolyData.GetNumberOfCells()
+
       if logCallback:
         logCallback(f"Atlas model has {nTotalFaces} faces")
 
