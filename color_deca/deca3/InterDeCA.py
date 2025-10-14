@@ -831,8 +831,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.selectionRadiusSlider.decimals = 4
     except AttributeError:
         pass  # Some versions might not have this property
-    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices")
+    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices (used for 1-2 landmarks)")
     self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+
+    # Selection method info label
+    self.selectionMethodLabel = qt.QLabel("Method: Radius-based (1-2 landmarks) or Polygon area (3+ landmarks)")
+    self.selectionMethodLabel.setToolTip("Selection method depends on number of landmarks selected")
+    self.selectionMethodLabel.setStyleSheet(ColorTheme.getLabelStyle())
+    self.selectionMethodLabel.setWordWrap(True)
+    self.landmarkLayout.addRow("Selection Method:", self.selectionMethodLabel)
 
     # Selected points display (for single point mode)
     self.selectedPointsLabel = qt.QLabel("No points selected")
@@ -2226,21 +2233,37 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     markupNode = self.selectionMarkupSelector.currentNode()
     if not markupNode:
       self.selectedPointsLabel.setText("No markup points loaded")
+      self.selectionMethodLabel.setText("Method: Radius-based (1-2 landmarks) or Texture similarity (3+ landmarks)")
       return
-    
+
     # Show count of selected points
     numPoints = markupNode.GetNumberOfControlPoints()
     if numPoints > 0:
       # Get list of selected points
       selectedPoints = self._getSelectedPoints(markupNode)
       selectedCount = len(selectedPoints)
-      
+
       if selectedCount > 0:
         self.selectedPointsLabel.setText(f"{selectedCount} of {numPoints} points selected")
+        # Update selection method based on number of selected points
+        if selectedCount <= 2:
+          self.selectionMethodLabel.setText(f"Method: Radius-based ({selectedCount} landmark{'s' if selectedCount > 1 else ''})")
+          self.selectionRadiusSlider.setEnabled(True)
+        else:
+          self.selectionMethodLabel.setText(f"Method: Texture similarity ({selectedCount} landmarks)")
+          self.selectionRadiusSlider.setEnabled(False)
       else:
         self.selectedPointsLabel.setText(f"All {numPoints} points available for selection")
+        # When no points selected, will use all points
+        if numPoints <= 2:
+          self.selectionMethodLabel.setText(f"Method: Radius-based ({numPoints} landmark{'s' if numPoints > 1 else ''})")
+          self.selectionRadiusSlider.setEnabled(True)
+        else:
+          self.selectionMethodLabel.setText(f"Method: Texture similarity ({numPoints} landmarks)")
+          self.selectionRadiusSlider.setEnabled(False)
     else:
       self.selectedPointsLabel.setText("No landmark points available")
+      self.selectionMethodLabel.setText("Method: Radius-based (1-2 landmarks) or Texture similarity (3+ landmarks)")
   
   def _getSelectedPoints(self, markupNode):
     """Get list of selected landmark point indices"""
@@ -2366,28 +2389,423 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     return list(selectedVertices)
   
-  def selectMeshRegionBySelectedPoints(self, modelNode, markupNode, selectedPointIndices, radius):
-    """Select mesh vertices within radius of selected markup points only"""
+  def selectMeshRegionByPolygonArea(self, modelNode, markupNode, selectedPointIndices):
+    """Select mesh vertices in the region bounded by landmarks using geodesic flood fill"""
+    import numpy as np
+    from collections import deque
+
     # Get mesh data
     polyData = modelNode.GetPolyData()
     points = polyData.GetPoints()
-    selectedVertices = set()  # Use set to avoid duplicates
-    radiusSquared = radius * radius
-    
-    # Check only the selected markup points
+    numPoints = points.GetNumberOfPoints()
+
+    # Build adjacency list for mesh connectivity
+    # Connect all vertices within each face (not just consecutive pairs)
+    adjacency = [set() for _ in range(numPoints)]
+
+    # Debug: check cell types
+    numCells = polyData.GetNumberOfCells()
+    cellTypeCounts = {}
+    for i in range(min(100, numCells)):  # Check first 100 cells
+      cell = polyData.GetCell(i)
+      cellType = cell.GetCellType()
+      cellTypeCounts[cellType] = cellTypeCounts.get(cellType, 0) + 1
+
+    print(f"Cell types in first 100 cells: {cellTypeCounts}")
+    print(f"VTK_TRIANGLE=5, VTK_QUAD=9, VTK_LINE=3, VTK_POLY_LINE=4")
+
+    for i in range(numCells):
+      cell = polyData.GetCell(i)
+      pointIds = cell.GetPointIds()
+      numCellPoints = pointIds.GetNumberOfIds()
+
+      # Get all vertex indices in this face
+      faceVertices = [pointIds.GetId(j) for j in range(numCellPoints)]
+
+      # Debug: check faces involving our first landmark
+      debugFaceId = 188754  # The face we know contains a landmark
+      if i == debugFaceId:
+        print(f"  Face {i} has {numCellPoints} vertices: {faceVertices}")
+        print(f"  Will create {numCellPoints * (numCellPoints - 1) // 2} connections")
+
+      # Connect all pairs of vertices in this face
+      for j in range(numCellPoints):
+        for k in range(j + 1, numCellPoints):
+          v1 = faceVertices[j]
+          v2 = faceVertices[k]
+          adjacency[v1].add(v2)
+          adjacency[v2].add(v1)
+
+          if i == debugFaceId:
+            print(f"    Connected {v1} <-> {v2}")
+
+    # Debug: Check adjacency after building
+    print(f"After building adjacency:")
+    print(f"  Vertex 566263 has {len(adjacency[566263])} neighbors: {list(adjacency[566263])}")
+    print(f"  Vertex 566262 has {len(adjacency[566262])} neighbors: {list(adjacency[566262])}")
+    print(f"  Vertex 566264 has {len(adjacency[566264])} neighbors: {list(adjacency[566264])}")
+
+    # Get landmark positions and find closest vertices
+    landmarkVertices = []
+    landmarkPositions = []
     for pointIndex in selectedPointIndices:
-      # Get the markup point position
       point = [0, 0, 0]
       markupNode.GetNthControlPointPosition(pointIndex, point)
-      
-      # Find vertices within radius of this point
-      for i in range(points.GetNumberOfPoints()):
+      landmarkPositions.append(np.array(point))
+
+      # Find closest mesh vertex to this landmark
+      closestVertex = -1
+      minDist = float('inf')
+      for i in range(numPoints):
         vertex = points.GetPoint(i)
-        distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
-        if distanceSquared <= radiusSquared:
-          selectedVertices.add(i)
-    
+        dist = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
+        if dist < minDist:
+          minDist = dist
+          closestVertex = i
+
+      if closestVertex >= 0:
+        landmarkVertices.append(closestVertex)
+
+    if len(landmarkVertices) < 3:
+      print("Warning: Not enough landmark vertices found")
+      return []
+
+    print(f"Landmark vertices: {landmarkVertices}")
+
+    # Compute the centroid of landmark positions (not vertices)
+    centroid = np.mean(landmarkPositions, axis=0)
+    print(f"Centroid: {centroid}")
+
+    # Find multiple seed points near the centroid to start flood fill
+    seedCandidates = []
+    for i in range(numPoints):
+      vertex = np.array(points.GetPoint(i))
+      dist = np.linalg.norm(vertex - centroid)
+      seedCandidates.append((i, dist))
+
+    # Sort by distance and take closest candidates
+    seedCandidates.sort(key=lambda x: x[1])
+
+    # Build edge-to-face mapping to detect mesh boundaries
+    edgeToFaces = {}
+    for i in range(polyData.GetNumberOfCells()):
+      cell = polyData.GetCell(i)
+      pointIds = cell.GetPointIds()
+      numCellPoints = pointIds.GetNumberOfIds()
+
+      for j in range(numCellPoints):
+        p1 = pointIds.GetId(j)
+        p2 = pointIds.GetId((j + 1) % numCellPoints)
+        edge = tuple(sorted([p1, p2]))
+        if edge not in edgeToFaces:
+          edgeToFaces[edge] = []
+        edgeToFaces[edge].append(i)
+
+    # Compute geodesic distances from each landmark vertex
+    landmarkSet = set(landmarkVertices)
+
+    # Identify which boundary edges are part of the landmark perimeter
+    # These should be allowed to cross
+    landmarkBoundaryEdges = set()
+    for i in range(len(landmarkVertices)):
+      v1 = landmarkVertices[i]
+      v2 = landmarkVertices[(i + 1) % len(landmarkVertices)]
+      edge = tuple(sorted([v1, v2]))
+      if edge in edgeToFaces:
+        landmarkBoundaryEdges.add(edge)
+
+    print(f"Landmark boundary edges: {len(landmarkBoundaryEdges)}")
+
+    # Identify all boundary vertices (vertices that have at least one boundary edge)
+    boundaryVertices = set()
+    for edge, faces in edgeToFaces.items():
+      if len(faces) == 1:
+        boundaryVertices.add(edge[0])
+        boundaryVertices.add(edge[1])
+
+    print(f"Total boundary vertices: {len(boundaryVertices)}")
+    print(f"Landmarks on boundary: {sum(1 for v in landmarkVertices if v in boundaryVertices)}")
+
+    # Calculate approximate max distance (use distance between furthest landmarks)
+    maxLandmarkDist = 0
+    for i in range(len(landmarkPositions)):
+      for j in range(i+1, len(landmarkPositions)):
+        dist = np.linalg.norm(landmarkPositions[i] - landmarkPositions[j])
+        maxLandmarkDist = max(maxLandmarkDist, dist)
+
+    # Find interior vertices near landmarks to start the flood fill
+    # The landmark vertices themselves are on the boundary, so we need to find vertices
+    # that are inside the region bounded by the landmarks
+
+    # Strategy: Find all vertices that are neighbors of multiple landmarks
+    # or find vertices near the centroid
+    interiorSeeds = set()
+
+    # Add all non-boundary neighbors of landmarks as seeds
+    for landmarkVert in landmarkVertices:
+      for neighbor in adjacency[landmarkVert]:
+        # Check if this neighbor is NOT on the boundary
+        if neighbor not in boundaryVertices:
+          interiorSeeds.add(neighbor)
+        else:
+          # Even if on boundary, add if it's close to another landmark
+          for otherLandmark in landmarkVertices:
+            if otherLandmark != landmarkVert and neighbor in adjacency[otherLandmark]:
+              interiorSeeds.add(neighbor)
+              break
+
+    # If we found no interior seeds, try vertices close to the centroid
+    if len(interiorSeeds) == 0:
+      print("No interior seeds found from landmarks, using centroid approach")
+      # Find closest vertices to centroid (ignore boundary status)
+      candidateSeeds = []
+      for i in range(numPoints):
+        vertex = np.array(points.GetPoint(i))
+        dist = np.linalg.norm(vertex - centroid)
+        if dist < maxLandmarkDist * 0.5:  # Within landmark region
+          candidateSeeds.append((i, dist))
+
+      # Take closest candidates
+      candidateSeeds.sort(key=lambda x: x[1])
+      interiorSeeds = set([v for v, d in candidateSeeds[:20]])  # Take more seeds
+      print(f"Found {len(candidateSeeds)} candidates near centroid, using {len(interiorSeeds)} seeds")
+
+    print(f"Starting flood fill from {len(interiorSeeds)} interior seed vertices")
+
+    # Start from interior seeds, not landmarks
+    selectedVertices = set(interiorSeeds) | set(landmarkVertices)
+    queue = deque(interiorSeeds)
+    visited = set(interiorSeeds) | set(landmarkVertices)
+
+    # Debug: check adjacency for first seed
+    if len(interiorSeeds) > 0:
+      firstSeed = list(interiorSeeds)[0]
+      print(f"First interior seed {firstSeed} has {len(adjacency[firstSeed])} neighbors")
+
+    expansions = 0
+    maxQueueSize = len(queue)
+    verticesProcessed = 0
+
+    while queue:
+      currentVertex = queue.popleft()
+      selectedVertices.add(currentVertex)
+      verticesProcessed += 1
+
+      if verticesProcessed <= 20:  # Debug first 20 iterations
+        print(f"  Processing vertex {currentVertex}, has {len(adjacency[currentVertex])} neighbors, queue size: {len(queue)}")
+
+      # Explore all neighbors - ignore boundary edge constraints
+      neighborsAdded = 0
+      for neighbor in adjacency[currentVertex]:
+        if neighbor in visited:
+          continue
+
+        visited.add(neighbor)
+        queue.append(neighbor)
+        neighborsAdded += 1
+        expansions += 1
+
+      if verticesProcessed <= 20:
+        print(f"    Added {neighborsAdded} new neighbors to queue")
+
+      maxQueueSize = max(maxQueueSize, len(queue))
+
+    print(f"Flood fill selected {len(selectedVertices)} vertices from {len(landmarkVertices)} landmarks")
+    print(f"Processed {verticesProcessed} vertices, made {expansions} expansions, max queue size: {maxQueueSize}")
     return list(selectedVertices)
+
+  def selectMeshRegionByPolygonArea(self, modelNode, markupNode, selectedPointIndices):
+    """Select mesh vertices using polygon + texture similarity refinement"""
+    import numpy as np
+    from scipy.spatial import Delaunay
+
+    # Get mesh data
+    polyData = modelNode.GetPolyData()
+    points = polyData.GetPoints()
+    numPoints = points.GetNumberOfPoints()
+
+    # Get landmark positions
+    landmarkPositions = []
+    for pointIndex in selectedPointIndices:
+      point = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(pointIndex, point)
+      landmarkPositions.append(point)
+
+    landmarkPositions = np.array(landmarkPositions)
+
+    # STEP 1: Polygon-based selection using PCA + Delaunay
+    center = np.mean(landmarkPositions, axis=0)
+    centered = landmarkPositions - center
+
+    # Compute covariance matrix for PCA
+    cov = np.cov(centered.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+    # Sort by eigenvalues (largest first)
+    idx = eigenvalues.argsort()[::-1]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Project landmarks onto 2D plane
+    landmarks2D = centered @ eigenvectors[:, :2]
+
+    # Create Delaunay triangulation
+    try:
+      delaunay = Delaunay(landmarks2D)
+    except Exception as e:
+      print(f"Warning: Could not create Delaunay triangulation: {e}")
+      return self._fallbackSpatialSelection(modelNode, markupNode, selectedPointIndices)
+
+    # Get initial polygon selection
+    polygonVertices = set()
+    for i in range(numPoints):
+      vertex = np.array(points.GetPoint(i))
+      vertex_centered = vertex - center
+      vertex2D = vertex_centered @ eigenvectors[:, :2]
+
+      if delaunay.find_simplex(vertex2D) >= 0:
+        polygonVertices.add(i)
+
+    print(f"Polygon selection: {len(polygonVertices)} vertices")
+
+    # STEP 2: Texture similarity refinement on boundary vertices
+    colorArray = polyData.GetPointData().GetScalars()
+    if not colorArray:
+      print("No texture data - using polygon selection only")
+      return list(polygonVertices)
+
+    # Find landmark vertices and get their colors
+    landmarkVertices = []
+    for lmPos in landmarkPositions:
+      closestVertex = -1
+      minDist = float('inf')
+      for i in range(numPoints):
+        vertex = points.GetPoint(i)
+        dist = vtk.vtkMath.Distance2BetweenPoints(lmPos, vertex)
+        if dist < minDist:
+          minDist = dist
+          closestVertex = i
+      if closestVertex >= 0:
+        landmarkVertices.append(closestVertex)
+
+    # Get reference color from landmarks
+    landmarkColors = []
+    numComponents = colorArray.GetNumberOfComponents()
+    for vIdx in landmarkVertices:
+      if numComponents == 1:
+        color = [colorArray.GetValue(vIdx)]
+      else:
+        color = [colorArray.GetComponent(vIdx, c) for c in range(numComponents)]
+      landmarkColors.append(color)
+
+    landmarkColors = np.array(landmarkColors)
+    meanLandmarkColor = np.mean(landmarkColors, axis=0)
+    stdLandmarkColor = np.std(landmarkColors, axis=0) + 1e-6
+
+    print(f"Reference color: mean={meanLandmarkColor}")
+
+    # Build mesh adjacency to find boundary vertices
+    adjacency = [set() for _ in range(numPoints)]
+    for i in range(polyData.GetNumberOfCells()):
+      cell = polyData.GetCell(i)
+      pointIds = cell.GetPointIds()
+      numCellPoints = pointIds.GetNumberOfIds()
+      for j in range(numCellPoints):
+        p1 = pointIds.GetId(j)
+        p2 = pointIds.GetId((j + 1) % numCellPoints)
+        adjacency[p1].add(p2)
+        adjacency[p2].add(p1)
+
+    # Find boundary vertices (vertices on edge of polygon selection)
+    boundaryVertices = set()
+    for vIdx in polygonVertices:
+      for neighbor in adjacency[vIdx]:
+        if neighbor not in polygonVertices:
+          boundaryVertices.add(vIdx)
+          break
+
+    print(f"Boundary vertices: {len(boundaryVertices)}")
+
+    # Filter boundary vertices using texture similarity
+    refinedVertices = polygonVertices.copy()
+    for vIdx in boundaryVertices:
+      # Get vertex color
+      if numComponents == 1:
+        vertexColor = np.array([colorArray.GetValue(vIdx)])
+      else:
+        vertexColor = np.array([colorArray.GetComponent(vIdx, c) for c in range(numComponents)])
+
+      # Calculate color similarity
+      colorDiff = np.abs(vertexColor - meanLandmarkColor) / stdLandmarkColor
+      colorSimilarity = 1.0 / (1.0 + np.mean(colorDiff))
+
+      # Remove boundary vertex if color is too different (threshold)
+      if colorSimilarity < 0.7:  # Adjust threshold as needed
+        refinedVertices.discard(vIdx)
+
+    print(f"After texture refinement: {len(refinedVertices)} vertices")
+    return list(refinedVertices)
+
+  def _fallbackSpatialSelection(self, modelNode, markupNode, selectedPointIndices):
+    """Fallback to spatial selection if no texture data available"""
+    import numpy as np
+
+    polyData = modelNode.GetPolyData()
+    points = polyData.GetPoints()
+
+    landmarkPositions = []
+    for pointIndex in selectedPointIndices:
+      point = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(pointIndex, point)
+      landmarkPositions.append(point)
+
+    landmarkPositions = np.array(landmarkPositions)
+    center = np.mean(landmarkPositions, axis=0)
+    maxDist = max([np.linalg.norm(pos - center) for pos in landmarkPositions])
+
+    selectedVertices = set()
+    for i in range(points.GetNumberOfPoints()):
+      vertex = np.array(points.GetPoint(i))
+      dist = np.linalg.norm(vertex - center)
+      if dist <= maxDist * 1.2:
+        selectedVertices.add(i)
+
+    return list(selectedVertices)
+
+  def selectMeshRegionBySelectedPoints(self, modelNode, markupNode, selectedPointIndices, radius):
+    """Select mesh vertices based on landmarks:
+    - 1-2 landmarks: use radius-based selection
+    - 3+ landmarks: use polygon area calculation
+    """
+    numLandmarks = len(selectedPointIndices)
+
+    # For 1-2 landmarks, use radius-based selection
+    if numLandmarks <= 2:
+      # Get mesh data
+      polyData = modelNode.GetPolyData()
+      points = polyData.GetPoints()
+      selectedVertices = set()  # Use set to avoid duplicates
+      radiusSquared = radius * radius
+
+      # Check only the selected markup points
+      for pointIndex in selectedPointIndices:
+        # Get the markup point position
+        point = [0, 0, 0]
+        markupNode.GetNthControlPointPosition(pointIndex, point)
+
+        # Find vertices within radius of this point
+        for i in range(points.GetNumberOfPoints()):
+          vertex = points.GetPoint(i)
+          distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
+          if distanceSquared <= radiusSquared:
+            selectedVertices.add(i)
+
+      print(f"Selection method: Radius-based ({numLandmarks} landmark(s), radius={radius})")
+      return list(selectedVertices)
+
+    # For 3+ landmarks, use polygon area calculation
+    else:
+      print(f"Selection method: Polygon area ({numLandmarks} landmarks)")
+      return self.selectMeshRegionByPolygonArea(modelNode, markupNode, selectedPointIndices)
   
   def visualizeRegionSelection(self, modelNode, selectedVertices):
     """Visualize the selected region by coloring vertices"""
