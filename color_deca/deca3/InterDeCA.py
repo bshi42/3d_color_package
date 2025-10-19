@@ -58,20 +58,38 @@ except ImportError:
     SKIMAGE_AVAILABLE = False  # Disables color quantization features
     print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
-# Imports functions from the original DeCA module to avoid code duplication
+# ATLAS Integration - replaces DeCA for shape correspondence
+# Color analysis features (Blender, EDA, quantization) are preserved as-is
 import sys
 import os
 
+# Import ATLAS shape bridge for dense correspondence operations
 try:
-    from deca.deca import decaLogic
-    print('Successfully imported DeCA module!')
-    print(f'decaLogic class: {decaLogic}')
+    # Add parent directory to path to find atlas_integration module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    
+    from atlas_integration.shape_bridge import get_shape_bridge
+    
+    # Get global shape bridge instance (provides DeCA-compatible API)
+    atlasShapeBridge = get_shape_bridge()
+    
+    if atlasShapeBridge.is_atlas_available():
+        print('Successfully loaded ATLAS shape correspondence modules!')
+    else:
+        print('ATLAS modules not found - using fallback VTK implementations')
+    
+    print(f'ATLAS Shape Bridge initialized: {atlasShapeBridge}')
+    
 except ImportError as e:
-    # Handles case where DeCA module is not available
-    print(f'Could not import DeCA module: {e}')
-    decaLogic = None
+    print(f'Could not import ATLAS integration: {e}')
+    print('Please ensure atlas_integration module is in the correct path')
+    atlasShapeBridge = None
 
-print(f'Final decaLogic value: {decaLogic}')
+# For backward compatibility during migration
+decaLogic = None  # No longer using DeCA
 
 def checkAndOfferPackageInstallation():
     """
@@ -5532,11 +5550,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print("No index found")
       return None
 
-  # Use downsampleModel from decaLogic to avoid duplication
+  # Use downsampleModel from ATLAS shape bridge
   def downsampleModel(self, model, spacingPercentage):
-    if decaLogic:
-      return decaLogic().downsampleModel(model, spacingPercentage)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.downsampleModel(model, spacingPercentage)
+    # Fallback implementation if ATLAS is not available
     points=model.GetPolyData()
     cleanFilter=vtk.vtkCleanPolyData()
     cleanFilter.SetToleranceIsAbsolute(False)
@@ -5545,11 +5563,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     cleanFilter.Update()
     return cleanFilter.GetOutput()
 
-  # Use addIndexArray from decaLogic to avoid duplication
+  # Use addIndexArray from ATLAS shape bridge
   def addIndexArray(self, mesh, arrayName):
-    if decaLogic:
-      return decaLogic().addIndexArray(mesh, arrayName)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addIndexArray(mesh, arrayName)
+    # Fallback implementation if ATLAS is not available
     indexArray = vtk.vtkIntArray()
     indexArray.SetNumberOfComponents(1)
     indexArray.SetName(arrayName)
@@ -5557,11 +5575,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       indexArray.InsertNextValue(i)
     mesh.GetPolyData().GetPointData().AddArray(indexArray)
 
-  # Use computeNormals from decaLogic to avoid duplication
+  # Use computeNormals from ATLAS shape bridge
   def computeNormals(self, inputModel):
-    if decaLogic:
-      return decaLogic().computeNormals(inputModel)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeNormals(inputModel)
+    # Fallback implementation if ATLAS is not available
     normals = vtk.vtkPolyDataNormals()
     normals.SetInputData(inputModel.GetPolyData())
     normals.SetAutoOrientNormals(True)
@@ -5763,15 +5781,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLandmarkNode.GetDisplayNode().SetPointLabelsVisibility(False)
     return averageModelNode, averageLandmarkNode
 
-  # Use getLandmarkFileByID from decaLogic to avoid duplication
+  # Use getLandmarkFileByID from ATLAS shape bridge
   def getLandmarkFileByID(self, directory, subjectID):
-    if decaLogic:
+    if atlasShapeBridge:
       try:
-        return decaLogic().getLandmarkFileByID(directory, subjectID)
+        return atlasShapeBridge.getLandmarkFileByID(directory, subjectID)
       except Exception as e:
-        print(f"Error using decaLogic.getLandmarkFileByID: {e}")
+        print(f"Error using atlasShapeBridge.getLandmarkFileByID: {e}")
         # Fall back to local implementation
-    # Fallback implementation if decaLogic is not available
+    # Fallback implementation if ATLAS is not available
     fileList = os.listdir(directory)
     for fileName in fileList:
       fileNameBase = Path(fileName)
@@ -5881,11 +5899,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           except:
             print(f"could not find nodes to remove for {subjectID}")
 
-  # Use distanceMatrix from decaLogic to avoid duplication
+  # Use distanceMatrix from ATLAS shape bridge
   def distanceMatrix(self, a):
-    if decaLogic:
-      return decaLogic().distanceMatrix(a)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.distanceMatrix(a)
+    # Fallback implementation if ATLAS is not available
     """
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
@@ -5897,21 +5915,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     dz=fnx(a[:,2])
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
-  # Use numpyToFiducialNode from decaLogic to avoid duplication
+  # Use numpyToFiducialNode from ATLAS shape bridge
   def numpyToFiducialNode(self, numpyArray, nodeName):
-    if decaLogic:
-      return decaLogic().numpyToFiducialNode(numpyArray, nodeName)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.numpyToFiducialNode(numpyArray, nodeName)
+    # Fallback implementation if ATLAS is not available
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
     for index in range(len(numpyArray)):
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
     return fiducialNode
 
-  # Use computeAverageLM from decaLogic to avoid duplication
+  # Use computeAverageLM from ATLAS shape bridge
   def computeAverageLM(self, fiducialGroup):
-    if decaLogic:
-      return decaLogic().computeAverageLM(fiducialGroup)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeAverageLM(fiducialGroup)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -5924,11 +5942,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
     return averageLMNode
 
-  # Use fiducialNodeToPolyData from decaLogic to avoid duplication
+  # Use fiducialNodeToPolyData from ATLAS shape bridge
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
-    if decaLogic:
-      return decaLogic().fiducialNodeToPolyData(nodeLocation, loadOption)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.fiducialNodeToPolyData(nodeLocation, loadOption)
+    # Fallback implementation if ATLAS is not available
     point = [0,0,0]
     polydataPoints = vtk.vtkPolyData()
     points = vtk.vtkPoints()
@@ -6000,11 +6018,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     modelGroup.Update()
     return names, modelGroup.GetOutput()
 
-  # Use procrustesImposition from decaLogic to avoid duplication
+  # Use procrustesImposition from ATLAS shape bridge
   def procrustesImposition(self, originalLandmarks, sizeOption):
-    if decaLogic:
-      return decaLogic().procrustesImposition(originalLandmarks, sizeOption)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.procrustesImposition(originalLandmarks, sizeOption)
+    # Fallback implementation if ATLAS is not available
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
     if(sizeOption):
       procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
@@ -6014,11 +6032,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanShape = procrustesFilter.GetMeanPoints()
     return [meanShape, procrustesFilter.GetOutput()]
 
-  # Use getClosestToMeanIndex from decaLogic to avoid duplication
+  # Use getClosestToMeanIndex from ATLAS shape bridge
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
-    if decaLogic:
-      return decaLogic().getClosestToMeanIndex(meanShape, alignedPoints)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.getClosestToMeanIndex(meanShape, alignedPoints)
+    # Fallback implementation if ATLAS is not available
     import operator
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     procrustesDistances = []
@@ -6038,15 +6056,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except:
       return 0
 
-  # Use getClosestToMeanPath from decaLogic to avoid duplication
+  # Use getClosestToMeanPath from ATLAS shape bridge
   def getClosestToMeanPath(self, landmarkDirectory):
-    if decaLogic:
+    if atlasShapeBridge:
       try:
-        return decaLogic().getClosestToMeanPath(landmarkDirectory)
+        return atlasShapeBridge.getClosestToMeanPath(landmarkDirectory)
       except Exception as e:
-        print(f"Error using decaLogic.getClosestToMeanPath: {e}")
+        print(f"Error using atlasShapeBridge.getClosestToMeanPath: {e}")
         # Fall back to local implementation
-    # Fallback implementation if decaLogic is not available
+    # Fallback implementation if ATLAS is not available
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
     if not lmNames:
       print(f"No landmarks found in {landmarkDirectory}")
@@ -6215,11 +6233,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Warning: Empty correspondingMesh for iteration {iteration}, returning original")
       return baseMesh
 
-  # Use convertPointsToVTK from decaLogic to avoid duplication
+  # Use convertPointsToVTK from ATLAS shape bridge
   def convertPointsToVTK(self, points):
-    if decaLogic:
-      return decaLogic().convertPointsToVTK(points)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.convertPointsToVTK(points)
+    # Fallback implementation if ATLAS is not available
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
     points_vtk = vtk.vtkPoints()
     points_vtk.SetData(array_vtk)
@@ -6227,11 +6245,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     polydata_vtk.SetPoints(points_vtk)
     return polydata_vtk
 
-  # Use computeAverageModelFromGroup from decaLogic to avoid duplication
+  # Use computeAverageModelFromGroup from ATLAS shape bridge
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
-    if decaLogic:
-      return decaLogic().computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -6251,11 +6269,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageModel.SetPolys(baseMesh.GetPolys())
     return averageModel
 
-  # Use addMagnitudeFeature from decaLogic to avoid duplication
+  # Use addMagnitudeFeature from ATLAS shape bridge
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
-    if decaLogic:
-      return decaLogic().addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -6290,11 +6308,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
-  # Use addMagnitudeFeatureSymmetry from decaLogic to avoid duplication
+  # Use addMagnitudeFeatureSymmetry from ATLAS shape bridge
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
-    if decaLogic:
-      return decaLogic().addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))

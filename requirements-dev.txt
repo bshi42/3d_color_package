@@ -1,0 +1,6 @@
+# Development-only dependencies to enable static checks and local testing
+numpy
+scikit-learn
+umap-learn
+scikit-image
+imageio
