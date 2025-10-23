@@ -809,44 +809,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.landmarkFrame.setLayout(self.landmarkLayout)
     self.landmarkFrame.setVisible(True)  # Visible by default
 
-    # Markup selector for selection points
+    # Markup selector for selection points (landmarks or curves)
     self.selectionMarkupSelector = slicer.qMRMLNodeComboBox()
     self.selectionMarkupSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.selectionMarkupSelector.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
-    self.selectionMarkupSelector.setToolTip("Select markup points to define region centers (supports single or multiple landmarks)")
-    self.selectionMarkupSelector.selectNodeUponCreation = False
+    self.selectionMarkupSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode", "vtkMRMLMarkupsClosedCurveNode"]
+    self.selectionMarkupSelector.setToolTip("Select landmark points or closed curve to define region boundary")
+    self.selectionMarkupSelector.selectNodeUponCreation = True
+    self.selectionMarkupSelector.addEnabled = False
+    self.selectionMarkupSelector.removeEnabled = False
     self.selectionMarkupSelector.noneEnabled = True
     self.selectionMarkupSelector.addEnabled = True
     self.selectionMarkupSelector.removeEnabled = False
     self.selectionMarkupSelector.showHidden = False
     self.selectionMarkupSelector.setMRMLScene(slicer.mrmlScene)
-    self.landmarkLayout.addRow("Selection Points:", self.selectionMarkupSelector)
+    self.landmarkLayout.addRow("Selection Markup:", self.selectionMarkupSelector)
 
-    # Radius control
-    self.selectionRadiusSlider = ctk.ctkSliderWidget()
-    self.selectionRadiusSlider.minimum = 0.0001
-    self.selectionRadiusSlider.maximum = 0.1
-    self.selectionRadiusSlider.singleStep = 0.0001  # Set after min/max to avoid bounds issues
-    self.selectionRadiusSlider.value = 0.01
-    try:
-        self.selectionRadiusSlider.decimals = 4
-    except AttributeError:
-        pass  # Some versions might not have this property
-    self.selectionRadiusSlider.setToolTip("Radius around each point to select mesh vertices (used for 1-2 landmarks)")
-    self.landmarkLayout.addRow("Selection Radius:", self.selectionRadiusSlider)
+    # Button to start drawing/placing landmarks
+    self.createMarkupButton = qt.QPushButton("Draw")
+    self.createMarkupButton.setToolTip("Start placing control points")
+    self.createMarkupButton.setStyleSheet(ColorTheme.getButtonStyle('secondary'))
+    self.createMarkupButton.connect('clicked(bool)', self.onCreateOrPlaceMarkup)
+    self.landmarkLayout.addRow(self.createMarkupButton)
 
     # Selection method info label
-    self.selectionMethodLabel = qt.QLabel("Method: Radius-based (1-2 landmarks) or Polygon area (3+ landmarks)")
-    self.selectionMethodLabel.setToolTip("Selection method depends on number of landmarks selected")
+    self.selectionMethodLabel = qt.QLabel("Use closed curve for custom region or 3+ landmarks for automatic boundary")
+    self.selectionMethodLabel.setToolTip("Draw a closed curve or place 3+ landmark points to define the selection region")
     self.selectionMethodLabel.setStyleSheet(ColorTheme.getLabelStyle())
     self.selectionMethodLabel.setWordWrap(True)
     self.landmarkLayout.addRow("Selection Method:", self.selectionMethodLabel)
-
-    # Selected points display (for single point mode)
-    self.selectedPointsLabel = qt.QLabel("No points selected")
-    self.selectedPointsLabel.setToolTip("Currently selected landmark points")
-    self.selectedPointsLabel.setStyleSheet(ColorTheme.getLabelStyle())
-    self.landmarkLayout.addRow("Selected Points:", self.selectedPointsLabel)
 
     # Apply landmark selection button
     self.applyLandmarkSelectionButton = qt.QPushButton("Apply Landmark Selection")
@@ -1360,6 +1350,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Restore saved texture directories from previous sessions
     self.restoreTextureDirectories()
 
+    # Setup keyboard shortcuts
+    self.setupKeyboardShortcuts()
+
     # Collapse Data Probe panel by default
     try:
       mainWindow = slicer.util.mainWindow()
@@ -1369,6 +1362,71 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           dataProbeWidget.collapsed = True
     except Exception as e:
       print(f"Note: Could not collapse Data Probe panel: {e}")
+
+  def setupKeyboardShortcuts(self):
+    """Setup keyboard shortcuts for the module"""
+    try:
+      # Create ESC shortcut to exit placement mode
+      self.escapeShortcut = qt.QShortcut(qt.QKeySequence("Escape"), slicer.util.mainWindow())
+      self.escapeShortcut.connect('activated()', self.onEscapeKey)
+      print("Keyboard shortcuts installed: ESC to exit placement mode")
+    except Exception as e:
+      print(f"Note: Could not setup keyboard shortcuts: {e}")
+
+  def onEscapeKey(self):
+    """Handle ESC key press to exit placement mode"""
+    try:
+      # Check if we're in placement mode
+      interactionNode = slicer.app.applicationLogic().GetInteractionNode()
+
+      if interactionNode.GetCurrentInteractionMode() == interactionNode.Place:
+        # Get the active placement node (the curve being placed)
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        activePlaceNodeID = selectionNode.GetActivePlaceNodeID()
+
+        # Exit placement mode
+        interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
+
+        # Get the markup node that was being placed
+        markupNode = None
+        if activePlaceNodeID:
+          markupNode = slicer.mrmlScene.GetNodeByID(activePlaceNodeID)
+
+        # Also check the selector in case it's set there
+        if not markupNode:
+          markupNode = self.selectionMarkupSelector.currentNode()
+
+        if markupNode:
+          numPoints = markupNode.GetNumberOfControlPoints()
+
+          if markupNode.GetClassName() == "vtkMRMLMarkupsClosedCurveNode":
+            # Make sure the selector is updated with this node
+            if self.selectionMarkupSelector.currentNode() != markupNode:
+              self.selectionMarkupSelector.setCurrentNode(markupNode)
+
+            if numPoints < 3:
+              slicer.util.warningDisplay(f"Closed curve only has {numPoints} points. Add at least 3 points for selection.")
+    except Exception as e:
+      print(f"Error handling ESC key: {e}")
+      import traceback
+      traceback.print_exc()
+
+  def cleanup(self):
+    """Cleanup when module is unloaded"""
+    # Remove keyboard shortcuts
+    if hasattr(self, 'escapeShortcut') and self.escapeShortcut:
+      self.escapeShortcut.disconnect('activated()')
+      self.escapeShortcut.setParent(None)
+      self.escapeShortcut = None
+
+    # Clean up markup observers
+    if hasattr(self, '_currentMarkupNode') and self._currentMarkupNode:
+      if hasattr(self, '_markupObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupObserver)
+      if hasattr(self, '_markupEndInteractionObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupEndInteractionObserver)
+      if hasattr(self, '_markupPointAddedObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupPointAddedObserver)
 
   def restoreTextureDirectories(self):
     """Restore texture directory paths from saved settings"""
@@ -1844,11 +1902,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.applyLandmarkSelectionButton.enabled = hasModel and hasMarkup
     self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
 
-    # Update selected points display
+    # Update selection method display
     if hasMarkup:
-      self._updateSelectedPointsDisplay()
+      self._updateSelectionMethodDisplay()
     else:
-      self.selectedPointsLabel.setText("No points selected")
+      self.selectionMethodLabel.setText("Use closed curve or 3+ landmarks for region selection")
   
 
   def onMarkupNodeChanged(self):
@@ -1857,6 +1915,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if hasattr(self, '_currentMarkupNode') and self._currentMarkupNode:
       if hasattr(self, '_markupObserver'):
         self._currentMarkupNode.RemoveObserver(self._markupObserver)
+      if hasattr(self, '_markupEndInteractionObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupEndInteractionObserver)
+      if hasattr(self, '_markupPointAddedObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupPointAddedObserver)
 
     # Set up observers for new markup node
     markupNode = self.selectionMarkupSelector.currentNode()
@@ -1864,13 +1926,47 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self._currentMarkupNode = markupNode
       # Observe point modifications (added, removed, or moved)
       self._markupObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self._onMarkupPointModified)
+      # Observe when user finishes interacting with points (for auto-selection)
+      self._markupEndInteractionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointEndInteractionEvent, self._onMarkupPointEndInteraction)
+      # Observe when a new point is added (for auto-selection on placement)
+      self._markupPointAddedObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self._onMarkupPointAdded)
 
-    # Update display
-    self._updateSelectedPointsDisplay()
+    # Update button text and display based on markup type
+    self._updateDrawButtonText()
+    self._updateSelectionMethodDisplay()
+
+  def _updateDrawButtonText(self):
+    """Update the Draw button text and tooltip based on selected markup type"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+
+    if not markupNode:
+      # No markup selected - button will create new closed curve
+      self.createMarkupButton.setText("Draw")
+      self.createMarkupButton.setToolTip("Create a new closed curve for drawing the selection region")
+    else:
+      nodeType = markupNode.GetClassName()
+      if nodeType == "vtkMRMLMarkupsClosedCurveNode":
+        self.createMarkupButton.setText("Draw")
+        self.createMarkupButton.setToolTip("Add more control points to the closed curve")
+      else:
+        self.createMarkupButton.setText("Draw")
+        self.createMarkupButton.setToolTip("Add more landmark points")
 
   def _onMarkupPointModified(self, caller, event):
     """Handle markup point modification events"""
-    self._updateSelectedPointsDisplay()
+    self._updateSelectionMethodDisplay()
+
+  def _onMarkupPointAdded(self, caller, event):
+    """Handle when a new point position is defined (placed on the mesh)"""
+    # Just update the display, don't auto-apply for closed curves
+    # Users will manually click "Apply Landmark Selection" when ready
+    self._updateSelectionMethodDisplay()
+
+  def _onMarkupPointEndInteraction(self, caller, event):
+    """Handle when user finishes interacting with a markup point"""
+    # Just update the display, don't auto-apply
+    # Users will manually click "Apply Landmark Selection" when ready
+    self._updateSelectionMethodDisplay()
   
 
   def onFastSurfacePaint(self):
@@ -2084,24 +2180,22 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if markupNode.GetNumberOfControlPoints() == 0:
       slicer.util.errorDisplay("No markup points found. Please add some points first.")
       return
-    
+
     try:
-      radius = self.selectionRadiusSlider.value
-      
       # Get selected landmark points
       selectedPoints = self._getSelectedPoints(markupNode)
-      
+
       # If no points are explicitly selected, use all available points
       if not selectedPoints:
         numPoints = markupNode.GetNumberOfControlPoints()
         selectedPoints = list(range(numPoints))
-      
+
       # Use all selected points for region selection
-      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
+      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints)
 
       # Check if any vertices were selected
       if len(selectedVertices) == 0:
-        slicer.util.warningDisplay("No vertices selected. Try increasing the selection radius.")
+        slicer.util.warningDisplay("No vertices selected. Try adjusting the curve or adding more landmarks.")
         return
 
       # Store selected vertices and model
@@ -2178,22 +2272,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       return
     
     try:
-      # Get the current selection parameters
-      radius = self.selectionRadiusSlider.value
-      
       # Get selected landmark points
       selectedPoints = self._getSelectedPoints(markupNode)
-      
+
       # If no points are explicitly selected, use all available points
       if not selectedPoints:
         numPoints = markupNode.GetNumberOfControlPoints()
         selectedPoints = list(range(numPoints))
-      
+
       # Use all selected points for region selection
-      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints, radius)
-      
+      selectedVertices = self.selectMeshRegionBySelectedPoints(modelNode, markupNode, selectedPoints)
+
       if not selectedVertices:
-        slicer.util.warningDisplay("No vertices were selected. Try adjusting the radius or landmark positions.")
+        slicer.util.warningDisplay("No vertices were selected. Try adjusting the curve or landmark positions.")
         return
       
       # Create new model from selected vertices
@@ -2219,6 +2310,51 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       slicer.util.errorDisplay(f"Error exporting landmark selection: {str(e)}")
       print(f"Export landmark selection error: {e}")
   
+  def onCreateOrPlaceMarkup(self):
+    """Create or activate placement for markup based on current selection"""
+    markupNode = self.selectionMarkupSelector.currentNode()
+
+    if markupNode:
+      # A markup already exists - enter placement mode to add more points
+      nodeType = markupNode.GetClassName()
+
+      # Set the active markup node for placement
+      selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+      selectionNode.SetActivePlaceNodeID(markupNode.GetID())
+
+      # Enter persistent place mode
+      interactionNode = slicer.app.applicationLogic().GetInteractionNode()
+      interactionNode.SetPlaceModePersistence(True)
+      interactionNode.SetCurrentInteractionMode(interactionNode.Place)
+
+      if nodeType == "vtkMRMLMarkupsClosedCurveNode":
+        slicer.util.infoDisplay("Click on the mesh to add more curve points.\nPress ESC when done.")
+      else:
+        slicer.util.infoDisplay("Click on the mesh to add more landmark points.\nPress ESC when done.")
+    else:
+      # No markup selected - create a new closed curve by default
+      self.onCreateSelectionCurve()
+
+  def onCreateSelectionCurve(self):
+    """Create a new closed curve markup for drawing selection region"""
+    # Create a new closed curve node
+    curveNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsClosedCurveNode")
+    curveNode.SetName("SelectionCurve")
+
+    # Set the curve as the current selection
+    self.selectionMarkupSelector.setCurrentNode(curveNode)
+
+    # Set the active markup node for placement
+    selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+    selectionNode.SetActivePlaceNodeID(curveNode.GetID())
+
+    # Enter persistent place mode (allows placing multiple points continuously)
+    interactionNode = slicer.app.applicationLogic().GetInteractionNode()
+    interactionNode.SetPlaceModePersistence(True)  # Keep placing mode active after each point
+    interactionNode.SetCurrentInteractionMode(interactionNode.Place)
+
+    slicer.util.infoDisplay("Click on the mesh to add curve points.\nThe curve will automatically close.\nPress ESC when done placing points.")
+
   def onClearSelection(self):
     """Clear the current region selection"""
     modelNode = self.regionMeshSelector.currentNode()
@@ -2241,15 +2377,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       print("Region selection cleared")
   
   
-  def _updateSelectedPointsDisplay(self):
-    """Update the display of selected landmark points"""
+  def _updateSelectionMethodDisplay(self):
+    """Update the selection method display based on markup type and point count"""
     markupNode = self.selectionMarkupSelector.currentNode()
     if not markupNode:
-      self.selectedPointsLabel.setText("No markup points loaded")
-      self.selectionMethodLabel.setText("Method: Radius-based (1-2 landmarks) or Texture similarity (3+ landmarks)")
+      self.selectionMethodLabel.setText("Use closed curve or 3+ landmarks for region selection")
       return
 
-    # Show count of selected points
+    # Check if it's a closed curve
+    if markupNode.GetClassName() == "vtkMRMLMarkupsClosedCurveNode":
+      numPoints = markupNode.GetNumberOfControlPoints()
+      self.selectionMethodLabel.setText(f"Method: Closed Curve ({numPoints} control points)")
+      return
+
+    # For landmark nodes, count points
     numPoints = markupNode.GetNumberOfControlPoints()
     if numPoints > 0:
       # Get list of selected points
@@ -2257,26 +2398,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       selectedCount = len(selectedPoints)
 
       if selectedCount > 0:
-        self.selectedPointsLabel.setText(f"{selectedCount} of {numPoints} points selected")
         # Update selection method based on number of selected points
-        if selectedCount <= 2:
-          self.selectionMethodLabel.setText(f"Method: Radius-based ({selectedCount} landmark{'s' if selectedCount > 1 else ''})")
-          self.selectionRadiusSlider.setEnabled(True)
+        if selectedCount >= 3:
+          self.selectionMethodLabel.setText(f"Method: Curve Cut ({selectedCount} landmarks)")
         else:
-          self.selectionMethodLabel.setText(f"Method: Texture similarity ({selectedCount} landmarks)")
-          self.selectionRadiusSlider.setEnabled(False)
+          self.selectionMethodLabel.setText(f"Method: Need 3+ landmarks for region selection")
       else:
-        self.selectedPointsLabel.setText(f"All {numPoints} points available for selection")
         # When no points selected, will use all points
-        if numPoints <= 2:
-          self.selectionMethodLabel.setText(f"Method: Radius-based ({numPoints} landmark{'s' if numPoints > 1 else ''})")
-          self.selectionRadiusSlider.setEnabled(True)
+        if numPoints >= 3:
+          self.selectionMethodLabel.setText(f"Method: Curve Cut ({numPoints} landmarks)")
         else:
-          self.selectionMethodLabel.setText(f"Method: Texture similarity ({numPoints} landmarks)")
-          self.selectionRadiusSlider.setEnabled(False)
+          self.selectionMethodLabel.setText(f"Method: Need 3+ landmarks for region selection")
     else:
-      self.selectedPointsLabel.setText("No landmark points available")
-      self.selectionMethodLabel.setText("Method: Radius-based (1-2 landmarks) or Texture similarity (3+ landmarks)")
+      self.selectionMethodLabel.setText("Use closed curve or 3+ landmarks for region selection")
   
   def _getSelectedPoints(self, markupNode):
     """Get list of selected landmark point indices"""
@@ -2784,40 +2918,152 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     return list(selectedVertices)
 
-  def selectMeshRegionBySelectedPoints(self, modelNode, markupNode, selectedPointIndices, radius):
+  def createClosedCurveFromPoints(self, markupNode, selectedPointIndices):
+    """Convert landmark points to closed curve markup for Slicer's Curve Cut"""
+    curveNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsClosedCurveNode")
+    curveNode.SetName(f"{markupNode.GetName()}_SelectionCurve")
+
+    for idx in selectedPointIndices:
+      pos = [0, 0, 0]
+      markupNode.GetNthControlPointPosition(idx, pos)
+      curveNode.AddControlPoint(pos)
+
+    return curveNode
+
+  def mapCutModelToOriginalVertices(self, originalModel, cutModel):
+    """Map vertices from cut model back to original model indices"""
+    originalPolyData = originalModel.GetPolyData()
+    cutPolyData = cutModel.GetPolyData()
+
+    originalPoints = originalPolyData.GetPoints()
+    cutPoints = cutPolyData.GetPoints()
+
+    selectedVertices = []
+
+    # For each vertex in cut model, find its index in original model
+    for i in range(cutPoints.GetNumberOfPoints()):
+      cutPoint = cutPoints.GetPoint(i)
+
+      # Find matching point in original (within small tolerance)
+      for j in range(originalPoints.GetNumberOfPoints()):
+        originalPoint = originalPoints.GetPoint(j)
+        dist = vtk.vtkMath.Distance2BetweenPoints(cutPoint, originalPoint)
+        if dist < 1e-10:  # Very small tolerance for floating point comparison
+          selectedVertices.append(j)
+          break
+
+    return selectedVertices
+
+  def selectMeshRegionByExistingCurve(self, modelNode, curveNode):
+    """Use existing closed curve markup with Slicer's Dynamic Modeler Curve Cut"""
+
+    # 1. Setup Dynamic Modeler
+    dynamicModelerNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLDynamicModelerNode")
+    dynamicModelerNode.SetToolName("Curve cut")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.InputModel", modelNode.GetID())
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.InputCurve", curveNode.GetID())
+
+    # 2. Create output model nodes
+    insideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+    insideModel.SetName("TempInsideModel")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputInsideModel", insideModel.GetID())
+
+    # 3. Set parameters - use straight cut for cleaner boundaries
+    dynamicModelerNode.SetAttribute("CurveCut.StraightCut", "true")
+
+    # 4. Execute the cut
+    try:
+      slicer.modules.dynamicmodeler.logic().RunDynamicModelerTool(dynamicModelerNode)
+
+      # 5. Get vertex indices from the inside model
+      selectedVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+
+      numPoints = curveNode.GetNumberOfControlPoints()
+      print(f"Selection method: Slicer Curve Cut (closed curve with {numPoints} points, {len(selectedVertices)} vertices selected)")
+
+      # 6. Cleanup temporary nodes
+      slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(dynamicModelerNode)
+
+      return selectedVertices
+
+    except Exception as e:
+      # Cleanup on failure
+      slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(dynamicModelerNode)
+      raise e
+
+  def selectMeshRegionByCurveCut(self, modelNode, markupNode, selectedPointIndices):
+    """Use Slicer's Dynamic Modeler Curve Cut for mesh region selection (creates curve from landmarks)"""
+
+    # 1. Create closed curve from selected landmarks
+    curveNode = self.createClosedCurveFromPoints(markupNode, selectedPointIndices)
+
+    # 2. Setup Dynamic Modeler
+    dynamicModelerNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLDynamicModelerNode")
+    dynamicModelerNode.SetToolName("Curve cut")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.InputModel", modelNode.GetID())
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.InputCurve", curveNode.GetID())
+
+    # 3. Create output model nodes
+    insideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+    insideModel.SetName("TempInsideModel")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputInsideModel", insideModel.GetID())
+
+    # 4. Set parameters - use straight cut for cleaner boundaries
+    dynamicModelerNode.SetAttribute("CurveCut.StraightCut", "true")
+
+    # 5. Execute the cut
+    try:
+      slicer.modules.dynamicmodeler.logic().RunDynamicModelerTool(dynamicModelerNode)
+
+      # 6. Get vertex indices from the inside model
+      selectedVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+
+      print(f"Selection method: Slicer Curve Cut ({len(selectedPointIndices)} landmarks, {len(selectedVertices)} vertices selected)")
+
+      # 7. Cleanup temporary nodes
+      slicer.mrmlScene.RemoveNode(curveNode)
+      slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(dynamicModelerNode)
+
+      return selectedVertices
+
+    except Exception as e:
+      # Cleanup on failure
+      slicer.mrmlScene.RemoveNode(curveNode)
+      slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(dynamicModelerNode)
+      raise e
+
+  def selectMeshRegionBySelectedPoints(self, modelNode, markupNode, selectedPointIndices):
     """Select mesh vertices based on landmarks:
-    - 1-2 landmarks: use radius-based selection
-    - 3+ landmarks: use polygon area calculation
+    - Closed curve: use Slicer Curve Cut directly
+    - 3+ landmarks: use Slicer Curve Cut (with fallback to polygon area)
     """
+    # Check if this is a closed curve node
+    if markupNode.GetClassName() == "vtkMRMLMarkupsClosedCurveNode":
+      try:
+        # Directly use the curve for cutting (no need to create one)
+        return self.selectMeshRegionByExistingCurve(modelNode, markupNode)
+      except Exception as e:
+        print(f"Curve cut failed ({e}), falling back to polygon area method")
+        # Fallback to treating curve points as landmarks
+        return self.selectMeshRegionByPolygonArea(modelNode, markupNode, selectedPointIndices)
+
     numLandmarks = len(selectedPointIndices)
 
-    # For 1-2 landmarks, use radius-based selection
-    if numLandmarks <= 2:
-      # Get mesh data
-      polyData = modelNode.GetPolyData()
-      points = polyData.GetPoints()
-      selectedVertices = set()  # Use set to avoid duplicates
-      radiusSquared = radius * radius
+    # Require at least 3 landmarks for region selection
+    if numLandmarks < 3:
+      print(f"Warning: Need at least 3 landmarks for region selection (got {numLandmarks})")
+      return []
 
-      # Check only the selected markup points
-      for pointIndex in selectedPointIndices:
-        # Get the markup point position
-        point = [0, 0, 0]
-        markupNode.GetNthControlPointPosition(pointIndex, point)
-
-        # Find vertices within radius of this point
-        for i in range(points.GetNumberOfPoints()):
-          vertex = points.GetPoint(i)
-          distanceSquared = vtk.vtkMath.Distance2BetweenPoints(point, vertex)
-          if distanceSquared <= radiusSquared:
-            selectedVertices.add(i)
-
-      print(f"Selection method: Radius-based ({numLandmarks} landmark(s), radius={radius})")
-      return list(selectedVertices)
-
-    # For 3+ landmarks, use polygon area calculation
-    else:
-      print(f"Selection method: Polygon area ({numLandmarks} landmarks)")
+    # For 3+ landmarks, try Slicer's Curve Cut first, fallback to polygon area
+    try:
+      # Try using Slicer's built-in Curve Cut for robust surface cutting
+      return self.selectMeshRegionByCurveCut(modelNode, markupNode, selectedPointIndices)
+    except Exception as e:
+      print(f"Curve cut failed ({e}), falling back to polygon area method")
       return self.selectMeshRegionByPolygonArea(modelNode, markupNode, selectedPointIndices)
   
   def visualizeRegionSelection(self, modelNode, selectedVertices):
