@@ -1302,6 +1302,20 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorConsolidatedClustersSpin.setToolTip("Number of consolidated clusters after hierarchical merging (2-64, must be ≤ Initial Clusters)")
     clusteringWidgetLayout.addRow("Consolidated Clusters: ", self.multiRecolorConsolidatedClustersSpin)
 
+    # Number of faces for subsampling
+    self.multiRecolorNumSubsampledFacesSpin = qt.QSpinBox()
+    self.multiRecolorNumSubsampledFacesSpin.setRange(100, 100000)
+    self.multiRecolorNumSubsampledFacesSpin.setValue(10000)  # Default value for subsampling
+    self.multiRecolorNumSubsampledFacesSpin.setSingleStep(1000)  # Increment by 1000
+    self.multiRecolorNumSubsampledFacesSpin.setToolTip("Number of faces to subsample for clustering (uniformly distributed by surface distance)")
+    clusteringWidgetLayout.addRow("Number of Faces (Subsampling): ", self.multiRecolorNumSubsampledFacesSpin)
+
+    # Neighbor Average checkbox
+    self.multiRecolorNeighborAverageCheckbox = qt.QCheckBox()
+    self.multiRecolorNeighborAverageCheckbox.setChecked(False)
+    self.multiRecolorNeighborAverageCheckbox.setToolTip("If checked, use average color of neighboring faces instead of individual face color for clustering")
+    clusteringWidgetLayout.addRow("Neighbor Average: ", self.multiRecolorNeighborAverageCheckbox)
+
     # Cluster button
     self.clusterButton = qt.QPushButton("Cluster")
     self.clusterButton.setToolTip("Process all textures and create color clusters")
@@ -5047,7 +5061,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       textureDir = self.multiRecolorTextureDirectorySelector.currentPath
       initialClusters = self.multiRecolorInitialClustersSpin.value
       consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
+      numSubsampledFaces = self.multiRecolorNumSubsampledFacesSpin.value
       normalizeLuminosity = self.multiRecolorNormalizeLuminosityCheckbox.isChecked()
+      useNeighborAverage = self.multiRecolorNeighborAverageCheckbox.isChecked()
 
       if not atlasModel:
         self.clusteringLogInfo.append("Error: No atlas model selected")
@@ -5063,7 +5079,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       self.clusteringLogInfo.append(f"Starting per-texture clustering pipeline...")
       self.clusteringLogInfo.append(f"Initial clusters: {initialClusters}, Consolidated: {consolidatedClusters}")
+      self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
       self.clusteringLogInfo.append(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
+      self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
       self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
 
       logic = InterDeCALogic()
@@ -5078,7 +5096,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       result = logic.performMultiTextureClustering(
         atlasModel, textureDir, self.multiRecolorTextureFiles,
         initialClusters, consolidatedClusters,
+        numSubsampledFaces=numSubsampledFaces,
         normalizeLuminosity=normalizeLuminosity,
+        useNeighborAverage=useNeighborAverage,
         faceAreas=cachedFaceAreas,
         progressCallback=self.updateClusteringProgress,
         logCallback=self.logClusteringMessage
@@ -5526,7 +5546,7 @@ class ClusteringPipeline:
   - Cluster reordering mappings for cross-texture consistency
   """
 
-  def __init__(self, initialClusters, consolidatedClusters, normalizeLuminosity=False):
+  def __init__(self, initialClusters, consolidatedClusters, normalizeLuminosity=False, useNeighborAverage=False):
     """
     Initialize clustering pipeline configuration
 
@@ -5534,10 +5554,12 @@ class ClusteringPipeline:
         initialClusters: number of initial clusters per texture
         consolidatedClusters: number of consolidated clusters
         normalizeLuminosity: whether luminosity normalization is enabled
+        useNeighborAverage: whether to use neighbor average colors for clustering
     """
     self.initialClusters = initialClusters
     self.consolidatedClusters = consolidatedClusters
     self.normalizeLuminosity = normalizeLuminosity
+    self.useNeighborAverage = useNeighborAverage
 
     # Luminosity normalization
     self.pooledLCStats = None  # (mu_pool, sd_pool) if normalization enabled
@@ -5557,6 +5579,10 @@ class ClusteringPipeline:
 
     # Shared palette (averaged across all textures)
     self.sharedPalette = None  # Will be computed after all textures are processed
+
+    # Subsampling information
+    self.subsampledFaceIndices = None  # Indices of subsampled faces
+    self.nearestNeighborMapping = None  # Mapping from all faces to nearest sampled face
 
     # List of processed textures in order
     self.textureFiles = []
@@ -7851,6 +7877,67 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return {"success": False}
 
+  def _applyNeighborAveraging(self, polyData, faceColors, adjacency=None, logCallback=None):
+    """
+    Apply neighbor averaging to smooth face colors based on mesh topology.
+    Each face's color is replaced with the average of its own color and its neighbors' colors.
+
+    Args:
+        polyData: VTK polydata object
+        faceColors: numpy array of shape (numFaces, 3) with RGB colors
+        adjacency: Pre-computed face adjacency graph (optional, will build if None)
+        logCallback: Function to call with log messages
+
+    Returns:
+        numpy array of smoothed face colors, or None if failed
+    """
+    try:
+      numFaces = polyData.GetNumberOfCells()
+
+      if len(faceColors) != numFaces:
+        if logCallback:
+          logCallback(f"  Error: Face color count mismatch")
+        return None
+
+      # Use provided adjacency graph or build a new one
+      if adjacency is None:
+        adjacency = self._buildFaceAdjacencyGraph(polyData, logCallback=None)
+        if adjacency is None:
+          if logCallback:
+            logCallback(f"  Error: Failed to build face adjacency graph")
+          return None
+
+      # Apply neighbor averaging
+      smoothedColors = np.zeros_like(faceColors)
+
+      for faceId in range(numFaces):
+        # Get neighbors
+        neighbors = adjacency.get(faceId, set())
+
+        # Include the face itself in the average
+        colorSum = faceColors[faceId].copy()
+        count = 1
+
+        # Add neighbor colors
+        for neighborId in neighbors:
+          colorSum += faceColors[neighborId]
+          count += 1
+
+        # Compute average
+        smoothedColors[faceId] = colorSum / count
+
+      if logCallback:
+        logCallback(f"  Neighbor averaging complete: smoothed {numFaces} faces")
+
+      return smoothedColors
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"  Error in neighbor averaging: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return None
+
   def _calculateFaceAverageColors(self, polyData, textureImage, colorSpace):
     """
     Calculate average color for each face of the mesh using texture coordinates
@@ -8673,7 +8760,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     return rgb
 
   def performMultiTextureClustering(self, modelNode, textureDir, textureFiles, initialClusters, consolidatedClusters,
-                                     normalizeLuminosity=False, faceAreas=None, progressCallback=None, logCallback=None):
+                                     numSubsampledFaces=None, normalizeLuminosity=False, useNeighborAverage=False, faceAreas=None, progressCallback=None, logCallback=None):
     """
     Perform per-texture clustering with hierarchical consolidation and cross-texture reordering
 
@@ -8683,7 +8770,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         textureFiles: List of texture filenames
         initialClusters: Number of initial clusters per texture
         consolidatedClusters: Number of consolidated clusters (must be <= initialClusters)
+        numSubsampledFaces: Number of faces to subsample for clustering (optional, uses all if None)
         normalizeLuminosity: Whether to normalize L* and C* across textures
+        useNeighborAverage: Whether to use average color of neighboring faces for clustering
         faceAreas: Pre-computed face areas (optional, will calculate if None)
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
@@ -8740,8 +8829,52 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(5)
 
+      # Build face adjacency graph if needed (for subsampling or neighbor averaging)
+      faceAdjacency = None
+      if (numSubsampledFaces is not None and numSubsampledFaces > 0) or useNeighborAverage:
+        if logCallback:
+          logCallback("Building face adjacency graph...")
+
+        # Clean mesh first
+        polyData = self._cleanMesh(polyData, logCallback)
+
+        # Build adjacency
+        faceAdjacency = self._buildFaceAdjacencyGraph(polyData, logCallback)
+        if faceAdjacency is None:
+          if logCallback:
+            logCallback("Error: Failed to build face adjacency graph")
+          return {"success": False}
+
+      # Subsample faces if requested
+      subsampledFaceIndices = None
+      nearestNeighborMapping = None
+      if numSubsampledFaces is not None and numSubsampledFaces > 0:
+        if logCallback:
+          logCallback(f"Performing face subsampling...")
+
+        # Use pre-built adjacency if available, otherwise build it
+        if faceAdjacency is None:
+          subsampledFaceIndices, nearestNeighborMapping, faceAdjacency = self._subsampleFacesUniformly(
+            polyData, numSubsampledFaces, logCallback
+          )
+        else:
+          # Reuse the pre-built adjacency graph
+          subsampledFaceIndices, nearestNeighborMapping, _ = self._subsampleFacesUniformly(
+            polyData, numSubsampledFaces, logCallback
+          )
+
+        if subsampledFaceIndices is None:
+          if logCallback:
+            logCallback("Error: Face subsampling failed")
+          return {"success": False}
+
       # Create clustering pipeline
-      pipeline = ClusteringPipeline(initialClusters, consolidatedClusters, normalizeLuminosity)
+      pipeline = ClusteringPipeline(initialClusters, consolidatedClusters, normalizeLuminosity, useNeighborAverage)
+
+      # Store subsampling information in pipeline
+      pipeline.subsampledFaceIndices = subsampledFaceIndices
+      pipeline.nearestNeighborMapping = nearestNeighborMapping
+      pipeline.faceAdjacency = faceAdjacency
 
       # Step 1: Compute pooled LC statistics if normalization is enabled
       if normalizeLuminosity:
@@ -8791,8 +8924,27 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             logCallback(f"  Warning: Failed to calculate face colors")
           continue
 
+        # Apply neighbor averaging if enabled
+        if useNeighborAverage:
+          if logCallback:
+            logCallback(f"  Applying neighbor average smoothing...")
+
+          faceColors = self._applyNeighborAveraging(polyData, faceColors, faceAdjacency, logCallback)
+          if faceColors is None:
+            if logCallback:
+              logCallback(f"  Warning: Neighbor averaging failed")
+            continue
+
         # Convert to Lab space
         faceColorsLab = self.rgb_to_lab(faceColors)
+
+        # Subsample face colors if subsampling is enabled
+        if subsampledFaceIndices is not None:
+          faceColorsLabForClustering = faceColorsLab[subsampledFaceIndices]
+          if logCallback:
+            logCallback(f"  Using {len(subsampledFaceIndices)} subsampled faces for clustering")
+        else:
+          faceColorsLabForClustering = faceColorsLab
 
         # Apply luminosity normalization if enabled
         lcStats = None
@@ -8808,14 +8960,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             if logCallback:
               logCallback(f"  Applying LC transform...")
 
-            faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
+            faceColorsLabForClustering = self._applyLCTransform(faceColorsLabForClustering, mu_img, sd_img, mu_pool, sd_pool)
 
         # Perform clustering and consolidation
         if logCallback:
           logCallback(f"  Clustering with {initialClusters} initial clusters...")
 
         clusteringResult = self._clusterAndConsolidateSingleTexture(
-          faceColorsLab, initialClusters, consolidatedClusters, logCallback
+          faceColorsLabForClustering, initialClusters, consolidatedClusters, logCallback
         )
 
         if clusteringResult is None:
@@ -9306,6 +9458,401 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Error calculating face areas: {e}")
       return None
 
+  def _cleanMesh(self, polyData, logCallback=None):
+    """
+    Clean and merge the mesh to remove duplicate vertices and degenerate faces.
+
+    This is necessary for meshes from 3D Slicer that may have:
+    - Duplicate vertices at the same location
+    - Degenerate faces
+    - Non-manifold geometry
+
+    Args:
+        polyData: VTK polydata object
+        logCallback: Function to call with log messages
+
+    Returns:
+        VTK polydata object (cleaned)
+    """
+    try:
+      if logCallback:
+        logCallback("Cleaning mesh...")
+
+      # Step 1: Merge duplicate points
+      cleanFilter = vtk.vtkCleanPolyData()
+      cleanFilter.SetInputData(polyData)
+      cleanFilter.SetTolerance(1e-10)  # Very small tolerance to catch exact duplicates
+      cleanFilter.Update()
+
+      cleaned = cleanFilter.GetOutput()
+
+      if logCallback:
+        origPoints = polyData.GetNumberOfPoints()
+        newPoints = cleaned.GetNumberOfPoints()
+        logCallback(f"  Merged duplicate vertices: {origPoints} -> {newPoints} points")
+
+      return cleaned
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error cleaning mesh: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return polyData
+
+  def _buildFaceAdjacencyGraph(self, polyData, logCallback=None):
+    """
+    Build an adjacency graph of faces based on shared edges or vertices.
+
+    Handles both connected meshes and disconnected meshes with duplicated vertices.
+    For disconnected meshes, faces sharing vertices are considered adjacent.
+
+    Args:
+        polyData: VTK polydata object
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict: adjacency[faceId] = set of adjacent face indices
+    """
+    try:
+      # Clean the mesh first to merge duplicate vertices
+      if logCallback:
+        logCallback("Cleaning mesh before building adjacency graph...")
+
+      polyData = self._cleanMesh(polyData, logCallback)
+
+      numFaces = polyData.GetNumberOfCells()
+      adjacency = {i: set() for i in range(numFaces)}
+
+      # Step 1: Build edge-to-faces mapping (for connected mesh parts)
+      edgeToFaces = {}
+
+      # Diagnostic: check mesh structure
+      cellTypes = {}
+      totalEdges = 0
+
+      for faceId in range(numFaces):
+        cell = polyData.GetCell(faceId)
+        numPoints = cell.GetNumberOfPoints()
+        cellType = cell.GetClassName()
+
+        if cellType not in cellTypes:
+          cellTypes[cellType] = 0
+        cellTypes[cellType] += 1
+
+        # Iterate through edges of this face
+        for i in range(numPoints):
+          p1 = cell.GetPointId(i)
+          p2 = cell.GetPointId((i + 1) % numPoints)
+
+          # Create a canonical edge representation (smaller id first)
+          edge = tuple(sorted([p1, p2]))
+
+          if edge not in edgeToFaces:
+            edgeToFaces[edge] = []
+          edgeToFaces[edge].append(faceId)
+          totalEdges += 1
+
+      if logCallback:
+        logCallback(f"  Mesh structure: {cellTypes}")
+        logCallback(f"  Total edges found: {totalEdges}")
+        logCallback(f"  Unique edges in map: {len(edgeToFaces)}")
+
+        # Check edge distribution
+        edgeDistribution = {}
+        for edge, faces in edgeToFaces.items():
+          count = len(faces)
+          if count not in edgeDistribution:
+            edgeDistribution[count] = 0
+          edgeDistribution[count] += 1
+        logCallback(f"  Edge distribution: {edgeDistribution}")
+
+      # Build adjacency from edge-to-faces mapping
+      edgeConnectedFaces = set()
+      edgeCount = 0
+      for edge, faces in edgeToFaces.items():
+        # Connect all faces that share this edge
+        # In a proper mesh, most edges are shared by 2 faces
+        # Boundary edges are used by 1 face (no adjacency)
+        # Degenerate cases might have >2 faces per edge
+        if len(faces) >= 2:
+          # Edge is shared by multiple faces - connect them all
+          for i in range(len(faces)):
+            for j in range(i + 1, len(faces)):
+              f1, f2 = faces[i], faces[j]
+              adjacency[f1].add(f2)
+              adjacency[f2].add(f1)
+              edgeConnectedFaces.add(f1)
+              edgeConnectedFaces.add(f2)
+              edgeCount += 1
+
+      if logCallback:
+        logCallback(f"  Edge analysis: {len(edgeToFaces)} unique edges, {edgeCount} adjacencies from edges")
+
+      # Step 2: Handle disconnected faces by connecting via shared vertices
+      # This handles meshes with duplicated vertices (disjoint triangle faces)
+      vertexToFaces = {}
+
+      for faceId in range(numFaces):
+        cell = polyData.GetCell(faceId)
+        numPoints = cell.GetNumberOfPoints()
+
+        # Map each vertex to faces that use it
+        for i in range(numPoints):
+          pointId = cell.GetPointId(i)
+          if pointId not in vertexToFaces:
+            vertexToFaces[pointId] = []
+          vertexToFaces[pointId].append(faceId)
+
+      # Connect faces that share vertices (for disconnected mesh parts)
+      vertexConnectedFaces = set()
+      vertexCount = 0
+      for pointId, faces in vertexToFaces.items():
+        if len(faces) > 1:
+          # Multiple faces share this vertex
+          for i in range(len(faces)):
+            for j in range(i + 1, len(faces)):
+              f1, f2 = faces[i], faces[j]
+              # Only add if not already connected by edge
+              if f2 not in adjacency[f1]:
+                adjacency[f1].add(f2)
+                adjacency[f2].add(f1)
+                vertexConnectedFaces.add(f1)
+                vertexConnectedFaces.add(f2)
+                vertexCount += 1
+
+      if logCallback:
+        logCallback(f"  Vertex analysis: {len(vertexToFaces)} unique vertices, {vertexCount} new adjacencies from vertices")
+
+      # Calculate connectivity statistics
+      edgeOnly = len(edgeConnectedFaces - vertexConnectedFaces)
+      vertexOnly = len(vertexConnectedFaces - edgeConnectedFaces)
+      both = len(edgeConnectedFaces & vertexConnectedFaces)
+      isolated = numFaces - len(edgeConnectedFaces | vertexConnectedFaces)
+
+      # Log connectivity statistics
+      if logCallback:
+        logCallback(f"Face adjacency graph built:")
+        logCallback(f"  - {edgeOnly} faces connected by edges only")
+        logCallback(f"  - {vertexOnly} faces connected by vertices only")
+        logCallback(f"  - {both} faces connected by both edges and vertices")
+        logCallback(f"  - {isolated} isolated faces (no adjacencies)")
+
+      # Step 3: Fallback - if mesh is completely disconnected, use spatial proximity
+      # This handles meshes where faces are geometrically close but don't share vertices
+      if isolated == numFaces:
+        if logCallback:
+          logCallback("  WARNING: Mesh is completely disconnected! Using spatial proximity fallback...")
+
+        # Calculate face centers
+        faceCenters = np.zeros((numFaces, 3))
+        for faceId in range(numFaces):
+          cell = polyData.GetCell(faceId)
+          center = np.zeros(3)
+          for i in range(cell.GetNumberOfPoints()):
+            pointId = cell.GetPointId(i)
+            point = polyData.GetPoint(pointId)
+            center += np.array(point)
+          faceCenters[faceId] = center / cell.GetNumberOfPoints()
+
+        # Connect faces that are spatially close (within 1.5x average edge length)
+        # First estimate average edge length
+        edgeLengths = []
+        for faceId in range(min(1000, numFaces)):  # Sample first 1000 faces
+          cell = polyData.GetCell(faceId)
+          for i in range(cell.GetNumberOfPoints()):
+            p1 = polyData.GetPoint(cell.GetPointId(i))
+            p2 = polyData.GetPoint(cell.GetPointId((i + 1) % cell.GetNumberOfPoints()))
+            dist = np.linalg.norm(np.array(p1) - np.array(p2))
+            edgeLengths.append(dist)
+
+        avgEdgeLength = np.mean(edgeLengths) if edgeLengths else 0.1
+        proximityThreshold = avgEdgeLength * 1.5
+
+        if logCallback:
+          logCallback(f"  Average edge length: {avgEdgeLength:.6f}, proximity threshold: {proximityThreshold:.6f}")
+
+        # Connect spatially close faces using KD-tree (much faster than O(n²))
+        try:
+          from scipy.spatial import cKDTree
+
+          tree = cKDTree(faceCenters)
+          spatialConnections = 0
+
+          # Find all pairs within proximity threshold
+          pairs = tree.query_pairs(proximityThreshold)
+          for i, j in pairs:
+            adjacency[i].add(j)
+            adjacency[j].add(i)
+            spatialConnections += 1
+
+          if logCallback:
+            logCallback(f"  Added {spatialConnections} spatial proximity connections (KD-tree)")
+
+        except ImportError:
+          # Fallback to simpler approach if scipy not available
+          if logCallback:
+            logCallback(f"  WARNING: scipy not available, using slower O(n²) spatial proximity")
+
+          spatialConnections = 0
+          for i in range(numFaces):
+            for j in range(i + 1, numFaces):
+              dist = np.linalg.norm(faceCenters[i] - faceCenters[j])
+              if dist < proximityThreshold:
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+                spatialConnections += 1
+
+          if logCallback:
+            logCallback(f"  Added {spatialConnections} spatial proximity connections")
+
+      return adjacency
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error building face adjacency graph: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return None
+
+  def _subsampleFacesUniformly(self, polyData, numSubsampledFaces, logCallback=None):
+    """
+    Subsample faces uniformly based on mesh topology using BFS with graph-based distance.
+
+    This approach uses the face adjacency graph to ensure uniform distribution based on
+    actual mesh connectivity rather than Euclidean distance.
+
+    Algorithm:
+    1. Build face adjacency graph (faces sharing edges)
+    2. Random initial sampling
+    3. Use BFS to compute graph distance from each face to nearest sampled face
+    4. Iteratively swap poorly-placed samples with better candidates
+
+    Args:
+        polyData: VTK polydata object
+        numSubsampledFaces: Target number of faces to subsample
+        logCallback: Function to call with log messages
+
+    Returns:
+        tuple: (subsampledFaceIndices, nearestNeighborMapping, adjacency)
+        - subsampledFaceIndices: numpy array of selected face indices
+        - nearestNeighborMapping: numpy array where mapping[i] = j means face i's nearest sampled neighbor is j
+        - adjacency: dict of face adjacency graph for reuse
+    """
+    try:
+      numFaces = polyData.GetNumberOfCells()
+
+      # Clamp the number of subsampled faces
+      numSubsampledFaces = min(numSubsampledFaces, numFaces)
+
+      if logCallback:
+        logCallback(f"Subsampling {numSubsampledFaces} faces from {numFaces} total faces (graph-based)")
+
+      # Step 1: Build face adjacency graph
+      if logCallback:
+        logCallback("Building face adjacency graph...")
+
+      adjacency = self._buildFaceAdjacencyGraph(polyData, logCallback)
+      if adjacency is None:
+        return None, None, None
+
+      # Step 2: Random initial sampling
+      if logCallback:
+        logCallback("Random initial sampling...")
+
+      selectedIndices = np.random.choice(numFaces, size=numSubsampledFaces, replace=False)
+      selectedSet = set(selectedIndices)
+
+      # Step 3: Compute graph distances and nearest neighbors
+      def compute_graph_distances_and_mapping(selected_set, adjacency, num_faces):
+        """
+        Compute graph distance from each face to nearest selected face using BFS.
+        Returns: (distances, nearest_neighbor_mapping)
+        """
+        from collections import deque
+
+        distances = np.full(num_faces, np.inf, dtype=np.float32)
+        nearest_mapping = np.zeros(num_faces, dtype=np.int32)
+
+        # BFS from all selected faces simultaneously
+        queue = deque()
+        for face_id in selected_set:
+          distances[face_id] = 0
+          nearest_mapping[face_id] = face_id
+          queue.append(face_id)
+
+        while queue:
+          current_face = queue.popleft()
+          current_dist = distances[current_face]
+
+          # Explore neighbors
+          for neighbor_face in adjacency[current_face]:
+            new_dist = current_dist + 1
+            if new_dist < distances[neighbor_face]:
+              distances[neighbor_face] = new_dist
+              nearest_mapping[neighbor_face] = nearest_mapping[current_face]
+              queue.append(neighbor_face)
+
+        return distances, nearest_mapping
+
+      # Step 4: Iterative improvement via swapping (simplified for performance)
+      if logCallback:
+        logCallback("Optimizing sample distribution...")
+
+      # Only do a few quick optimization passes for large meshes
+      max_iterations = min(10, max(1, numSubsampledFaces // 1000))
+
+      for iteration in range(max_iterations):
+        if logCallback and iteration % 10 == 0:
+          logCallback(f"  Iteration {iteration + 1}...")
+        distances, _ = compute_graph_distances_and_mapping(selectedSet, adjacency, numFaces)
+
+        # Find the unselected face with maximum distance to nearest selected face
+        unselected_distances = distances.copy()
+        unselected_distances[list(selectedSet)] = -np.inf
+
+        worst_unselected_idx = np.argmax(unselected_distances)
+        worst_unselected_dist = unselected_distances[worst_unselected_idx]
+
+        if worst_unselected_dist <= 1:
+          # All unselected faces are close to selected faces, optimization complete
+          break
+
+        # Simple heuristic: swap with a random selected face
+        # (Much faster than finding the "best" one to swap)
+        worst_selected_face = np.random.choice(list(selectedSet))
+
+        # Swap if it improves the distribution
+        selectedSet.remove(worst_selected_face)
+        selectedSet.add(worst_unselected_idx)
+
+      if logCallback:
+        logCallback(f"Optimization complete ({iteration + 1} iterations)")
+
+      subsampledFaceIndices = np.array(sorted(list(selectedSet)), dtype=np.int32)
+
+      # Final nearest neighbor mapping
+      if logCallback:
+        logCallback("Computing final nearest neighbor mapping...")
+
+      _, nearestNeighborMapping = compute_graph_distances_and_mapping(set(subsampledFaceIndices), adjacency, numFaces)
+
+      if logCallback:
+        logCallback(f"Subsampling complete: selected {len(subsampledFaceIndices)} faces")
+
+      return subsampledFaceIndices, nearestNeighborMapping, adjacency
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in face subsampling: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return None, None, None
+
+    except Exception as e:
+      print(f"Error calculating face areas: {e}")
+      return None
+
   def applyIndividualTextureWithClusteredPalette(self, modelNode, texturePath, clusterCenters=None, clusteringPipeline=None,
                                                   faceAreas=None, progressCallback=None, logCallback=None):
     """
@@ -9416,6 +9963,20 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(40)
 
+      # Apply neighbor averaging if it was used during clustering
+      if clusteringPipeline is not None and clusteringPipeline.useNeighborAverage:
+        if logCallback:
+          logCallback("Applying neighbor average smoothing to face colors...")
+
+        faceColors = self._applyNeighborAveraging(polyData, faceColors, clusteringPipeline.faceAdjacency, logCallback)
+        if faceColors is None:
+          if logCallback:
+            logCallback("Warning: Neighbor averaging failed, continuing with original colors")
+          faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+
+      if progressCallback:
+        progressCallback(45)
+
       # Convert face colors to Lab space for clustering assignment
       if logCallback:
         logCallback("Converting colors to CIE Lab space...")
@@ -9459,19 +10020,52 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if logCallback:
         logCallback(f"Processing {numFaces} faces with {numClusters} clusters...")
 
-      # Vectorized distance calculation
-      # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
-      faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
-      clusterColorsExpanded = paletteColorsLab[np.newaxis, :, :]  # (1, K, 3)
+      # Check if subsampling was used
+      if clusteringPipeline is not None and clusteringPipeline.subsampledFaceIndices is not None:
+        # Use subsampled faces for clustering assignment
+        subsampledFaceIndices = clusteringPipeline.subsampledFaceIndices
+        nearestNeighborMapping = clusteringPipeline.nearestNeighborMapping
 
-      # Calculate Euclidean distances in Lab space
-      distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
+        if logCallback:
+          logCallback(f"Using subsampled faces ({len(subsampledFaceIndices)}) for color assignment...")
 
-      # Find nearest cluster for each face
-      nearestClusters = np.argmin(distances, axis=1)  # (N,)
+        # Get colors only for subsampled faces
+        subsampledFaceColorsLab = faceColorsLab[subsampledFaceIndices]
 
-      # Assign colors
-      quantizedColors = paletteColors[nearestClusters]
+        # Vectorized distance calculation for subsampled faces
+        subsampledFaceColorsExpanded = subsampledFaceColorsLab[:, np.newaxis, :]  # (N_s, 1, 3)
+        clusterColorsExpanded = paletteColorsLab[np.newaxis, :, :]  # (1, K, 3)
+
+        # Calculate distances for subsampled faces
+        distances = np.sqrt(np.sum((subsampledFaceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N_s, K)
+
+        # Find nearest cluster for each subsampled face
+        subsampledNearestClusters = np.argmin(distances, axis=1)  # (N_s,)
+
+        # Assign colors to subsampled faces
+        subsampledQuantizedColors = paletteColors[subsampledNearestClusters]
+
+        # Now propagate colors to all faces using nearest neighbor mapping
+        for faceIdx in range(numFaces):
+          nearestSampledIdx = nearestNeighborMapping[faceIdx]
+          # Find which position this sampled face is in the subsampled array
+          sampledPosition = np.where(subsampledFaceIndices == nearestSampledIdx)[0][0]
+          quantizedColors[faceIdx] = subsampledQuantizedColors[sampledPosition]
+      else:
+        # Original behavior: assign all faces directly
+        # Vectorized distance calculation
+        # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
+        faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
+        clusterColorsExpanded = paletteColorsLab[np.newaxis, :, :]  # (1, K, 3)
+
+        # Calculate Euclidean distances in Lab space
+        distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
+
+        # Find nearest cluster for each face
+        nearestClusters = np.argmin(distances, axis=1)  # (N,)
+
+        # Assign colors
+        quantizedColors = paletteColors[nearestClusters]
 
       if progressCallback:
         progressCallback(80)
@@ -9610,11 +10204,22 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           logCallback("Error: Neither clusteringPipeline nor clusterCenters provided")
         return {"success": False}
 
-      if logCallback:
-        logCallback(f"Creating area-weighted color vectors for {len(textureFiles)} textures...")
-        logCallback(f"Using {numClusters} consolidated clusters")
+      # Check if subsampling was used
+      useSubsampling = (clusteringPipeline is not None and
+                       clusteringPipeline.subsampledFaceIndices is not None)
 
-      # Create area-weighted color vectors for each texture
+      if useSubsampling:
+        subsampledFaceIndices = clusteringPipeline.subsampledFaceIndices
+        numSubsampledFaces = len(subsampledFaceIndices)
+        if logCallback:
+          logCallback(f"Creating subsampled face color vectors for {len(textureFiles)} textures...")
+          logCallback(f"Using {numSubsampledFaces} subsampled faces (flattened to {numSubsampledFaces * 3} dimensions)")
+      else:
+        if logCallback:
+          logCallback(f"Creating area-weighted color vectors for {len(textureFiles)} textures...")
+          logCallback(f"Using {numClusters} consolidated clusters")
+
+      # Create color vectors for each texture
       textureVectors = []
       textureNames = []
 
@@ -9643,6 +10248,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             logCallback(f"Warning: Failed to calculate face colors for {textureFile}")
           continue
 
+        # Apply neighbor averaging if it was used during clustering
+        if clusteringPipeline is not None and clusteringPipeline.useNeighborAverage:
+          if logCallback:
+            logCallback(f"  Applying neighbor average smoothing...")
+
+          faceColors = self._applyNeighborAveraging(polyData, faceColors, clusteringPipeline.faceAdjacency, logCallback)
+          if faceColors is None:
+            if logCallback:
+              logCallback(f"  Warning: Neighbor averaging failed, using original colors")
+            faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+
         # Convert face colors to Lab space
         faceColorsLab = self.rgb_to_lab(faceColors)
 
@@ -9654,31 +10270,40 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             mu_pool, sd_pool = pooledStats
             faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
 
-        # Create area-weighted color vector
-        colorVector = np.zeros(numClusters)
+        # Create color vector based on whether subsampling was used
+        if useSubsampling:
+          # New approach: use subsampled face colors flattened into a single vector
+          subsampledFaceColors = faceColorsLab[subsampledFaceIndices]  # (N_s, 3)
+          colorVector = subsampledFaceColors.flatten()  # (N_s*3,)
 
-        # Vectorized distance calculation for better performance
-        numFaces = len(faceColorsLab)
+          if logCallback:
+            logCallback(f"  Created subsampled color vector with shape {colorVector.shape}")
+        else:
+          # Original approach: area-weighted color vector
+          colorVector = np.zeros(numClusters)
 
-        # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
-        faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
-        clusterColorsExpanded = referenceCentroidsLab[np.newaxis, :, :]  # (1, K, 3)
+          # Vectorized distance calculation for better performance
+          numFaces = len(faceColorsLab)
 
-        # Calculate Euclidean distances in Lab space
-        distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
+          # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
+          faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
+          clusterColorsExpanded = referenceCentroidsLab[np.newaxis, :, :]  # (1, K, 3)
 
-        # Find nearest cluster for each face
-        nearestClusters = np.argmin(distances, axis=1)  # (N,)
+          # Calculate Euclidean distances in Lab space
+          distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
 
-        # Add face areas to corresponding clusters
-        for faceIdx in range(min(numFaces, len(faceAreas))):
-          nearestCluster = nearestClusters[faceIdx]
-          colorVector[nearestCluster] += faceAreas[faceIdx]
+          # Find nearest cluster for each face
+          nearestClusters = np.argmin(distances, axis=1)  # (N,)
 
-        # Normalize vector to unit length
-        vectorNorm = np.linalg.norm(colorVector)
-        if vectorNorm > 0:
-          colorVector = colorVector / vectorNorm
+          # Add face areas to corresponding clusters
+          for faceIdx in range(min(numFaces, len(faceAreas))):
+            nearestCluster = nearestClusters[faceIdx]
+            colorVector[nearestCluster] += faceAreas[faceIdx]
+
+          # Normalize vector to unit length
+          vectorNorm = np.linalg.norm(colorVector)
+          if vectorNorm > 0:
+            colorVector = colorVector / vectorNorm
 
         textureVectors.append(colorVector)
         textureNames.append(os.path.splitext(textureFile)[0])  # Remove extension
@@ -9694,7 +10319,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         return {"success": False}
 
       if logCallback:
-        logCallback(f"Created {len(textureVectors)} area-weighted color vectors")
+        if useSubsampling:
+          logCallback(f"Created {len(textureVectors)} subsampled face color vectors (dimension: {len(textureVectors[0])})")
+        else:
+          logCallback(f"Created {len(textureVectors)} area-weighted color vectors")
         logCallback(f"Performing {dimReductionMethod} dimensionality reduction...")
 
       if progressCallback:
