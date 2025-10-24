@@ -56,6 +56,8 @@ This demo branch contains the **InterDeCA (Interactive Dense Correspondence Anal
 │   │   └── CMakeLists.txt       # Build configuration
 │   ├── deca3/                   # Enhanced InterDeCA module
 │   │   ├── InterDeCA.py         # Extended DeCA with color analysis
+│   │   ├── PCAMorphospace.py    # PCA color morphospace analysis (NEW)
+│   │   ├── PCAMorphospaceVisualization.py  # Interactive HTML generation (NEW)
 │   │   ├── Resources/           # Module resources
 │   │   └── CMakeLists.txt       # Build configuration
 │   └── reporting/               # Reporting utilities
@@ -233,6 +235,14 @@ The core module file (`deca3/InterDeCA.py`) contains approximately 9,000 lines o
 - Comparative color analysis
 - Pattern extraction
 
+#### 7. **PCA Morphospace Tab** (NEW)
+- Interactive PCA color morphospace visualization
+- Slider-based exploration of color variation along PC axes
+- Real-time color pattern interpolation from -2SD to +2SD
+- HTML export with interactive plots
+- Area-weighted PCA on vertex colors
+- Support for RGB/HSV/LAB color spaces
+
 ## Core Functionality
 
 ### Dense Correspondence Analysis
@@ -345,6 +355,45 @@ def clusterColors(colors, n_clusters=5):
    - Use MultiRecolor tab
    - Perform comparative analysis
    - Generate clustering results
+
+### PCA Color Morphospace Workflow (NEW)
+
+The PCA Morphospace module provides interactive visualization of color variation across specimens along principal component axes, as described in morphospace analysis papers like the recolorize methodology.
+
+1. **Data Preparation**
+   - Run DeCA analysis first to generate resampled models with vertex correspondence
+   - Ensure texture baking has been completed (atlasTextures folder exists)
+   - All specimens must have consistent vertex topology (handled by DeCA)
+
+2. **PCA Analysis**
+   - Navigate to the PCA Morphospace tab
+   - Select DeCA results directory
+   - Click "Load Data for PCA Analysis"
+   - Configure settings:
+     - Number of principal components (2-10)
+     - Color space (RGB, HSV, or LAB)
+     - Area-weighted PCA option (recommended)
+   - Click "Run PCA Analysis"
+
+3. **Interactive Exploration**
+   - View PCA scatter plot showing specimen distribution
+   - Use PC slider to explore color variation:
+     - Range: -2 SD to +2 SD along selected PC
+     - Real-time color pattern updates
+     - Shows interpolated colors at current position
+   - Observe variance explained by each PC
+
+4. **Export Results**
+   - Generate interactive HTML visualization
+   - Export PCA scores and loadings
+   - Save color interpolation data
+   - Create shareable reports
+
+**Technical Implementation:**
+- Extracts vertex colors from UV-mapped textures
+- Performs PCA on flattened color vectors (n_vertices × 3 per specimen)
+- Interpolates along PC axes: `color = mean + (sd_position × sqrt(eigenvalue) × eigenvector)`
+- Generates color swatches showing variation patterns
 
 ## Results Reporting
 

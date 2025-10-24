@@ -36,6 +36,22 @@ import imageio # slicer.util.pip_install('imageio')
 import glob
 import colorsys
 
+# Import PCA Morphospace module for color morphospace analysis
+try:
+    import sys
+    import os
+    # Add the pca_morphospace directory to Python path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    pca_morphospace_dir = os.path.join(current_dir, 'pca_morphospace')
+    if pca_morphospace_dir not in sys.path:
+        sys.path.insert(0, pca_morphospace_dir)
+
+    # Now import the module
+    import PCAMorphospace
+    PCA_MORPHOSPACE_AVAILABLE = True
+except ImportError as e:
+    PCA_MORPHOSPACE_AVAILABLE = False
+
 # Attempts to import optional machine learning libraries
 try:
     from sklearn.decomposition import PCA, FastICA  # Imports dimensionality reduction algorithms
@@ -355,6 +371,17 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
     tabsWidget.addTab(recolorTab, "Recolor")
     tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
+
+    # Add PCA Morphospace tab if module is available
+    if PCA_MORPHOSPACE_AVAILABLE:
+      try:
+        pcaMorphospaceWidget = PCAMorphospace.PCAMorphospaceWidget(self)
+        pcaMorphospaceTab = pcaMorphospaceWidget.setup()
+        tabsWidget.addTab(pcaMorphospaceTab, "PCA Morphospace")
+      except Exception as e:
+        print(f"Error creating PCA Morphospace tab: {e}")
+        import traceback
+        traceback.print_exc()
 
     self.layout.addWidget(tabsWidget)
 
