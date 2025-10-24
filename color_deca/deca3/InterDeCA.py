@@ -49,6 +49,16 @@ except ImportError:
     UMAP_AVAILABLE = False  # Disables UMAP dependent features
     print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
 
+# Attempts to import scipy for hierarchical clustering
+try:
+    from scipy.cluster import hierarchy
+    from scipy.spatial.distance import pdist, squareform
+    from scipy.optimize import linear_sum_assignment
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    print("Warning: scipy not available. Hierarchical clustering functionality will be limited.")
+
 # Attempts to import scikit-image for color quantization
 try:
     from skimage import color as skimage_color  # Imports color space conversion utilities
@@ -1272,12 +1282,25 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorTextureDirectorySelector.setToolTip("Select directory containing texture images")
     clusteringWidgetLayout.addRow("Texture Directory: ", self.multiRecolorTextureDirectorySelector)
 
-    # Number of clusters for multi-texture analysis
-    self.multiRecolorNumClustersSpin = qt.QSpinBox()
-    self.multiRecolorNumClustersSpin.setRange(2, 64)
-    self.multiRecolorNumClustersSpin.setValue(16)  # Default value for multi-texture analysis
-    self.multiRecolorNumClustersSpin.setToolTip("Number of color clusters for multi-texture analysis (2-64)")
-    clusteringWidgetLayout.addRow("Number of Clusters: ", self.multiRecolorNumClustersSpin)
+    # Normalize luminosity checkbox
+    self.multiRecolorNormalizeLuminosityCheckbox = qt.QCheckBox()
+    self.multiRecolorNormalizeLuminosityCheckbox.setChecked(False)
+    self.multiRecolorNormalizeLuminosityCheckbox.setToolTip("Normalize L* and C* across all textures to reduce lighting variation")
+    clusteringWidgetLayout.addRow("Normalize Luminosity: ", self.multiRecolorNormalizeLuminosityCheckbox)
+
+    # Initial clusters for multi-texture analysis
+    self.multiRecolorInitialClustersSpin = qt.QSpinBox()
+    self.multiRecolorInitialClustersSpin.setRange(2, 64)
+    self.multiRecolorInitialClustersSpin.setValue(24)  # Default value for initial clustering
+    self.multiRecolorInitialClustersSpin.setToolTip("Number of initial color clusters per texture (2-64)")
+    clusteringWidgetLayout.addRow("Initial Clusters: ", self.multiRecolorInitialClustersSpin)
+
+    # Consolidated clusters for multi-texture analysis
+    self.multiRecolorConsolidatedClustersSpin = qt.QSpinBox()
+    self.multiRecolorConsolidatedClustersSpin.setRange(2, 64)
+    self.multiRecolorConsolidatedClustersSpin.setValue(8)  # Default value for consolidated clustering
+    self.multiRecolorConsolidatedClustersSpin.setToolTip("Number of consolidated clusters after hierarchical merging (2-64, must be ≤ Initial Clusters)")
+    clusteringWidgetLayout.addRow("Consolidated Clusters: ", self.multiRecolorConsolidatedClustersSpin)
 
     # Cluster button
     self.clusterButton = qt.QPushButton("Cluster")
@@ -1316,12 +1339,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.individualTextureSelector.enabled = False
     individualWidgetLayout.addRow("Select Texture: ", self.individualTextureSelector)
 
-    # High contrast palette option for individual visualization
-    self.individualHighContrastCheckbox = qt.QCheckBox()
-    self.individualHighContrastCheckbox.setChecked(False)
-    self.individualHighContrastCheckbox.setEnabled(False)
-    self.individualHighContrastCheckbox.setToolTip("Use high contrast palette instead of clustered colors")
-    individualWidgetLayout.addRow("High Contrast Palette: ", self.individualHighContrastCheckbox)
+    # Raw texture option for individual visualization
+    self.individualRawTextureCheckbox = qt.QCheckBox()
+    self.individualRawTextureCheckbox.setChecked(False)
+    self.individualRawTextureCheckbox.setEnabled(False)
+    self.individualRawTextureCheckbox.setToolTip("Display original texture without face averaging or quantization")
+    individualWidgetLayout.addRow("Raw Texture: ", self.individualRawTextureCheckbox)
 
     # Apply texture button for individual visualization
     self.applyIndividualTextureButton = qt.QPushButton("Apply Texture")
@@ -1389,7 +1412,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Connect MultiRecolor UI events
     self.multiRecolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onMultiRecolorParameterChanged)
     self.multiRecolorTextureDirectorySelector.connect("currentPathChanged(QString)", self.onMultiRecolorParameterChanged)
-    self.multiRecolorNumClustersSpin.connect("valueChanged(int)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorNormalizeLuminosityCheckbox.connect("toggled(bool)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorInitialClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
+    self.multiRecolorConsolidatedClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
     self.clusterButton.connect('clicked(bool)', self.onClusterButton)
     self.individualTextureSelector.connect("currentTextChanged(const QString &)", self.onIndividualTextureChanged)
     self.applyIndividualTextureButton.connect('clicked(bool)', self.onApplyIndividualTextureButton)
@@ -1400,6 +1425,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Initialize MultiRecolor state variables
     self.multiRecolorClusterCenters = None
+    self.multiRecolorClusteringPipeline = None
     self.multiRecolorFaceAreas = None
     self.multiRecolorTextureFiles = []
     self.faceAreasCache = {}  # Cache face areas by model node ID
@@ -4978,6 +5004,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if textureDirectorySelected:
       self.updateMultiRecolorTextureList()
 
+  def onMultiRecolorClusterCountChanged(self):
+    """Validate that consolidated clusters <= initial clusters"""
+    initialClusters = self.multiRecolorInitialClustersSpin.value
+    consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
+
+    # If consolidated > initial, adjust consolidated to match initial
+    if consolidatedClusters > initialClusters:
+      self.multiRecolorConsolidatedClustersSpin.setValue(initialClusters)
+
   def updateMultiRecolorTextureList(self):
     """Update the list of texture files for MultiRecolor"""
     textureDir = self.multiRecolorTextureDirectorySelector.currentPath
@@ -5010,7 +5045,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
       textureDir = self.multiRecolorTextureDirectorySelector.currentPath
-      numClusters = self.multiRecolorNumClustersSpin.value
+      initialClusters = self.multiRecolorInitialClustersSpin.value
+      consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
+      normalizeLuminosity = self.multiRecolorNormalizeLuminosityCheckbox.isChecked()
 
       if not atlasModel:
         self.clusteringLogInfo.append("Error: No atlas model selected")
@@ -5024,7 +5061,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.clusteringLogInfo.append("Error: No texture files found")
         return
 
-      self.clusteringLogInfo.append(f"Starting multi-texture clustering with {numClusters} clusters...")
+      self.clusteringLogInfo.append(f"Starting per-texture clustering pipeline...")
+      self.clusteringLogInfo.append(f"Initial clusters: {initialClusters}, Consolidated: {consolidatedClusters}")
+      self.clusteringLogInfo.append(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
       self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
 
       logic = InterDeCALogic()
@@ -5035,20 +5074,38 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.clusteringLogInfo.append("Error: Failed to get face areas")
         return
 
-      # Run the multi-texture clustering
+      # Run the multi-texture clustering pipeline
       result = logic.performMultiTextureClustering(
-        atlasModel, textureDir, self.multiRecolorTextureFiles, numClusters,
-        cachedFaceAreas,  # Pass cached face areas
+        atlasModel, textureDir, self.multiRecolorTextureFiles,
+        initialClusters, consolidatedClusters,
+        normalizeLuminosity=normalizeLuminosity,
+        faceAreas=cachedFaceAreas,
         progressCallback=self.updateClusteringProgress,
         logCallback=self.logClusteringMessage
       )
 
       if result.get("success", False):
-        self.multiRecolorClusterCenters = result["cluster_centers"]
+        self.multiRecolorClusteringPipeline = result["pipeline"]
         self.multiRecolorFaceAreas = cachedFaceAreas  # Use cached areas
 
-        self.clusteringLogInfo.append("Multi-texture clustering completed successfully!")
-        self.clusteringLogInfo.append(f"Created {len(self.multiRecolorClusterCenters)} color clusters")
+        # For backward compatibility, store shared palette as cluster centers
+        if self.multiRecolorClusteringPipeline.sharedPalette is not None:
+          self.multiRecolorClusterCenters = logic.lab_to_rgb(
+            self.multiRecolorClusteringPipeline.sharedPalette
+          ).astype(np.uint8)
+          self.clusteringLogInfo.append(f"Computed shared palette from {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
+        elif self.multiRecolorClusteringPipeline.referenceCentroids is not None:
+          # Fallback to reference centroids if shared palette not available
+          self.multiRecolorClusterCenters = logic.lab_to_rgb(
+            self.multiRecolorClusteringPipeline.referenceCentroids
+          ).astype(np.uint8)
+          self.clusteringLogInfo.append("Warning: Using reference centroids (shared palette not computed)")
+        else:
+          self.multiRecolorClusterCenters = None
+
+        self.clusteringLogInfo.append("Multi-texture clustering pipeline completed successfully!")
+        self.clusteringLogInfo.append(f"Processed {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
+        self.clusteringLogInfo.append(f"Created {consolidatedClusters} consolidated clusters (from {initialClusters} initial clusters)")
 
         # Enable Step 2 controls
         self.individualTextureSelector.setEnabled(True)
@@ -5076,9 +5133,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     textureSelected = bool(self.individualTextureSelector.currentText)
     clustersAvailable = self.multiRecolorClusterCenters is not None
 
-    # Enable apply button and high contrast option if texture is selected and clusters are available
+    # Enable apply button if texture is selected and clusters are available
+    # Enable raw texture option if texture is selected (doesn't need clusters)
     self.applyIndividualTextureButton.enabled = textureSelected and clustersAvailable
-    self.individualHighContrastCheckbox.setEnabled(textureSelected and clustersAvailable)
+    self.individualRawTextureCheckbox.setEnabled(textureSelected)
 
   def onApplyIndividualTextureButton(self):
     """Handle Step 2: Individual texture visualization"""
@@ -5091,7 +5149,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
       textureDir = self.multiRecolorTextureDirectorySelector.currentPath
       selectedTexture = self.individualTextureSelector.currentText
-      useHighContrast = self.individualHighContrastCheckbox.isChecked()
+      useRawTexture = self.individualRawTextureCheckbox.isChecked()
 
       if not atlasModel:
         self.individualLogInfo.append("Error: No atlas model selected")
@@ -5101,28 +5159,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.individualLogInfo.append("Error: No texture selected")
         return
 
-      if self.multiRecolorClusterCenters is None:
-        self.individualLogInfo.append("Error: No cluster centers available. Run clustering first.")
-        return
-
       texturePath = os.path.join(textureDir, selectedTexture)
       if not os.path.exists(texturePath):
         self.individualLogInfo.append(f"Error: Texture file not found: {texturePath}")
         return
 
       self.individualLogInfo.append(f"Applying texture: {selectedTexture}")
-      paletteType = "High contrast palette" if useHighContrast else "Clustered colors"
-      self.individualLogInfo.append(f"Using: {paletteType}")
 
       logic = InterDeCALogic()
 
-      # Apply the texture with the clustered palette
-      success = logic.applyIndividualTextureWithClusteredPalette(
-        atlasModel, texturePath, self.multiRecolorClusterCenters,
-        useHighContrast, self.multiRecolorFaceAreas,
-        progressCallback=self.updateIndividualProgress,
-        logCallback=self.logIndividualMessage
-      )
+      if useRawTexture:
+        # Apply raw texture directly without any processing
+        self.individualLogInfo.append("Using: Raw texture (no processing)")
+        success = logic.applyTextureToModel(atlasModel, texturePath)
+      else:
+        # Apply with clustered palette
+        if self.multiRecolorClusterCenters is None:
+          self.individualLogInfo.append("Error: No cluster centers available. Run clustering first.")
+          return
+
+        self.individualLogInfo.append("Using: Shared palette from clustering")
+        success = logic.applyIndividualTextureWithClusteredPalette(
+          atlasModel, texturePath,
+          clusterCenters=self.multiRecolorClusterCenters,
+          clusteringPipeline=self.multiRecolorClusteringPipeline,
+          faceAreas=self.multiRecolorFaceAreas,
+          progressCallback=self.updateIndividualProgress,
+          logCallback=self.logIndividualMessage
+        )
 
       if success:
         self.individualLogInfo.append("Individual texture visualization completed successfully!")
@@ -5174,11 +5238,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       logic = InterDeCALogic()
 
-      # Perform population analysis (data preparation only)
+      # Perform population analysis (data preparation only) - using pipeline if available
       result = logic.performPopulationAnalysis(
         atlasModel, textureDir, self.multiRecolorTextureFiles,
-        self.multiRecolorClusterCenters, self.multiRecolorFaceAreas,
-        dimReductionMethod,
+        clusterCenters=self.multiRecolorClusterCenters,
+        clusteringPipeline=self.multiRecolorClusteringPipeline,
+        faceAreas=self.multiRecolorFaceAreas,
+        dimReductionMethod=dimReductionMethod,
         progressCallback=self.updatePopulationProgress,
         logCallback=self.logPopulationMessage
       )
@@ -5445,6 +5511,137 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       print(f"Error creating Colors EDA plot: {e}")
       return {"success": False, "chartNode": None}
 
+
+#
+# ClusteringPipeline
+#
+
+class ClusteringPipeline:
+  """
+  Stores all configuration and results from multi-texture clustering pipeline
+
+  This class encapsulates the complete clustering workflow including:
+  - Luminosity normalization transforms (if enabled)
+  - Per-texture initial and consolidated clustering results
+  - Cluster reordering mappings for cross-texture consistency
+  """
+
+  def __init__(self, initialClusters, consolidatedClusters, normalizeLuminosity=False):
+    """
+    Initialize clustering pipeline configuration
+
+    Args:
+        initialClusters: number of initial clusters per texture
+        consolidatedClusters: number of consolidated clusters
+        normalizeLuminosity: whether luminosity normalization is enabled
+    """
+    self.initialClusters = initialClusters
+    self.consolidatedClusters = consolidatedClusters
+    self.normalizeLuminosity = normalizeLuminosity
+
+    # Luminosity normalization
+    self.pooledLCStats = None  # (mu_pool, sd_pool) if normalization enabled
+    self.perTextureLCStats = {}  # texture -> (mu_img, sd_img)
+
+    # Per-texture clustering results
+    self.perTextureInitialLabels = {}  # texture -> initial cluster labels
+    self.perTextureConsolidatedLabels = {}  # texture -> consolidated cluster labels
+    self.perTextureInitialCentroids = {}  # texture -> initial centroids
+    self.perTextureConsolidatedCentroids = {}  # texture -> consolidated centroids
+    self.perTextureConsolidationMapping = {}  # texture -> initial->consolidated mapping
+    self.perTextureReorderMapping = {}  # texture -> reorder mapping
+
+    # Reference centroids (from first texture)
+    self.referenceCentroids = None
+    self.referenceTexture = None
+
+    # Shared palette (averaged across all textures)
+    self.sharedPalette = None  # Will be computed after all textures are processed
+
+    # List of processed textures in order
+    self.textureFiles = []
+
+  def addTextureResults(self, textureFile, clusteringResult, lcStats=None, reorderMapping=None):
+    """
+    Add clustering results for a texture
+
+    Args:
+        textureFile: texture filename
+        clusteringResult: dict from _clusterAndConsolidateSingleTexture
+        lcStats: (mu_img, sd_img) if normalization enabled
+        reorderMapping: reorder mapping if not first texture
+    """
+    self.textureFiles.append(textureFile)
+
+    if lcStats is not None:
+      self.perTextureLCStats[textureFile] = lcStats
+
+    self.perTextureInitialLabels[textureFile] = clusteringResult["initialLabels"]
+    self.perTextureConsolidatedLabels[textureFile] = clusteringResult["consolidatedLabels"]
+    self.perTextureInitialCentroids[textureFile] = clusteringResult["initialCentroids"]
+    self.perTextureConsolidatedCentroids[textureFile] = clusteringResult["consolidatedCentroids"]
+    self.perTextureConsolidationMapping[textureFile] = clusteringResult["consolidationMapping"]
+
+    if reorderMapping is not None:
+      self.perTextureReorderMapping[textureFile] = reorderMapping
+
+    # Set reference from first texture
+    if self.referenceCentroids is None:
+      self.referenceCentroids = clusteringResult["consolidatedCentroids"].copy()
+      self.referenceTexture = textureFile
+
+  def computeSharedPalette(self):
+    """
+    Compute a shared palette by averaging all consolidated centroids across textures
+
+    This creates a common color palette that represents the typical colors across
+    all textures, which can be used for consistent visualization in Step 2.
+
+    Returns:
+        numpy array of shared palette centroids in Lab space (consolidatedClusters, 3)
+    """
+    if len(self.textureFiles) == 0:
+      return None
+
+    # Collect all consolidated centroids (after reordering)
+    allCentroids = []
+
+    for textureFile in self.textureFiles:
+      centroids = self.perTextureConsolidatedCentroids[textureFile]
+
+      # Apply reordering if available
+      if textureFile in self.perTextureReorderMapping:
+        reorderMapping = self.perTextureReorderMapping[textureFile]
+        reorderedCentroids = np.zeros_like(centroids)
+        for oldIdx, newIdx in enumerate(reorderMapping):
+          reorderedCentroids[newIdx] = centroids[oldIdx]
+        centroids = reorderedCentroids
+
+      allCentroids.append(centroids)
+
+    # Average centroids across all textures for each cluster
+    allCentroids = np.array(allCentroids)  # (numTextures, consolidatedClusters, 3)
+    sharedPalette = allCentroids.mean(axis=0)  # (consolidatedClusters, 3)
+
+    return sharedPalette
+
+  def getConsolidatedCentroidsForTexture(self, textureFile):
+    """Get consolidated centroids for a specific texture (after reordering if applicable)"""
+    if textureFile not in self.perTextureConsolidatedCentroids:
+      return None
+
+    centroids = self.perTextureConsolidatedCentroids[textureFile]
+
+    # Apply reordering if available
+    if textureFile in self.perTextureReorderMapping:
+      reorderMapping = self.perTextureReorderMapping[textureFile]
+      # Create reordered centroids
+      reorderedCentroids = np.zeros_like(centroids)
+      for oldIdx, newIdx in enumerate(reorderMapping):
+        reorderedCentroids[newIdx] = centroids[oldIdx]
+      return reorderedCentroids
+
+    return centroids
 
 #
 # DeCALogic
@@ -8475,33 +8672,43 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     return rgb
 
-  def performMultiTextureClustering(self, modelNode, textureDir, textureFiles, numClusters, faceAreas=None, progressCallback=None, logCallback=None):
+  def performMultiTextureClustering(self, modelNode, textureDir, textureFiles, initialClusters, consolidatedClusters,
+                                     normalizeLuminosity=False, faceAreas=None, progressCallback=None, logCallback=None):
     """
-    Perform multi-texture clustering using MiniBatchKMeans on face average colors
+    Perform per-texture clustering with hierarchical consolidation and cross-texture reordering
 
     Args:
         modelNode: VTK model node to analyze
         textureDir: Directory containing texture files
         textureFiles: List of texture filenames
-        numClusters: Number of color clusters
+        initialClusters: Number of initial clusters per texture
+        consolidatedClusters: Number of consolidated clusters (must be <= initialClusters)
+        normalizeLuminosity: Whether to normalize L* and C* across textures
         faceAreas: Pre-computed face areas (optional, will calculate if None)
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
 
     Returns:
-        dict with 'success', 'cluster_centers', 'face_areas'
+        dict with 'success', 'pipeline' (ClusteringPipeline object), 'face_areas'
     """
     try:
       if logCallback:
-        logCallback(f"Starting multi-texture clustering with {numClusters} clusters...")
+        logCallback(f"Starting per-texture clustering pipeline...")
+        logCallback(f"Initial clusters: {initialClusters}, Consolidated: {consolidatedClusters}")
+        logCallback(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
 
       if progressCallback:
-        progressCallback(5)
+        progressCallback(2)
 
       # Check if required libraries are available
       if not SKLEARN_AVAILABLE:
         if logCallback:
-          logCallback("Error: sklearn not available for MiniBatchKMeans clustering")
+          logCallback("Error: sklearn not available for clustering")
+        return {"success": False}
+
+      if not SCIPY_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scipy not available for hierarchical clustering")
         return {"success": False}
 
       if not SKIMAGE_AVAILABLE:
@@ -8531,98 +8738,147 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           logCallback("Using provided face areas")
 
       if progressCallback:
+        progressCallback(5)
+
+      # Create clustering pipeline
+      pipeline = ClusteringPipeline(initialClusters, consolidatedClusters, normalizeLuminosity)
+
+      # Step 1: Compute pooled LC statistics if normalization is enabled
+      if normalizeLuminosity:
+        if logCallback:
+          logCallback("Computing pooled L*C* statistics for luminosity normalization...")
+
+        pooledStats = self._computePooledLCStats(textureDir, textureFiles, logCallback)
+        if pooledStats is None:
+          if logCallback:
+            logCallback("Error: Failed to compute pooled LC statistics")
+          return {"success": False}
+
+        pipeline.pooledLCStats = pooledStats
+        if logCallback:
+          mu_pool, sd_pool = pooledStats
+          logCallback(f"Pooled stats - L: μ={mu_pool[0]:.2f} σ={sd_pool[0]:.2f}, C: μ={mu_pool[1]:.2f} σ={sd_pool[1]:.2f}")
+
+      if progressCallback:
         progressCallback(10)
 
-      # Collect all face colors from all textures
-      allFaceColors = []
-
+      # Step 2: Process each texture
       if logCallback:
-        logCallback(f"Processing {len(textureFiles)} texture files...")
+        logCallback(f"Processing {len(textureFiles)} textures...")
 
       for i, textureFile in enumerate(textureFiles):
         texturePath = os.path.join(textureDir, textureFile)
 
         if logCallback:
-          logCallback(f"Processing texture {i+1}/{len(textureFiles)}: {textureFile}")
+          logCallback(f"\nTexture {i+1}/{len(textureFiles)}: {textureFile}")
 
         try:
           # Load texture image
           textureImage = imageio.imread(texturePath)
           if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
             if logCallback:
-              logCallback(f"Warning: Skipping invalid texture format: {textureFile}")
+              logCallback(f"  Warning: Skipping invalid texture format")
             continue
         except Exception as e:
           if logCallback:
-            logCallback(f"Warning: Failed to load texture {textureFile}: {e}")
+            logCallback(f"  Warning: Failed to load texture: {e}")
           continue
 
         # Calculate face average colors for this texture
         faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
-        if faceColors is not None:
-          allFaceColors.append(faceColors)
-        else:
+        if faceColors is None:
           if logCallback:
-            logCallback(f"Warning: Failed to calculate face colors for {textureFile}")
+            logCallback(f"  Warning: Failed to calculate face colors")
+          continue
+
+        # Convert to Lab space
+        faceColorsLab = self.rgb_to_lab(faceColors)
+
+        # Apply luminosity normalization if enabled
+        lcStats = None
+        if normalizeLuminosity:
+          if logCallback:
+            logCallback(f"  Computing per-texture LC stats...")
+
+          lcStats = self._computePerTextureLCStats(texturePath, logCallback)
+          if lcStats is not None:
+            mu_img, sd_img = lcStats
+            mu_pool, sd_pool = pipeline.pooledLCStats
+
+            if logCallback:
+              logCallback(f"  Applying LC transform...")
+
+            faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
+
+        # Perform clustering and consolidation
+        if logCallback:
+          logCallback(f"  Clustering with {initialClusters} initial clusters...")
+
+        clusteringResult = self._clusterAndConsolidateSingleTexture(
+          faceColorsLab, initialClusters, consolidatedClusters, logCallback
+        )
+
+        if clusteringResult is None:
+          if logCallback:
+            logCallback(f"  Warning: Clustering failed for this texture")
+          continue
+
+        # Reorder clusters to match reference (if not first texture)
+        reorderMapping = None
+        if pipeline.referenceCentroids is not None:
+          if logCallback:
+            logCallback(f"  Reordering clusters to match reference...")
+
+          reorderMapping = self._reorderClusterIndices(
+            pipeline.referenceCentroids,
+            clusteringResult["consolidatedCentroids"],
+            logCallback
+          )
+
+          if reorderMapping is None:
+            if logCallback:
+              logCallback(f"  Warning: Cluster reordering failed")
+            continue
+
+        # Add results to pipeline
+        pipeline.addTextureResults(textureFile, clusteringResult, lcStats, reorderMapping)
 
         # Update progress
-        progress = 10 + (i + 1) * 60 / len(textureFiles)
+        progress = 10 + (i + 1) * 85 / len(textureFiles)
         if progressCallback:
           progressCallback(progress)
 
-      if not allFaceColors:
+      if len(pipeline.textureFiles) == 0:
         if logCallback:
-          logCallback("Error: No valid face colors extracted from any texture")
+          logCallback("Error: No textures were successfully processed")
         return {"success": False}
 
+      # Compute shared palette by averaging all consolidated centroids
       if logCallback:
-        logCallback(f"Successfully processed {len(allFaceColors)} textures")
-        logCallback("Combining all face colors for clustering...")
+        logCallback(f"\nComputing shared palette from {len(pipeline.textureFiles)} textures...")
 
-      # Combine all face colors into a single array
-      combinedColors = np.vstack(allFaceColors)
+      pipeline.sharedPalette = pipeline.computeSharedPalette()
 
-      if logCallback:
-        logCallback(f"Total face colors for clustering: {len(combinedColors)}")
-
-      if progressCallback:
-        progressCallback(75)
-
-      # Convert to Lab color space for clustering
-      if logCallback:
-        logCallback("Converting colors to CIE Lab space...")
-
-      labColors = self.rgb_to_lab(combinedColors)
-
-      # Perform MiniBatchKMeans clustering
-      if logCallback:
-        logCallback(f"Performing MiniBatchKMeans clustering with {numClusters} clusters...")
-
-      kmeans = MiniBatchKMeans(n_clusters=numClusters, random_state=42, batch_size=1000)
-      kmeans.fit(labColors)
-      clusterCentersLab = kmeans.cluster_centers_
-
-      if progressCallback:
-        progressCallback(90)
-
-      # Convert cluster centers back to RGB
-      if logCallback:
-        logCallback("Converting cluster centers back to RGB...")
-
-      clusterCentersRgb = self.lab_to_rgb(clusterCentersLab)
+      if pipeline.sharedPalette is not None:
+        if logCallback:
+          logCallback(f"Shared palette computed with {len(pipeline.sharedPalette)} colors")
+      else:
+        if logCallback:
+          logCallback("Warning: Failed to compute shared palette")
 
       if progressCallback:
         progressCallback(100)
 
       if logCallback:
-        logCallback(f"Multi-texture clustering completed successfully!")
-        logCallback(f"Created {numClusters} color clusters from {len(allFaceColors)} textures")
+        logCallback(f"\nMulti-texture clustering pipeline completed successfully!")
+        logCallback(f"Processed {len(pipeline.textureFiles)} textures")
+        logCallback(f"Reference texture: {pipeline.referenceTexture}")
 
       return {
         "success": True,
-        "cluster_centers": clusterCentersRgb.astype(np.uint8),
+        "pipeline": pipeline,
         "face_areas": faceAreas,
-        "num_textures_processed": len(allFaceColors)
+        "num_textures_processed": len(pipeline.textureFiles)
       }
 
     except Exception as e:
@@ -8631,6 +8887,378 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       import traceback
       traceback.print_exc()
       return {"success": False}
+
+  def _clusterAndConsolidateSingleTexture(self, faceColorsLab, initialClusters, consolidatedClusters, logCallback=None):
+    """
+    Perform initial clustering and hierarchical consolidation on a single texture
+
+    Args:
+        faceColorsLab: numpy array of face colors in Lab space (N, 3)
+        initialClusters: number of initial clusters
+        consolidatedClusters: number of consolidated clusters (must be <= initialClusters)
+        logCallback: optional callback for logging
+
+    Returns:
+        dict with:
+            - initialLabels: cluster labels from initial clustering (N,)
+            - consolidatedLabels: cluster labels after consolidation (N,)
+            - initialCentroids: initial cluster centroids (initialClusters, 3)
+            - consolidatedCentroids: consolidated cluster centroids (consolidatedClusters, 3)
+            - consolidationMapping: mapping from initial to consolidated indices (initialClusters,)
+        Returns None if clustering fails
+    """
+    try:
+      if not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for clustering")
+        return None
+
+      if not SCIPY_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scipy not available for hierarchical clustering")
+        return None
+
+      # Step 1: Perform initial MiniBatchKMeans clustering
+      if logCallback:
+        logCallback(f"  Performing initial clustering with {initialClusters} clusters...")
+
+      kmeans = MiniBatchKMeans(n_clusters=initialClusters, random_state=42, batch_size=1000)
+      initialLabels = kmeans.fit_predict(faceColorsLab)
+      initialCentroids = kmeans.cluster_centers_  # (initialClusters, 3)
+
+      # Step 2: If initial == consolidated, no consolidation needed
+      if initialClusters == consolidatedClusters:
+        if logCallback:
+          logCallback(f"  No consolidation needed (initial == consolidated)")
+
+        consolidationMapping = np.arange(initialClusters)
+        return {
+          "initialLabels": initialLabels,
+          "consolidatedLabels": initialLabels.copy(),
+          "initialCentroids": initialCentroids,
+          "consolidatedCentroids": initialCentroids.copy(),
+          "consolidationMapping": consolidationMapping
+        }
+
+      # Step 3: Calculate pairwise distances between initial centroids
+      if logCallback:
+        logCallback(f"  Computing centroid distances for hierarchical clustering...")
+
+      # Use Euclidean distance in Lab space
+      centroidDistances = pdist(initialCentroids, metric='euclidean')
+
+      # Step 4: Perform hierarchical clustering on centroids
+      if logCallback:
+        logCallback(f"  Performing hierarchical clustering...")
+
+      linkageMatrix = hierarchy.linkage(centroidDistances, method='average')
+
+      # Step 5: Cut dendrogram to get consolidated clusters
+      if logCallback:
+        logCallback(f"  Cutting dendrogram to {consolidatedClusters} clusters...")
+
+      # fcluster returns cluster IDs starting from 1, we'll convert to 0-based
+      consolidatedClusterIds = hierarchy.fcluster(linkageMatrix, consolidatedClusters, criterion='maxclust')
+      consolidatedClusterIds = consolidatedClusterIds - 1  # Convert to 0-based
+
+      # Step 6: Create consolidation mapping (initial index -> consolidated index)
+      consolidationMapping = consolidatedClusterIds  # (initialClusters,)
+
+      # Step 7: Apply consolidation mapping to initial labels
+      consolidatedLabels = consolidationMapping[initialLabels]
+
+      # Step 8: Compute consolidated centroids as mean of initial centroids in each group
+      consolidatedCentroids = np.zeros((consolidatedClusters, 3))
+      for consolidatedIdx in range(consolidatedClusters):
+        # Find which initial clusters map to this consolidated cluster
+        initialIndicesInGroup = np.where(consolidationMapping == consolidatedIdx)[0]
+        if len(initialIndicesInGroup) > 0:
+          # Average the centroids
+          consolidatedCentroids[consolidatedIdx] = initialCentroids[initialIndicesInGroup].mean(axis=0)
+
+      if logCallback:
+        logCallback(f"  Consolidated {initialClusters} initial clusters into {consolidatedClusters} clusters")
+
+      return {
+        "initialLabels": initialLabels,
+        "consolidatedLabels": consolidatedLabels,
+        "initialCentroids": initialCentroids,
+        "consolidatedCentroids": consolidatedCentroids,
+        "consolidationMapping": consolidationMapping
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in clustering and consolidation: {e}")
+      import traceback
+      traceback.print_exc()
+      return None
+
+  def _reorderClusterIndices(self, referenceCentroids, targetCentroids, logCallback=None):
+    """
+    Reorder target cluster indices to match reference clusters based on color similarity
+
+    Uses Hungarian algorithm to find optimal matching between reference and target centroids
+
+    Args:
+        referenceCentroids: reference cluster centroids in Lab space (K, 3)
+        targetCentroids: target cluster centroids in Lab space (K, 3)
+        logCallback: optional callback for logging
+
+    Returns:
+        reorderMapping: array where reorderMapping[old_idx] = new_idx
+        Returns None if reordering fails
+    """
+    try:
+      if not SCIPY_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scipy not available for cluster reordering")
+        return None
+
+      numClusters = len(referenceCentroids)
+
+      if len(targetCentroids) != numClusters:
+        if logCallback:
+          logCallback(f"Error: Reference and target have different cluster counts ({numClusters} vs {len(targetCentroids)})")
+        return None
+
+      # Compute pairwise distances between reference and target centroids
+      # Distance matrix: distMatrix[i, j] = distance from reference[i] to target[j]
+      distMatrix = np.zeros((numClusters, numClusters))
+
+      for i in range(numClusters):
+        for j in range(numClusters):
+          # Euclidean distance in Lab space
+          distMatrix[i, j] = np.linalg.norm(referenceCentroids[i] - targetCentroids[j])
+
+      # Use Hungarian algorithm to find optimal assignment
+      # row_ind[i] is matched to col_ind[i]
+      # We want: reference[i] matches target[col_ind[i]]
+      row_ind, col_ind = linear_sum_assignment(distMatrix)
+
+      # Create reordering mapping
+      # reorderMapping[old_target_idx] = new_idx (to match reference order)
+      reorderMapping = np.zeros(numClusters, dtype=int)
+
+      for ref_idx, target_idx in zip(row_ind, col_ind):
+        # Target cluster target_idx should be renamed to ref_idx
+        reorderMapping[target_idx] = ref_idx
+
+      if logCallback:
+        totalDist = distMatrix[row_ind, col_ind].sum()
+        logCallback(f"  Reordered clusters with total distance: {totalDist:.2f}")
+
+      return reorderMapping
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in cluster reordering: {e}")
+      import traceback
+      traceback.print_exc()
+      return None
+
+  def _isBlackPixel(self, rgb):
+    """
+    Check if RGB color is pure black (all channels == 0)
+
+    Args:
+        rgb: numpy array of RGB values (0-255 or 0-1)
+
+    Returns:
+        boolean mask where True indicates black pixels
+    """
+    if rgb.max() <= 1.0:
+      # Values are in [0, 1] range
+      rgb_scaled = (rgb * 255).astype(np.uint8)
+    else:
+      rgb_scaled = rgb.astype(np.uint8)
+
+    return (rgb_scaled.sum(axis=-1) == 0)
+
+  def _computePooledLCStats(self, textureDir, textureFiles, logCallback=None):
+    """
+    Compute pooled L* and C* statistics across all textures
+
+    Args:
+        textureDir: Directory containing texture files
+        textureFiles: List of texture filenames
+        logCallback: Optional callback for logging
+
+    Returns:
+        tuple: (mu_pool, sd_pool) where each is [L_mean, C_mean] and [L_std, C_std]
+               Returns None if computation fails
+    """
+    try:
+      EPS = 1e-8
+      sum_vec = np.zeros(2, dtype=np.float64)  # [L, C]
+      sumsq_vec = np.zeros(2, dtype=np.float64)
+      count = 0
+
+      if logCallback:
+        logCallback(f"Computing pooled L*C* statistics from {len(textureFiles)} textures...")
+
+      for textureFile in textureFiles:
+        texturePath = os.path.join(textureDir, textureFile)
+
+        try:
+          # Load texture
+          textureImage = imageio.imread(texturePath)
+          if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+            continue
+
+          # Convert to float [0, 1]
+          rgb = textureImage[:, :, :3].astype(np.float32) / 255.0
+
+          # Identify black pixels
+          mask_black = self._isBlackPixel(rgb)
+          mask_nonblack = ~mask_black
+
+          if not mask_nonblack.any():
+            continue
+
+          # Convert to Lab
+          lab = self.rgb_to_lab((rgb * 255).astype(np.uint8))
+
+          # Extract L, a, b for non-black pixels
+          L = lab[..., 0][mask_nonblack]
+          a = lab[..., 1][mask_nonblack]
+          b = lab[..., 2][mask_nonblack]
+          C = np.sqrt(a*a + b*b)
+
+          # Accumulate statistics
+          LC = np.stack([L, C], axis=1)
+          sum_vec += LC.sum(axis=0)
+          sumsq_vec += (LC ** 2).sum(axis=0)
+          count += LC.shape[0]
+
+        except Exception as e:
+          if logCallback:
+            logCallback(f"Warning: Failed to process {textureFile} for pooled stats: {e}")
+          continue
+
+      if count == 0:
+        if logCallback:
+          logCallback("Error: No valid pixels found for pooled statistics")
+        return None
+
+      # Compute mean and std
+      mu_pool = sum_vec / count
+      var = np.maximum(sumsq_vec / count - mu_pool**2, 0.0)
+      sd_pool = np.sqrt(var) + EPS
+
+      if logCallback:
+        logCallback(f"Pooled L*C* stats - Mean: L={mu_pool[0]:.2f}, C={mu_pool[1]:.2f}; Std: L={sd_pool[0]:.2f}, C={sd_pool[1]:.2f}")
+
+      return mu_pool, sd_pool
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error computing pooled LC stats: {e}")
+      import traceback
+      traceback.print_exc()
+      return None
+
+  def _computePerTextureLCStats(self, texturePath, logCallback=None):
+    """
+    Compute per-texture L* and C* statistics
+
+    Args:
+        texturePath: Path to texture file
+        logCallback: Optional callback for logging
+
+    Returns:
+        tuple: (mu_img, sd_img) where each is [L_mean, C_mean] and [L_std, C_std]
+               Returns None if computation fails
+    """
+    try:
+      EPS = 1e-8
+
+      # Load texture
+      textureImage = imageio.imread(texturePath)
+      if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+        return None
+
+      # Convert to float [0, 1]
+      rgb = textureImage[:, :, :3].astype(np.float32) / 255.0
+
+      # Identify black pixels
+      mask_black = self._isBlackPixel(rgb)
+      mask_nonblack = ~mask_black
+
+      if not mask_nonblack.any():
+        # All black - return neutral fallback
+        mu_img = np.array([50.0, 20.0], dtype=np.float64)
+        sd_img = np.array([1.0, 1.0], dtype=np.float64)
+        return mu_img, sd_img
+
+      # Convert to Lab
+      lab = self.rgb_to_lab((rgb * 255).astype(np.uint8))
+
+      # Extract L, a, b for non-black pixels
+      L = lab[..., 0][mask_nonblack]
+      a = lab[..., 1][mask_nonblack]
+      b = lab[..., 2][mask_nonblack]
+      C = np.sqrt(a*a + b*b)
+
+      # Compute mean and std
+      mu_img = np.array([L.mean(), C.mean()], dtype=np.float64)
+      sd_img = np.array([L.std(), C.std()], dtype=np.float64) + EPS
+
+      return mu_img, sd_img
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error computing per-texture LC stats: {e}")
+      return None
+
+  def _applyLCTransform(self, labColors, mu_img, sd_img, mu_pool, sd_pool):
+    """
+    Apply L*C* transformation to Lab colors
+
+    Args:
+        labColors: numpy array of Lab colors (N, 3)
+        mu_img: per-image mean [L, C]
+        sd_img: per-image std [L, C]
+        mu_pool: pooled mean [L, C]
+        sd_pool: pooled std [L, C]
+
+    Returns:
+        numpy array of transformed Lab colors (N, 3)
+    """
+    try:
+      # Extract L, a, b
+      L = labColors[:, 0].copy()
+      a = labColors[:, 1].copy()
+      b = labColors[:, 2].copy()
+
+      # Compute chroma and hue
+      C = np.sqrt(a*a + b*b)
+      h = np.arctan2(b, a)  # hue angle
+
+      # Transform L and C
+      L_transformed = (L - mu_img[0]) * (sd_pool[0] / sd_img[0]) + mu_pool[0]
+      C_transformed = (C - mu_img[1]) * (sd_pool[1] / sd_img[1]) + mu_pool[1]
+
+      # Clip to valid ranges
+      L_transformed = np.clip(L_transformed, 0.0, 100.0)
+      C_transformed = np.maximum(C_transformed, 0.0)
+
+      # Reconstruct a, b with original hue
+      a_transformed = C_transformed * np.cos(h)
+      b_transformed = C_transformed * np.sin(h)
+
+      # Clip a, b to valid ranges
+      a_transformed = np.clip(a_transformed, -128.0, 127.0)
+      b_transformed = np.clip(b_transformed, -128.0, 127.0)
+
+      # Reconstruct Lab array
+      labTransformed = np.stack([L_transformed, a_transformed, b_transformed], axis=1)
+
+      return labTransformed
+
+    except Exception as e:
+      print(f"Error applying LC transform: {e}")
+      return labColors  # Return original on error
 
   def _calculateFaceAreas(self, polyData):
     """
@@ -8678,15 +9306,16 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Error calculating face areas: {e}")
       return None
 
-  def applyIndividualTextureWithClusteredPalette(self, modelNode, texturePath, clusterCenters, useHighContrast=False, faceAreas=None, progressCallback=None, logCallback=None):
+  def applyIndividualTextureWithClusteredPalette(self, modelNode, texturePath, clusterCenters=None, clusteringPipeline=None,
+                                                  faceAreas=None, progressCallback=None, logCallback=None):
     """
-    Apply individual texture with pre-computed clustered palette
+    Apply individual texture with pre-computed clustered palette (shared palette from Step 1)
 
     Args:
         modelNode: VTK model node to apply colors to
         texturePath: Path to the texture image file
-        clusterCenters: Pre-computed cluster centers (RGB colors)
-        useHighContrast: If True, use high contrast palette instead of cluster centers
+        clusterCenters: Pre-computed cluster centers (RGB colors) - for backward compatibility
+        clusteringPipeline: ClusteringPipeline object (preferred, overrides clusterCenters)
         faceAreas: Pre-computed face areas (optional, for caching)
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
@@ -8695,8 +9324,59 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         bool: True if successful, False otherwise
     """
     try:
+      # Determine which clustering data to use
+      textureFilename = os.path.basename(texturePath)
+
+      if clusteringPipeline is not None:
+        # Use pipeline (preferred)
+        if logCallback:
+          logCallback(f"Using clustering pipeline for texture: {textureFilename}")
+
+        # Use shared palette (averaged across all textures) instead of texture-specific centroids
+        if clusteringPipeline.sharedPalette is not None:
+          consolidatedCentroids = clusteringPipeline.sharedPalette
+          if logCallback:
+            logCallback(f"Using shared palette with {len(consolidatedCentroids)} colors")
+        else:
+          # Fallback to texture-specific centroids if shared palette not available
+          consolidatedCentroids = clusteringPipeline.getConsolidatedCentroidsForTexture(textureFilename)
+          if consolidatedCentroids is None:
+            if logCallback:
+              logCallback(f"Error: Texture {textureFilename} not found in pipeline")
+            return False
+          if logCallback:
+            logCallback(f"Warning: Shared palette not available, using texture-specific centroids")
+
+        # Convert centroids from Lab to RGB for palette
+        clusterCentersRgb = self.lab_to_rgb(consolidatedCentroids).astype(np.uint8)
+
+        # Check if luminosity normalization was used
+        useLuminosityNorm = clusteringPipeline.normalizeLuminosity
+        if useLuminosityNorm:
+          lcStats = clusteringPipeline.perTextureLCStats.get(textureFilename)
+          pooledStats = clusteringPipeline.pooledLCStats
+        else:
+          lcStats = None
+          pooledStats = None
+
+      elif clusterCenters is not None:
+        # Backward compatibility: use clusterCenters directly
+        if logCallback:
+          logCallback(f"Using legacy cluster centers for texture: {textureFilename}")
+
+        clusterCentersRgb = clusterCenters
+        consolidatedCentroids = self.rgb_to_lab(clusterCenters)
+        useLuminosityNorm = False
+        lcStats = None
+        pooledStats = None
+
+      else:
+        if logCallback:
+          logCallback("Error: Neither clusteringPipeline nor clusterCenters provided")
+        return False
+
       if logCallback:
-        logCallback(f"Loading texture: {os.path.basename(texturePath)}")
+        logCallback(f"Loading texture: {textureFilename}")
 
       if progressCallback:
         progressCallback(5)
@@ -8742,18 +9422,22 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       faceColorsLab = self.rgb_to_lab(faceColors)
 
+      # Apply luminosity normalization if it was used during clustering
+      if useLuminosityNorm and lcStats is not None and pooledStats is not None:
+        if logCallback:
+          logCallback("Applying luminosity normalization transform...")
+
+        mu_img, sd_img = lcStats
+        mu_pool, sd_pool = pooledStats
+        faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
+
       if progressCallback:
         progressCallback(50)
 
-      # Determine which palette to use
-      if useHighContrast:
-        if logCallback:
-          logCallback("Using high contrast palette...")
-        paletteColors = self.generate_high_contrast_palette(len(clusterCenters))
-      else:
-        if logCallback:
-          logCallback("Using clustered palette...")
-        paletteColors = clusterCenters
+      # Use the shared palette (clustered colors)
+      if logCallback:
+        logCallback("Using shared palette from clustering...")
+      paletteColors = clusterCentersRgb
 
       # Convert palette to Lab space for distance calculation
       paletteColorsLab = self.rgb_to_lab(paletteColors)
@@ -8854,7 +9538,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return False
 
-  def performPopulationAnalysis(self, modelNode, textureDir, textureFiles, clusterCenters, faceAreas, dimReductionMethod="PCA", progressCallback=None, logCallback=None):
+  def performPopulationAnalysis(self, modelNode, textureDir, textureFiles, clusterCenters=None, clusteringPipeline=None,
+                                 faceAreas=None, dimReductionMethod="PCA", progressCallback=None, logCallback=None):
     """
     Perform population analysis by creating area-weighted color vectors and dimensionality reduction
 
@@ -8862,7 +9547,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         modelNode: VTK model node to analyze
         textureDir: Directory containing texture files
         textureFiles: List of texture filenames
-        clusterCenters: Pre-computed cluster centers (RGB colors)
+        clusterCenters: Pre-computed cluster centers (RGB colors) - for backward compatibility
+        clusteringPipeline: ClusteringPipeline object (preferred, overrides clusterCenters)
         faceAreas: Pre-computed face areas
         dimReductionMethod: "PCA" or "UMAP"
         progressCallback: Function to call with progress updates (0-100)
@@ -8896,12 +9582,37 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           logCallback("Error: No polydata in model")
         return {"success": False}
 
-      # Convert cluster centers to Lab space for distance calculations
-      clusterCentersLab = self.rgb_to_lab(clusterCenters)
-      numClusters = len(clusterCenters)
+      # Determine which clustering data to use
+      if clusteringPipeline is not None:
+        # Use pipeline (preferred)
+        if logCallback:
+          logCallback("Using clustering pipeline for population analysis")
+
+        numClusters = clusteringPipeline.consolidatedClusters
+        useLuminosityNorm = clusteringPipeline.normalizeLuminosity
+        pooledStats = clusteringPipeline.pooledLCStats if useLuminosityNorm else None
+
+        # Use reference centroids for consistent cluster ordering
+        referenceCentroidsLab = clusteringPipeline.referenceCentroids
+
+      elif clusterCenters is not None:
+        # Backward compatibility
+        if logCallback:
+          logCallback("Using legacy cluster centers for population analysis")
+
+        numClusters = len(clusterCenters)
+        useLuminosityNorm = False
+        pooledStats = None
+        referenceCentroidsLab = self.rgb_to_lab(clusterCenters)
+
+      else:
+        if logCallback:
+          logCallback("Error: Neither clusteringPipeline nor clusterCenters provided")
+        return {"success": False}
 
       if logCallback:
         logCallback(f"Creating area-weighted color vectors for {len(textureFiles)} textures...")
+        logCallback(f"Using {numClusters} consolidated clusters")
 
       # Create area-weighted color vectors for each texture
       textureVectors = []
@@ -8935,6 +9646,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         # Convert face colors to Lab space
         faceColorsLab = self.rgb_to_lab(faceColors)
 
+        # Apply luminosity normalization if it was used during clustering
+        if useLuminosityNorm and clusteringPipeline is not None:
+          lcStats = clusteringPipeline.perTextureLCStats.get(textureFile)
+          if lcStats is not None and pooledStats is not None:
+            mu_img, sd_img = lcStats
+            mu_pool, sd_pool = pooledStats
+            faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
+
         # Create area-weighted color vector
         colorVector = np.zeros(numClusters)
 
@@ -8943,7 +9662,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
         # Reshape for broadcasting: faces (N,1,3) and clusters (1,K,3)
         faceColorsExpanded = faceColorsLab[:, np.newaxis, :]  # (N, 1, 3)
-        clusterColorsExpanded = clusterCentersLab[np.newaxis, :, :]  # (1, K, 3)
+        clusterColorsExpanded = referenceCentroidsLab[np.newaxis, :, :]  # (1, K, 3)
 
         # Calculate Euclidean distances in Lab space
         distances = np.sqrt(np.sum((faceColorsExpanded - clusterColorsExpanded) ** 2, axis=2))  # (N, K)
