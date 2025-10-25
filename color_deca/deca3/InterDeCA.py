@@ -9992,6 +9992,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         mu_pool, sd_pool = pooledStats
         faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
 
+        # Also apply normalization to raw face colors for display
+        # Convert normalized Lab colors back to RGB for visualization
+        faceColors = self.lab_to_rgb(faceColorsLab).astype(np.uint8)
+
       if progressCallback:
         progressCallback(50)
 
