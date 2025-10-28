@@ -38,9 +38,9 @@ class ATLASShapeBridge:
         self._atlas_available = False
         
         try:
-            from BUILDER.BUILDER import BUILDERLogic
-            from PREDICT.PREDICT import PREDICTLogic
-            from DATABASE.DATABASE import DATABASELogic
+            from BUILDER import BUILDERLogic
+            from PREDICT import PREDICTLogic
+            from DATABASE import DATABASELogic
             
             self._builder_logic = BUILDERLogic()
             self._predict_logic = PREDICTLogic()
@@ -192,16 +192,30 @@ class ATLASShapeBridge:
     
     def procrustesImposition(self, originalLandmarks, sizeOption):
         """
-        Perform Generalized Procrustes Analysis on landmark set.
+        Perform Procrustes alignment on landmarks.
         
         Args:
-            originalLandmarks: List of numpy arrays (N, 3)
-            sizeOption: Boolean, whether to preserve size
+            originalLandmarks: List of landmark arrays or vtkMultiBlockDataSet
+            sizeOption: Whether to include size in alignment
             
         Returns:
-            tuple: (aligned_landmarks, mean_shape)
+            tuple: (mean_shape, aligned_landmarks) where aligned_landmarks is vtkMultiBlockDataSet
         """
-        landmarks = [np.array(lm) for lm in originalLandmarks]
+        import vtk
+        
+        # Convert to numpy arrays - handle both list and vtkMultiBlockDataSet
+        if isinstance(originalLandmarks, vtk.vtkMultiBlockDataSet):
+            landmarks = []
+            for i in range(originalLandmarks.GetNumberOfBlocks()):
+                polydata = originalLandmarks.GetBlock(i)
+                points = polydata.GetPoints()
+                n_points = points.GetNumberOfPoints()
+                landmark_array = np.zeros((n_points, 3))
+                for j in range(n_points):
+                    points.GetPoint(j, landmark_array[j, :])
+                landmarks.append(landmark_array)
+        else:
+            landmarks = [np.array(lm) for lm in originalLandmarks]
         
         # Center all configurations
         centered = []
@@ -244,27 +258,67 @@ class ATLASShapeBridge:
             mean_shape = new_mean
             centered = aligned
         
-        return aligned, mean_shape
+        # Convert mean shape to vtkPoints
+        meanShapeVTK = self.convertPointsToVTK(mean_shape)
+        
+        # Convert aligned landmarks back to vtkMultiBlockDataSet
+        group = vtk.vtkMultiBlockDataGroupFilter()
+        for lm_array in aligned:
+            polydata = vtk.vtkPolyData()
+            points = self.convertPointsToVTK(lm_array)
+            polydata.SetPoints(points)
+            group.AddInputData(polydata)
+        group.Update()
+        
+        return meanShapeVTK, group.GetOutput()
     
     def getClosestToMeanIndex(self, meanShape, alignedPoints):
         """
         Find index of shape closest to mean.
         
         Args:
-            meanShape: numpy array (N, 3)
-            alignedPoints: List of numpy arrays (N, 3)
+            meanShape: vtkPoints or numpy array (N, 3)
+            alignedPoints: vtkMultiBlockDataSet or list of numpy arrays (N, 3)
             
         Returns:
             int: Index of closest shape
         """
+        import vtk
+        
+        # Convert meanShape to numpy if it's vtkPoints
+        if isinstance(meanShape, vtk.vtkPoints):
+            n_points = meanShape.GetNumberOfPoints()
+            meanShape_array = np.zeros((n_points, 3))
+            for j in range(n_points):
+                meanShape.GetPoint(j, meanShape_array[j, :])
+            meanShape = meanShape_array
+        
         min_dist = float('inf')
         closest_index = 0
         
-        for i, points in enumerate(alignedPoints):
-            dist = np.sum((points - meanShape)**2)
-            if dist < min_dist:
-                min_dist = dist
-                closest_index = i
+        # Handle vtkMultiBlockDataSet
+        if isinstance(alignedPoints, vtk.vtkMultiBlockDataSet):
+            for i in range(alignedPoints.GetNumberOfBlocks()):
+                polydata = alignedPoints.GetBlock(i)
+                points = polydata.GetPoints()
+                n_points = points.GetNumberOfPoints()
+                
+                # Convert to numpy for distance calculation
+                points_array = np.zeros((n_points, 3))
+                for j in range(n_points):
+                    points.GetPoint(j, points_array[j, :])
+                
+                dist = np.sum((points_array - meanShape)**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_index = i
+        else:
+            # Handle list of numpy arrays
+            for i, points in enumerate(alignedPoints):
+                dist = np.sum((points - meanShape)**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_index = i
         
         return closest_index
     
@@ -276,7 +330,7 @@ class ATLASShapeBridge:
             landmarkDirectory: Path to directory with .mrk.json files
             
         Returns:
-            str: Path to closest landmark file
+            str: Filename (not full path) of closest landmark file
         """
         import slicer
         
@@ -287,7 +341,7 @@ class ATLASShapeBridge:
         for filename in os.listdir(landmarkDirectory):
             if filename.endswith('.mrk.json') and not filename.startswith('.'):
                 filepath = os.path.join(landmarkDirectory, filename)
-                landmark_files.append(filepath)
+                landmark_files.append(filename)  # Store just filename, not full path
                 
                 # Load landmarks
                 node = slicer.util.loadMarkups(filepath)
@@ -300,8 +354,8 @@ class ATLASShapeBridge:
         if not landmarks_data:
             return None
         
-        # Perform Procrustes alignment
-        aligned, mean_shape = self.procrustesImposition(landmarks_data, sizeOption=False)
+        # Perform Procrustes alignment (returns: meanShapeVTK, alignedMultiBlock)
+        mean_shape, aligned = self.procrustesImposition(landmarks_data, sizeOption=False)
         
         # Find closest to mean
         closest_idx = self.getClosestToMeanIndex(mean_shape, aligned)
@@ -313,11 +367,13 @@ class ATLASShapeBridge:
         Compute average landmark positions from group.
         
         Args:
-            fiducialGroup: vtkMRMLMultiBlockDataGroupNode containing fiducials
+            fiducialGroup: vtkMultiBlockDataSet containing fiducials
             
         Returns:
-            numpy array: Average landmark positions (N, 3)
+            vtkMRMLMarkupsFiducialNode: Average landmark node
         """
+        import slicer
+        
         landmarks = []
         
         for i in range(fiducialGroup.GetNumberOfBlocks()):
@@ -331,7 +387,11 @@ class ATLASShapeBridge:
         if not landmarks:
             return None
         
-        return np.mean(landmarks, axis=0)
+        # Calculate mean positions
+        averagePoints = np.mean(landmarks, axis=0)
+        
+        # Convert to fiducial node
+        return self.numpyToFiducialNode(averagePoints, "Atlas Landmarks")
     
     # ==========================================================================
     # Model Averaging and Features

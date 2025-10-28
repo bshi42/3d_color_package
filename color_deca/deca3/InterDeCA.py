@@ -367,7 +367,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     multiRecolorTab = qt.QWidget()
     multiRecolorTabLayout = qt.QFormLayout(multiRecolorTab)
 
-    tabsWidget.addTab(DeCATab, "DeCA")
+    tabsWidget.addTab(DeCATab, "ATLAS")
     if SHOW_VISUALIZE_RESULTS:
       tabsWidget.addTab(visualizeTab, "Visualize Results")
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
@@ -543,10 +543,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCATabLayout.addRow("Progress: ", self.progressWidgetDC)
 
     #
-    # Run DeCA Button
+    # Run ATLAS Button
     #
-    self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")  # Creates main execution button
-    self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"  # Sets helpful tooltip
+    self.applyButtonDC = qt.QPushButton("Run ATLAS and Texture Transfer")  # Creates main execution button
+    self.applyButtonDC.toolTip = "Run ATLAS shape correspondence and texture transfer"  # Sets helpful tooltip
     self.applyButtonDC.enabled = False  # Disables until required inputs are provided
     self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('primary'))  # Applies primary button styling
     DeCATabLayout.addRow(self.applyButtonDC)  # Adds button to form layout
@@ -2776,7 +2776,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Hide unwanted models (planes, reference objects, etc.)
       self._hideUnwantedModels()
       
-      # Ensure only relevant DeCA models are visible
+      # Ensure only relevant ATLAS models are visible
       self._ensureModelsAreVisible()
       
       # Update the button text to indicate visualization is active
@@ -2796,29 +2796,29 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       os.makedirs(outputFolderDC)
 
       # Create main subdirectories
-      decaSubDir = os.path.join(outputFolderDC, "DeCA")
+      atlasSubDir = os.path.join(outputFolderDC, "ATLAS")
       colorAnalysisSubDir = os.path.join(outputFolderDC, "colorAnalysis")
-      os.makedirs(decaSubDir)
+      os.makedirs(atlasSubDir)
       os.makedirs(colorAnalysisSubDir)
 
-      # DeCA-only data goes in DeCA subdirectory
-      alignedLMFolderDC = os.path.join(decaSubDir, "alignedLMs")
+      # ATLAS shape correspondence data goes in ATLAS subdirectory
+      alignedLMFolderDC = os.path.join(atlasSubDir, "alignedLMs")
       os.makedirs(alignedLMFolderDC)
-      alignedModelFolderDC = os.path.join(decaSubDir, "alignedModels")
+      alignedModelFolderDC = os.path.join(atlasSubDir, "alignedModels")
       os.makedirs(alignedModelFolderDC)
 
-      tempLMFolderDC = os.path.join(decaSubDir, "tempAlignedLMs")
+      tempLMFolderDC = os.path.join(atlasSubDir, "tempAlignedLMs")
       os.makedirs(tempLMFolderDC)
-      tempModelFolderDC = os.path.join(decaSubDir, "tempAlignedModels")
+      tempModelFolderDC = os.path.join(atlasSubDir, "tempAlignedModels")
       os.makedirs(tempModelFolderDC)
 
-      # Resampled models (without UVs) are DeCA output
-      resampledModelFolderDC = os.path.join(decaSubDir, "resampledModels")
+      # Resampled models (without UVs) are ATLAS output
+      resampledModelFolderDC = os.path.join(atlasSubDir, "resampledModels")
       os.makedirs(resampledModelFolderDC)
 
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
-      fileNameDictionary['decaSubDir'] = str(decaSubDir)
+      fileNameDictionary['atlasSubDir'] = str(atlasSubDir)
       fileNameDictionary['colorAnalysisSubDir'] = str(colorAnalysisSubDir)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
@@ -2827,9 +2827,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
 
       if DeCALOption:
-        DeCALOutputFolder = os.path.join(decaSubDir, "DeCALOutput")
-        os.makedirs(DeCALOutputFolder)
-        fileNameDictionary['DeCALOutput'] = str(DeCALOutputFolder)
+        ATLASOutputFolder = os.path.join(atlasSubDir, "ATLASOutput")
+        os.makedirs(ATLASOutputFolder)
+        fileNameDictionary['ATLASOutput'] = str(ATLASOutputFolder)
     except:
       logging.debug('Result directory failed: Could not create output folder')
     return fileNameDictionary
@@ -3083,12 +3083,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
 
     # Saves the atlas model to the colorAnalysis directory for later use
-    atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
+    atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
 
     # Saves the atlas landmarks alongside the model
-    atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    atlasLMPath = os.path.join(self.folderNames['output'], 'atlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
 
@@ -3402,7 +3402,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Save an intermediate atlas file (RAS) so Blender can read it
     self.updateProgressDC(30, "Preparing atlas for UV mapping...")
-    atlas_preuv_obj = os.path.join(self.folderNames['decaSubDir'], 'decaAtlas_preUV.obj')
+    atlas_preuv_obj = os.path.join(self.folderNames['atlasSubDir'], 'atlasModel_preUV.obj')
     logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
 
     # ---- 2) Blender cleanup + Smart UV ----
@@ -3424,7 +3424,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       else:
         self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
       return
-    atlas_uv_obj = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasUV.obj')
+    atlas_uv_obj = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModelUV.obj')
     try:
       logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
                                   merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
@@ -3442,7 +3442,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Ensure the new atlas model is visible but clean (no texture initially)
     if self.atlasModel:
-      self.atlasModel.SetName("DeCA Atlas Model")
+      self.atlasModel.SetName("ATLAS Model")
       displayNode = self.atlasModel.GetDisplayNode()
       if displayNode:
         displayNode.SetVisibility(True)
@@ -3459,9 +3459,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
 
     # Save atlas landmarks & a copy of the atlas (PLY) for provenance
-    atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasLM.mrk.json')
+    atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasLM.mrk.json')
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-    atlasPlyPath  = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
+    atlasPlyPath  = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModel.ply')
     logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
 
     # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
@@ -3535,13 +3535,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Hide all landmarks for clean visualization
     self._hideAllLandmarks()
 
-    # Hide all other models except the DeCA Atlas Model
+    # Hide all other models except the ATLAS Model
     self._hideOtherModels()
 
     # Ensure the atlas model is prominent and clean (no texture/heatmap)
     if hasattr(self, 'atlasModel') and self.atlasModel:
       # Make sure atlas model has a clear name
-      self.atlasModel.SetName("DeCA Atlas Model")
+      self.atlasModel.SetName("ATLAS Model")
 
       # Ensure the model node itself is visible first
       self.atlasModel.SetDisplayVisibility(True)
@@ -3593,7 +3593,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       self.atlasModel.Modified()
 
-      self.logInfoDC.appendPlainText("DeCA Atlas Model displayed without texture or landmarks")
+      self.logInfoDC.appendPlainText("ATLAS Model displayed without texture or landmarks")
     else:
       self.logInfoDC.appendPlainText("Warning: Atlas model not found or not properly created")
 
@@ -3615,11 +3615,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if SHOW_VISUALIZE_RESULTS:
       self.updateBakedPreviewList()  # Updates preview list with results
 
-    # ---- 8) Update UI after DeCA completion ----
+    # ---- 8) Update UI after ATLAS completion ----
     self.updateUIAfterDeCACompletion()  # Refreshes UI elements
 
     # Reports success and resets UI state
-    self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")  # Shows success message
+    self.logInfoDC.appendPlainText("ATLAS analysis completed successfully!")  # Shows success message
     self.resetProgressDC()  # Resets progress bar
     self.applyButtonDC.enabled = True  # Re-enables run button
 
@@ -4009,38 +4009,38 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     Update UI components after DeCA completes successfully.
 
     This function:
-    1. Preselects the "DeCA Atlas Model" in Colors EDA, Recolor, and MultiRecolor tabs
+    1. Preselects the "ATLAS Model" in Colors EDA, Recolor, and MultiRecolor tabs
     2. Auto-populates texture directories with the baked textures path
     3. Switches to the Recolor tab automatically
     4. Auto-selects average_texture.png
     5. Auto-applies the texture
     6. Maximizes the 3D viewer
     """
-    self.logInfoDC.appendPlainText("Starting UI automation after DeCA completion...")
+    self.logInfoDC.appendPlainText("Starting UI automation after ATLAS completion...")
 
     try:
-      # Find the "DeCA Atlas Model" in the scene
-      decaAtlasModel = None
+      # Find the "ATLAS Model" in the scene
+      atlasModel = None
       try:
         for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
-          if model.GetName() == "DeCA Atlas Model":
-            decaAtlasModel = model
+          if model.GetName() == "ATLAS Model":
+            atlasModel = model
             break
       except Exception as e:
-        self.logInfoDC.appendPlainText(f"Warning: Error searching for DeCA Atlas Model: {e}")
+        self.logInfoDC.appendPlainText(f"Warning: Error searching for ATLAS Model: {e}")
 
-      if decaAtlasModel:
+      if atlasModel:
         try:
-          # Preselect the DeCA Atlas Model in all relevant tabs
-          self.colorsAtlasModelSelect.setCurrentNode(decaAtlasModel)
-          self.recolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
-          self.multiRecolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
+          # Preselect the ATLAS Model in all relevant tabs
+          self.colorsAtlasModelSelect.setCurrentNode(atlasModel)
+          self.recolorAtlasModelSelect.setCurrentNode(atlasModel)
+          self.multiRecolorAtlasModelSelect.setCurrentNode(atlasModel)
 
-          self.logInfoDC.appendPlainText("Auto-selected 'DeCA Atlas Model' in Colors EDA, Recolor, and MultiRecolor tabs")
+          self.logInfoDC.appendPlainText("Auto-selected 'ATLAS Model' in Colors EDA, Recolor, and MultiRecolor tabs")
         except Exception as e:
           self.logInfoDC.appendPlainText(f"Warning: Error setting atlas model selection: {e}")
       else:
-        self.logInfoDC.appendPlainText("Warning: Could not find 'DeCA Atlas Model' for auto-selection")
+        self.logInfoDC.appendPlainText("Warning: Could not find 'ATLAS Model' for auto-selection")
 
       # Auto-populate texture directories with baked textures path
       try:
@@ -4181,7 +4181,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"Traceback: {traceback.format_exc()}")
 
     # Final completion message
-    self.logInfoDC.appendPlainText("UI automation after DeCA completion finished.")
+    self.logInfoDC.appendPlainText("UI automation after ATLAS completion finished.")
 
 
   def onDCLApplyButton(self):
@@ -4273,12 +4273,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         pass
 
   def _hideOtherModels(self):
-    """Remove all models except the DeCA Atlas Model to prevent clutter"""
+    """Remove all models except the ATLAS Model to prevent clutter"""
     models_to_remove = []
     for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
       try:
-        # Only keep the DeCA Atlas Model
-        if model.GetName() != "DeCA Atlas Model":
+        # Only keep the ATLAS Model
+        if model.GetName() != "ATLAS Model":
           models_to_remove.append(model)
       except Exception:
         pass
@@ -5698,24 +5698,24 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     # Save the result model before removing baseNode from scene
     self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
-    outputModelName = 'decaResultModel.vtp'
-    outputModelPath = os.path.join(outputDirectory, "DeCA", outputModelName)
+    outputModelName = 'atlasResultModel.vtp'
+    outputModelPath = os.path.join(outputDirectory, "ATLAS", outputModelName)
 
     # Save the result model with error handling
     try:
       if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
         slicer.util.saveNode(baseNode, outputModelPath)
-        print(f"Successfully saved DeCA result model to: {outputModelPath}")
+        print(f"Successfully saved ATLAS result model to: {outputModelPath}")
       else:
         print(f"Warning: baseNode is not valid or not in scene, skipping save to {outputModelPath}")
     except Exception as e:
-      print(f"Warning: Failed to save DeCA result model to {outputModelPath}: {e}")
+      print(f"Warning: Failed to save ATLAS result model to {outputModelPath}: {e}")
 
     # Now remove baseNode from scene
     slicer.mrmlScene.RemoveNode(baseNode)
 
     #  Save resampled models (VTK/PLY) and OBJ copies that reuse atlas UV (for Blender bake)
-    resampledModelPath = os.path.join(outputDirectory, "DeCA", "resampledModels")
+    resampledModelPath = os.path.join(outputDirectory, "ATLAS", "resampledModels")
     if os.path.exists(resampledModelPath):
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
       outOBJdir = os.path.join(outputDirectory, "colorAnalysis", "resampledOBJ_withUV")
@@ -5759,7 +5759,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     denseCorrespondenceGroupMirror = self.denseCorrespondenceBaseMesh(mirrorLandmarks, mirrorModels, baseMesh, baseLandmarks)
     self.addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, self.modelNames, baseMesh)
     # save results to output directory
-    outputModelName = 'decaSymmetryResultModel.vtp'
+    outputModelName = 'atlasSymmetryResultModel.vtp'
     outputModelPath = os.path.join(outputDir, outputModelName)
     slicer.util.saveNode(baseNode, outputModelPath)
 
