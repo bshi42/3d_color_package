@@ -2536,6 +2536,300 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     return list(selectedVertices)
   
+  def _filterVerticesByPlaneSide(self, points, landmarkPositions, selectedVertices, polyData=None):
+    """Filter vertices to only include those on the same side of the plane as landmarks.
+    If landmarks are on both sides of the mesh, no filtering is applied (selects both sides).
+    If landmarks form a closed curve on one side, no filtering is applied (polygon selection is already correct)."""
+    import numpy as np
+
+    if len(landmarkPositions) < 3:
+      return selectedVertices
+
+    # Check if polygon selection captured too much of the mesh or too little
+    # If so, something went wrong and we should try filtering
+    numTotalPoints = points.GetNumberOfPoints()
+    selectionRatio = len(selectedVertices) / numTotalPoints if numTotalPoints > 0 else 0
+    polygonSelectionLikelyBad = selectionRatio > 0.5 or selectionRatio < 0.0001  # More than 50% or essentially nothing
+
+    print(f"DEBUG: Selection ratio = {len(selectedVertices)}/{numTotalPoints} = {selectionRatio*100:.1f}%, polygonSelectionLikelyBad = {polygonSelectionLikelyBad}")
+
+    if polygonSelectionLikelyBad:
+      print(f"Polygon selection looks wrong ({selectionRatio*100:.1f}% of mesh) - will attempt plane filtering")
+    
+    # Compute plane from landmarks using least squares fitting
+    landmarkPositions = np.array(landmarkPositions)
+    center = np.mean(landmarkPositions, axis=0)
+    centered = landmarkPositions - center
+    
+    # Compute covariance matrix
+    cov = np.cov(centered.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    
+    # Normal is the eigenvector with smallest eigenvalue (direction of least variance)
+    # This is the plane normal
+    idx = eigenvalues.argsort()
+    planeNormal = eigenvectors[:, idx[0]]
+    
+    # Normalize the plane normal
+    planeNormal = planeNormal / np.linalg.norm(planeNormal)
+    
+    # Check if landmarks are on one side or both sides using SURFACE NORMALS (more reliable)
+    # Surface normals will point in opposite directions if landmarks are on opposite sides of mesh
+    bothSidesDetected = False
+    surfaceNormalDirections = []
+    
+    if polyData is not None:
+      # Try to get surface normals
+      normals = None
+      if polyData.GetPointData().GetNormals():
+        normals = polyData.GetPointData().GetNormals()
+      else:
+        # Compute normals if they don't exist
+        try:
+          normalFilter = vtk.vtkPolyDataNormals()
+          normalFilter.SetInputData(polyData)
+          normalFilter.ComputePointNormalsOn()
+          normalFilter.ComputeCellNormalsOff()
+          normalFilter.Update()
+          output = normalFilter.GetOutput()
+          if output and output.GetPointData().GetNormals():
+            normals = output.GetPointData().GetNormals()
+        except:
+          pass
+      
+      if normals:
+        # Get surface normals at landmark positions to determine if landmarks are truly on both sides
+        surfaceNormals = []
+        for lmPos in landmarkPositions:
+          closestVertex = -1
+          minDist = float('inf')
+          for i in range(points.GetNumberOfPoints()):
+            vertex = points.GetPoint(i)
+            dist = vtk.vtkMath.Distance2BetweenPoints(lmPos, vertex)
+            if dist < minDist:
+              minDist = dist
+              closestVertex = i
+          
+          if closestVertex >= 0 and closestVertex < normals.GetNumberOfTuples():
+            normal = np.array(normals.GetTuple3(closestVertex))
+            # Normalize
+            normal = normal / (np.linalg.norm(normal) + 1e-10)
+            surfaceNormals.append(normal)
+            surfaceNormalDirections.append(normal)
+        
+        # Check if surface normals point in roughly opposite directions
+        # This indicates landmarks on opposite sides of the mesh
+        if len(surfaceNormals) >= 2:
+          # Compute average dot products between surface normals
+          # If some normals point one way and others point opposite, landmarks are on both sides
+          positiveAligned = 0
+          negativeAligned = 0
+          
+          for normal in surfaceNormals:
+            # Check alignment with plane normal
+            alignment = np.dot(normal, planeNormal)
+            if alignment > 0.3:  # Threshold for "aligned"
+              positiveAligned += 1
+            elif alignment < -0.3:  # Threshold for "opposed"
+              negativeAligned += 1
+          
+          # Also check dot products between normals themselves
+          # If normals point in opposite directions, their dot product will be negative
+          avgDotProduct = 0.0
+          if len(surfaceNormals) > 1:
+            dotProducts = []
+            for i in range(len(surfaceNormals)):
+              for j in range(i+1, len(surfaceNormals)):
+                dot = np.dot(surfaceNormals[i], surfaceNormals[j])
+                dotProducts.append(dot)
+            if len(dotProducts) > 0:
+              avgDotProduct = np.mean(dotProducts)
+          
+          # Require STRONG evidence of both sides:
+          # 1. Need at least 2 landmarks on each side (not just 1-2 total)
+          # 2. Average dot product should be strongly negative (< -0.5), indicating normals point in opposite directions
+          # A small negative value (~-0.1) just indicates surface curvature, not opposite sides
+          stronglyOpposed = avgDotProduct < -0.5
+          significantBothSides = positiveAligned >= 2 and negativeAligned >= 2
+          
+          if significantBothSides and stronglyOpposed:
+            print(f"Surface normals STRONGLY indicate landmarks on both sides (aligned: {positiveAligned}, opposed: {negativeAligned}, avg dot: {avgDotProduct:.3f}) - selecting both sides")
+            bothSidesDetected = True
+          elif avgDotProduct > -0.3:
+            # Average dot product is close to 0 or positive - normals point in similar directions
+            # Landmarks are likely all on one side (just some surface curvature from a closed curve)
+            # In this case, polygon selection is already correct - plane filtering would cut region in half
+            # BUT: if polygon selection is bad (captured whole mesh), we should still try filtering
+            if not polygonSelectionLikelyBad:
+              print(f"Surface normals indicate landmarks on ONE side (aligned: {positiveAligned}, opposed: {negativeAligned}, avg dot: {avgDotProduct:.3f}) - closed curve detected, SKIPPING plane filtering")
+              return selectedVertices
+            else:
+              print(f"Surface normals indicate landmarks on ONE side (aligned: {positiveAligned}, opposed: {negativeAligned}, avg dot: {avgDotProduct:.3f}) - but polygon selection is bad, will try plane filtering anyway")
+    
+    # Fallback: check plane-based detection only if we don't have surface normals
+    if not bothSidesDetected:
+      tolerance = 1e-4
+      landmarkSides = []
+      for lmPos in landmarkPositions:
+        vector = lmPos - center
+        distance = np.dot(vector, planeNormal)
+        if abs(distance) > tolerance:
+          landmarkSides.append(np.sign(distance))
+        else:
+          landmarkSides.append(0)
+
+      positiveSide = sum(1 for s in landmarkSides if s > 0)
+      negativeSide = sum(1 for s in landmarkSides if s < 0)
+      onPlane = sum(1 for s in landmarkSides if s == 0)
+
+      # IMPORTANT: When landmarks form a closed curve on ONE SIDE of the mesh,
+      # the PCA-fitted plane goes THROUGH the curve, splitting it 50/50
+      # This is NOT an indicator that landmarks are on both sides of the MESH!
+      # We should only trust this if there's a CLEAR imbalance (like 8+ on one side, 1-2 on other)
+      # Or if we have independent evidence from surface normals that they're truly on both sides
+
+      # Only trust plane-based detection if STRONGLY imbalanced (indicating truly different mesh sides)
+      if positiveSide >= 8 and negativeSide >= 8:  # Much stricter threshold
+        print(f"Landmarks strongly detected on both sides of plane ({positiveSide} positive, {negativeSide} negative, {onPlane} on plane) - selecting vertices from both sides")
+        bothSidesDetected = True
+      else:
+        # Even split (5/5) is likely a curve on one side, not two sides
+        # For a closed curve on one side, the polygon selection is already correct
+        # Plane filtering would incorrectly cut the region in half
+        # BUT: if polygon selection is bad (captured whole mesh), we should still try filtering
+        if not polygonSelectionLikelyBad:
+          print(f"Landmarks split by fitted plane ({positiveSide} positive, {negativeSide} negative, {onPlane} on plane) - likely single-side curve, SKIPPING plane filtering")
+          return selectedVertices
+        else:
+          print(f"Landmarks split by fitted plane ({positiveSide} positive, {negativeSide} negative, {onPlane} on plane) - but polygon selection is bad, will try plane filtering anyway")
+
+    if bothSidesDetected:
+      return selectedVertices
+    
+    # If all landmarks are on one side (or both-sides detection was false positive), proceed with filtering
+    
+    # Use surface normals at landmarks to determine which side contains the mesh surface
+    # Surface normals point outward from the mesh, so we want vertices on the opposite side
+    useSurfaceNormals = False
+    desiredSide = None
+    
+    if polyData is not None:
+      # Try to get surface normals (reuse if we already computed them above)
+      normals = None
+      if polyData.GetPointData().GetNormals():
+        normals = polyData.GetPointData().GetNormals()
+      else:
+        # Compute normals if they don't exist
+        try:
+          normalFilter = vtk.vtkPolyDataNormals()
+          normalFilter.SetInputData(polyData)
+          normalFilter.ComputePointNormalsOn()
+          normalFilter.ComputeCellNormalsOff()
+          normalFilter.Update()
+          output = normalFilter.GetOutput()
+          if output and output.GetPointData().GetNormals():
+            normals = output.GetPointData().GetNormals()
+        except:
+          pass
+      
+      if normals:
+        # For each landmark, find closest vertex and get its surface normal
+        surfaceNormalSum = np.zeros(3)
+        numFound = 0
+        
+        for lmPos in landmarkPositions:
+          closestVertex = -1
+          minDist = float('inf')
+          for i in range(points.GetNumberOfPoints()):
+            vertex = points.GetPoint(i)
+            dist = vtk.vtkMath.Distance2BetweenPoints(lmPos, vertex)
+            if dist < minDist:
+              minDist = dist
+              closestVertex = i
+          
+          if closestVertex >= 0 and closestVertex < normals.GetNumberOfTuples():
+            normal = normals.GetTuple3(closestVertex)
+            surfaceNormalSum += np.array(normal)
+            numFound += 1
+        
+        if numFound > 0:
+          # Average surface normal
+          avgSurfaceNormal = surfaceNormalSum / numFound
+          avgSurfaceNormal = avgSurfaceNormal / (np.linalg.norm(avgSurfaceNormal) + 1e-10)
+          
+          # Surface normals point outward from the mesh surface
+          # Landmarks are placed on the surface, and we want to select vertices on the SAME side as landmarks
+          # The key insight: if surface normals and plane normal align, plane normal points outward too
+          # So mesh vertices are on the OPPOSITE side from where plane normal points
+          normalAlignment = np.dot(avgSurfaceNormal, planeNormal)
+          
+          # Strategy: Surface normals point OUTWARD (away from interior)
+          # Landmarks are on the SURFACE (exterior)
+          # We want to select vertices on the EXTERIOR side (where landmarks are), NOT interior
+          # 
+          # If surface normal aligns with plane normal (both point outward),
+          # then exterior is on the positive side, so select positive
+          # If they oppose, exterior is on negative side, so select negative
+          desiredSide = 1 if normalAlignment > 0 else -1
+          useSurfaceNormals = True
+          
+          print(f"Using surface normals: alignment={normalAlignment:.3f}, selecting EXTERIOR side={desiredSide} (same side as landmarks on surface)")
+    
+    # Fallback: use landmark positions if we couldn't use surface normals
+    if not useSurfaceNormals:
+      # Landmarks are approximately on the plane (from fitting)
+      # Use which side has the majority of landmarks (after accounting for plane fitting)
+      # Since the plane is fit through landmarks, they should be roughly balanced
+      # But we want the side where the mesh surface actually is
+      # Try a different approach: find which side of the plane has more mesh vertices
+      # and assume that's where landmarks were placed
+      positiveCount = 0
+      negativeCount = 0
+      for vertexIdx in selectedVertices[:min(100, len(selectedVertices))]:  # Sample first 100 vertices
+        vertex = np.array(points.GetPoint(vertexIdx))
+        vertexVector = vertex - center
+        side = np.dot(vertexVector, planeNormal)
+        if side > 1e-6:
+          positiveCount += 1
+        elif side < -1e-6:
+          negativeCount += 1
+      
+      # Select the side with more vertices (this should be where the mesh is)
+      # But actually, landmarks are on the surface, so we want the side closest to landmarks
+      # Try using the landmark positions relative to center
+      avgLandmarkPos = np.mean(landmarkPositions, axis=0)
+      referenceVector = avgLandmarkPos - center
+      landmarkSide = np.dot(referenceVector, planeNormal)
+      
+      # If landmarks are very close to the plane, use vertex distribution instead
+      if abs(landmarkSide) < 1e-4:
+        # When landmarks form a closed curve, the fitted plane goes through them
+        # So we need a smarter approach: select the side with FEWER vertices
+        # because the region inside the curve (e.g., fish head) is typically smaller
+        # than the rest of the mesh (e.g., fish body)
+        desiredSide = -1 if positiveCount > negativeCount else 1
+        print(f"Landmarks near plane (closed curve detected), using SMALLER region: positive={positiveCount}, negative={negativeCount}, selecting side={desiredSide} (inverse of majority)")
+      else:
+        # Landmarks are on the OUTSIDE surface (exterior)
+        # We want to select vertices on the EXTERIOR side (where landmarks are), NOT the interior
+        # If landmarks are slightly on positive side of plane, select positive (exterior)
+        # If landmarks are slightly on negative side, select negative (exterior)
+        desiredSide = np.sign(landmarkSide) if abs(landmarkSide) > 1e-6 else 1
+        print(f"Using landmark positions: landmarkSide={landmarkSide:.6f}, selecting EXTERIOR side={desiredSide} (same side as landmarks on surface)")
+    
+    # Filter selected vertices to only include those on the correct side
+    filteredVertices = []
+    for vertexIdx in selectedVertices:
+      vertex = np.array(points.GetPoint(vertexIdx))
+      vertexVector = vertex - center
+      vertexSide = np.dot(vertexVector, planeNormal)
+      
+      # Include vertex if it's on the correct side
+      if desiredSide * vertexSide > 0:
+        filteredVertices.append(vertexIdx)
+    
+    return filteredVertices
+
   def selectMeshRegionByPolygonArea(self, modelNode, markupNode, selectedPointIndices):
     """Select mesh vertices in the region bounded by landmarks using geodesic flood fill"""
     import numpy as np
@@ -2759,12 +3053,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     print(f"Flood fill selected {len(selectedVertices)} vertices from {len(landmarkVertices)} landmarks")
     print(f"Processed {verticesProcessed} vertices, made {expansions} expansions, max queue size: {maxQueueSize}")
-    return list(selectedVertices)
+    
+    # Filter vertices to only include those on the same side of the plane as landmarks
+    filteredVertices = self._filterVerticesByPlaneSide(points, landmarkPositions, list(selectedVertices), polyData)
+    print(f"After plane side filtering: {len(filteredVertices)} vertices")
+    return filteredVertices
 
   def selectMeshRegionByPolygonArea(self, modelNode, markupNode, selectedPointIndices):
-    """Select mesh vertices using polygon + texture similarity refinement"""
+    """Select mesh vertices using geodesic distance from landmarks forming a boundary"""
     import numpy as np
-    from scipy.spatial import Delaunay
 
     # Get mesh data
     polyData = modelNode.GetPolyData()
@@ -2780,49 +3077,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     landmarkPositions = np.array(landmarkPositions)
 
-    # STEP 1: Polygon-based selection using PCA + Delaunay
-    center = np.mean(landmarkPositions, axis=0)
-    centered = landmarkPositions - center
-
-    # Compute covariance matrix for PCA
-    cov = np.cov(centered.T)
-    eigenvalues, eigenvectors = np.linalg.eigh(cov)
-
-    # Sort by eigenvalues (largest first)
-    idx = eigenvalues.argsort()[::-1]
-    eigenvectors = eigenvectors[:, idx]
-
-    # Project landmarks onto 2D plane
-    landmarks2D = centered @ eigenvectors[:, :2]
-
-    # Create Delaunay triangulation
-    try:
-      delaunay = Delaunay(landmarks2D)
-    except Exception as e:
-      print(f"Warning: Could not create Delaunay triangulation: {e}")
-      return self._fallbackSpatialSelection(modelNode, markupNode, selectedPointIndices)
-
-    # Get initial polygon selection
-    polygonVertices = set()
-    for i in range(numPoints):
-      vertex = np.array(points.GetPoint(i))
-      vertex_centered = vertex - center
-      vertex2D = vertex_centered @ eigenvectors[:, :2]
-
-      if delaunay.find_simplex(vertex2D) >= 0:
-        polygonVertices.add(i)
-
-    print(f"Polygon selection: {len(polygonVertices)} vertices")
-
-    # STEP 2: Texture similarity refinement on boundary vertices
-    colorArray = polyData.GetPointData().GetScalars()
-    if not colorArray:
-      print("No texture data - using polygon selection only")
-      return list(polygonVertices)
-
-    # Find landmark vertices and get their colors
+    # STEP 1: Find landmark vertices (closest mesh vertices to landmark positions)
     landmarkVertices = []
-    for lmPos in landmarkPositions:
+    landmarkMinDists = []
+    for lmIdx, lmPos in enumerate(landmarkPositions):
       closestVertex = -1
       minDist = float('inf')
       for i in range(numPoints):
@@ -2833,8 +3091,195 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           closestVertex = i
       if closestVertex >= 0:
         landmarkVertices.append(closestVertex)
+        landmarkMinDists.append(np.sqrt(minDist))  # Convert from squared distance
+        if lmIdx < 3:  # Debug first 3
+          print(f"  Landmark {lmIdx}: pos={lmPos}, closest vertex={closestVertex}, dist={np.sqrt(minDist):.6f}")
 
-    # Get reference color from landmarks
+    print(f"Found {len(landmarkVertices)} landmark vertices on mesh")
+    print(f"  Distance from landmarks to mesh: min={min(landmarkMinDists):.6f}, max={max(landmarkMinDists):.6f}, avg={np.mean(landmarkMinDists):.6f}")
+
+    # Debug: check the actual spatial extent
+    allVertexPositions = np.array([points.GetPoint(i) for i in range(min(1000, numPoints))])
+    meshBBox = {
+      'min': np.min(allVertexPositions, axis=0),
+      'max': np.max(allVertexPositions, axis=0),
+      'range': np.max(allVertexPositions, axis=0) - np.min(allVertexPositions, axis=0)
+    }
+    print(f"Mesh bounding box range: X={meshBBox['range'][0]:.2f}, Y={meshBBox['range'][1]:.2f}, Z={meshBBox['range'][2]:.2f}")
+
+    # STEP 2: Build mesh adjacency
+    adjacency = [set() for _ in range(numPoints)]
+    for i in range(polyData.GetNumberOfCells()):
+      cell = polyData.GetCell(i)
+      pointIds = cell.GetPointIds()
+      numCellPoints = pointIds.GetNumberOfIds()
+      for j in range(numCellPoints):
+        p1 = pointIds.GetId(j)
+        p2 = pointIds.GetId((j + 1) % numCellPoints)
+        adjacency[p1].add(p2)
+        adjacency[p2].add(p1)
+
+    # STEP 3: Flood fill from center, stopping when we get close to ANY landmark
+    # Strategy: Stop expansion when getting too close to the landmark curve
+    # This prevents crossing the boundary without relying on mesh edge connectivity
+
+    from collections import deque
+
+    # Calculate center of landmarks
+    center = np.mean(landmarkPositions, axis=0)
+
+    # Find the vertex closest to center as starting point
+    centerVertex = -1
+    minDistToCenter = float('inf')
+    for i in range(numPoints):
+      vertex = np.array(points.GetPoint(i))
+      dist = np.linalg.norm(vertex - center)
+      if dist < minDistToCenter:
+        minDistToCenter = dist
+        centerVertex = i
+
+    if centerVertex == -1:
+      print("ERROR: Could not find center vertex for flood fill")
+      return []
+
+    print(f"Starting flood fill from center vertex {centerVertex}, dist to center: {minDistToCenter:.2f}")
+
+    # Compute distances from center to landmarks
+    landmarkDists = [np.linalg.norm(pos - center) for pos in landmarkPositions]
+    maxLandmarkDist = max(landmarkDists)
+    minLandmarkDist = min(landmarkDists)
+    avgLandmarkDist = np.mean(landmarkDists)
+
+    print(f"Landmark distances from center: min={minLandmarkDist:.2f}, avg={avgLandmarkDist:.2f}, max={maxLandmarkDist:.2f}")
+
+    # Compute typical edge length in the mesh (for determining when we're "close" to landmarks)
+    landmarkSet = set(landmarkVertices)
+    landmarkPositionsArray = [np.array(points.GetPoint(v)) for v in landmarkVertices]
+
+    # Estimate mesh resolution near landmarks
+    edgeLengths = []
+    for lv in landmarkVertices[:min(3, len(landmarkVertices))]:
+      for neighbor in adjacency[lv]:
+        p1 = np.array(points.GetPoint(lv))
+        p2 = np.array(points.GetPoint(neighbor))
+        edgeLengths.append(np.linalg.norm(p2 - p1))
+
+    if edgeLengths:
+      avgEdgeLength = np.mean(edgeLengths)
+      print(f"Average edge length near landmarks: {avgEdgeLength:.4f}")
+      stopDistance = avgEdgeLength * 5  # Stop when within 5 edge lengths of any landmark
+    else:
+      stopDistance = maxLandmarkDist * 0.2  # Fallback - 20% of max distance
+
+    print(f"Stop distance from landmarks: {stopDistance:.4f}")
+
+    # The mesh is at a small scale, so distances appear tiny
+    # But the relative proportions are what matter
+    # Let's use the average landmark distance as the selection radius (not 3x)
+
+    print(f"Using avgLandmarkDist as selection radius: {avgLandmarkDist:.4f}")
+
+    # Select vertices within average landmark distance from center
+    spatialRadius = avgLandmarkDist * 1.1  # 10% expansion
+    polygonVertices = set()
+    for i in range(numPoints):
+      vertex = np.array(points.GetPoint(i))
+      distFromCenter = np.linalg.norm(vertex - center)
+      if distFromCenter <= spatialRadius:
+        polygonVertices.add(i)
+
+    print(f"Spatial selection with radius {spatialRadius:.4f}: {len(polygonVertices)} vertices")
+
+    # Check if selection is reasonable (between 0.1% and 40% of mesh)
+    selectionRatio = len(polygonVertices) / numPoints
+    if selectionRatio > 0.4:
+      # Too much - try smaller radius
+      spatialRadius = avgLandmarkDist * 0.8
+      polygonVertices = set()
+      for i in range(numPoints):
+        vertex = np.array(points.GetPoint(i))
+        distFromCenter = np.linalg.norm(vertex - center)
+        if distFromCenter <= spatialRadius:
+          polygonVertices.add(i)
+      print(f"Selection too large, reduced radius to {spatialRadius:.4f}: {len(polygonVertices)} vertices")
+    elif selectionRatio < 0.001:
+      # Too little - try larger radius
+      spatialRadius = avgLandmarkDist * 1.5
+      polygonVertices = set()
+      for i in range(numPoints):
+        vertex = np.array(points.GetPoint(i))
+        distFromCenter = np.linalg.norm(vertex - center)
+        if distFromCenter <= spatialRadius:
+          polygonVertices.add(i)
+      print(f"Selection too small, increased radius to {spatialRadius:.4f}: {len(polygonVertices)} vertices")
+
+    polygonVerticesList = list(polygonVertices)
+    print(f"Final selection: {len(polygonVerticesList)} vertices ({len(polygonVerticesList)/numPoints*100:.1f}% of mesh)")
+    print(f"Skipping plane side filtering for spatial selection")
+
+    # Return early - skip flood fill and texture refinement
+    return polygonVerticesList
+
+    # Flood fill from center
+    queue = deque([centerVertex])
+    visited = {centerVertex}
+    polygonVertices = {centerVertex}
+
+    # Max distance constraint
+    maxAllowedDist = maxLandmarkDist * 1.2
+
+    iterations = 0
+    maxIterations = numPoints
+
+    while queue and iterations < maxIterations:
+      iterations += 1
+      current = queue.popleft()
+      currentPos = np.array(points.GetPoint(current))
+
+      # Explore neighbors
+      for neighbor in adjacency[current]:
+        if neighbor in visited:
+          continue
+
+        visited.add(neighbor)
+        neighborPos = np.array(points.GetPoint(neighbor))
+
+        # Check if neighbor is too close to any landmark (except if we're very close to center)
+        distFromCenter = np.linalg.norm(neighborPos - center)
+
+        # Don't apply landmark proximity check if we're very close to center
+        if distFromCenter > stopDistance:
+          minDistToLandmark = min([np.linalg.norm(neighborPos - lmPos) for lmPos in landmarkPositionsArray])
+          if minDistToLandmark < stopDistance:
+            # Too close to landmark boundary - don't expand here
+            continue
+
+        # Check distance constraint from center
+        if distFromCenter > maxAllowedDist:
+          continue
+
+        # Add to selection and continue expanding
+        polygonVertices.add(neighbor)
+        queue.append(neighbor)
+
+      if iterations >= maxIterations:
+        print(f"WARNING: Flood fill hit max iterations ({maxIterations})")
+        break
+
+    print(f"Flood fill selection: {len(polygonVertices)} vertices (iterations: {iterations})")
+
+    # Don't apply plane filtering - the flood fill with boundary edges already constrains the selection
+    # Plane filtering would incorrectly cut the region in half
+    polygonVerticesList = list(polygonVertices)
+    print(f"Skipping plane side filtering for flood fill (selection already bounded by landmark edges)")
+    
+    # STEP 4: Texture similarity refinement on boundary vertices (optional)
+    colorArray = polyData.GetPointData().GetScalars()
+    if not colorArray:
+      print("No texture data - using flood fill selection only")
+      return polygonVerticesList
+
+    # Get reference color from landmarks (already found in STEP 1)
     landmarkColors = []
     numComponents = colorArray.GetNumberOfComponents()
     for vIdx in landmarkVertices:
@@ -2890,7 +3335,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         refinedVertices.discard(vIdx)
 
     print(f"After texture refinement: {len(refinedVertices)} vertices")
-    return list(refinedVertices)
+    
+    # Filter refined vertices to only include those on the same side of the plane as landmarks
+    finalVertices = self._filterVerticesByPlaneSide(points, landmarkPositions.tolist(), list(refinedVertices), polyData)
+    print(f"After plane side filtering: {len(finalVertices)} vertices")
+    return finalVertices
 
   def _fallbackSpatialSelection(self, modelNode, markupNode, selectedPointIndices):
     """Fallback to spatial selection if no texture data available"""
@@ -2916,7 +3365,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if dist <= maxDist * 1.2:
         selectedVertices.add(i)
 
-    return list(selectedVertices)
+    # Filter vertices to only include those on the same side of the plane as landmarks
+    filteredVertices = self._filterVerticesByPlaneSide(points, landmarkPositions.tolist(), list(selectedVertices), polyData)
+    print(f"After plane side filtering: {len(filteredVertices)} vertices")
+    return filteredVertices
 
   def createClosedCurveFromPoints(self, markupNode, selectedPointIndices):
     """Convert landmark points to closed curve markup for Slicer's Curve Cut"""
@@ -2928,6 +3380,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       markupNode.GetNthControlPointPosition(idx, pos)
       curveNode.AddControlPoint(pos)
 
+    print(f"DEBUG: Created closed curve with {curveNode.GetNumberOfControlPoints()} points")
+
+    # Set curve properties for better cutting
+    curveNode.SetCurveTypeToLinear()  # Use linear interpolation between points
+
     return curveNode
 
   def mapCutModelToOriginalVertices(self, originalModel, cutModel):
@@ -2935,8 +3392,16 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     originalPolyData = originalModel.GetPolyData()
     cutPolyData = cutModel.GetPolyData()
 
+    # Check if polydata exists
+    if not cutPolyData or not originalPolyData:
+      return []
+
     originalPoints = originalPolyData.GetPoints()
     cutPoints = cutPolyData.GetPoints()
+
+    # Check if points exist
+    if not cutPoints or not originalPoints:
+      return []
 
     selectedVertices = []
 
@@ -2954,19 +3419,60 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     return selectedVertices
 
+  def projectCurveOntoMesh(self, curveNode, modelNode):
+    """Project curve control points onto mesh surface to ensure proper Curve Cut operation"""
+    import numpy as np
+
+    polyData = modelNode.GetPolyData()
+    if not polyData:
+      return
+
+    # Create a cell locator for finding closest points on mesh
+    cellLocator = vtk.vtkCellLocator()
+    cellLocator.SetDataSet(polyData)
+    cellLocator.BuildLocator()
+
+    # Project each control point onto the mesh surface
+    numPoints = curveNode.GetNumberOfControlPoints()
+    for i in range(numPoints):
+      pos = [0, 0, 0]
+      curveNode.GetNthControlPointPosition(i, pos)
+
+      # Find closest point on mesh surface
+      closestPoint = [0, 0, 0]
+      cellId = vtk.mutable(0)
+      subId = vtk.mutable(0)
+      dist2 = vtk.mutable(0.0)
+
+      cellLocator.FindClosestPoint(pos, closestPoint, cellId, subId, dist2)
+
+      # Update control point position to projected position
+      curveNode.SetNthControlPointPosition(i, closestPoint[0], closestPoint[1], closestPoint[2])
+
+    print(f"DEBUG: Projected {numPoints} curve points onto mesh surface")
+
   def selectMeshRegionByExistingCurve(self, modelNode, curveNode):
     """Use existing closed curve markup with Slicer's Dynamic Modeler Curve Cut"""
+    import numpy as np
 
-    # 1. Setup Dynamic Modeler
+    # 1. Project curve onto mesh surface for better cutting
+    # This is often necessary for Curve Cut to work properly
+    self.projectCurveOntoMesh(curveNode, modelNode)
+
+    # 2. Setup Dynamic Modeler
     dynamicModelerNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLDynamicModelerNode")
     dynamicModelerNode.SetToolName("Curve cut")
     dynamicModelerNode.SetNodeReferenceID("CurveCut.InputModel", modelNode.GetID())
     dynamicModelerNode.SetNodeReferenceID("CurveCut.InputCurve", curveNode.GetID())
 
-    # 2. Create output model nodes
+    # 2. Create output model nodes for BOTH inside and outside
     insideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
     insideModel.SetName("TempInsideModel")
     dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputInsideModel", insideModel.GetID())
+
+    outsideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+    outsideModel.SetName("TempOutsideModel")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputOutsideModel", outsideModel.GetID())
 
     # 3. Set parameters - use straight cut for cleaner boundaries
     dynamicModelerNode.SetAttribute("CurveCut.StraightCut", "true")
@@ -2975,14 +3481,73 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     try:
       slicer.modules.dynamicmodeler.logic().RunDynamicModelerTool(dynamicModelerNode)
 
-      # 5. Get vertex indices from the inside model
-      selectedVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+      # Debug: Check if models have polydata
+      insidePolyData = insideModel.GetPolyData()
+      outsidePolyData = outsideModel.GetPolyData()
 
-      numPoints = curveNode.GetNumberOfControlPoints()
-      print(f"Selection method: Slicer Curve Cut (closed curve with {numPoints} points, {len(selectedVertices)} vertices selected)")
+      print(f"DEBUG Curve Cut: Inside model polydata: {insidePolyData is not None}")
+      if insidePolyData:
+        print(f"  Inside model points: {insidePolyData.GetNumberOfPoints()}")
+      print(f"DEBUG Curve Cut: Outside model polydata: {outsidePolyData is not None}")
+      if outsidePolyData:
+        print(f"  Outside model points: {outsidePolyData.GetNumberOfPoints()}")
 
-      # 6. Cleanup temporary nodes
+      # 5. Get vertex indices from BOTH models
+      insideVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+      outsideVertices = self.mapCutModelToOriginalVertices(modelNode, outsideModel)
+
+      print(f"DEBUG Curve Cut: Mapped inside vertices: {len(insideVertices)}")
+      print(f"DEBUG Curve Cut: Mapped outside vertices: {len(outsideVertices)}")
+
+      # Check if we got valid results
+      if len(insideVertices) == 0 and len(outsideVertices) == 0:
+        raise Exception("Curve cut produced no vertices in either model")
+
+      # 6. Get curve points to determine which side to select
+      # Calculate the center of the curve to use as reference
+      numCurvePoints = curveNode.GetNumberOfControlPoints()
+      curveCenter = np.zeros(3)
+      for i in range(numCurvePoints):
+        pos = [0, 0, 0]
+        curveNode.GetNthControlPointPosition(i, pos)
+        curveCenter += np.array(pos)
+      curveCenter /= numCurvePoints
+
+      # 7. Determine which model is closer to the curve (should be the one we want)
+      # Calculate average distance from curve center to vertices in each model
+      polyData = modelNode.GetPolyData()
+      points = polyData.GetPoints()
+
+      def avgDistanceFromCenter(vertices, center, points):
+        if len(vertices) == 0:
+          return float('inf')
+        distances = []
+        # Sample up to 100 vertices for efficiency
+        for v in vertices[:min(100, len(vertices))]:
+          pt = np.array(points.GetPoint(v))
+          distances.append(np.linalg.norm(pt - center))
+        return np.mean(distances)
+
+      insideAvgDist = avgDistanceFromCenter(insideVertices, curveCenter, points)
+      outsideAvgDist = avgDistanceFromCenter(outsideVertices, curveCenter, points)
+
+      # 8. Select the model that's closer to the curve landmarks
+      # The region we want should contain vertices closer to where we drew the curve
+      if insideAvgDist < outsideAvgDist:
+        selectedVertices = insideVertices
+        selectedSide = "inside"
+      else:
+        selectedVertices = outsideVertices
+        selectedSide = "outside"
+
+      print(f"Selection method: Slicer Curve Cut (closed curve with {numCurvePoints} points)")
+      print(f"  Inside model: {len(insideVertices)} vertices (avg dist: {insideAvgDist:.2f})")
+      print(f"  Outside model: {len(outsideVertices)} vertices (avg dist: {outsideAvgDist:.2f})")
+      print(f"  Selected: {selectedSide} model with {len(selectedVertices)} vertices")
+
+      # 9. Cleanup temporary nodes
       slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(outsideModel)
       slicer.mrmlScene.RemoveNode(dynamicModelerNode)
 
       return selectedVertices
@@ -2990,25 +3555,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       # Cleanup on failure
       slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(outsideModel)
       slicer.mrmlScene.RemoveNode(dynamicModelerNode)
       raise e
 
   def selectMeshRegionByCurveCut(self, modelNode, markupNode, selectedPointIndices):
     """Use Slicer's Dynamic Modeler Curve Cut for mesh region selection (creates curve from landmarks)"""
+    import numpy as np
 
     # 1. Create closed curve from selected landmarks
     curveNode = self.createClosedCurveFromPoints(markupNode, selectedPointIndices)
 
-    # 2. Setup Dynamic Modeler
+    # 2. Project curve onto mesh surface for better cutting
+    self.projectCurveOntoMesh(curveNode, modelNode)
+
+    # 3. Setup Dynamic Modeler
     dynamicModelerNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLDynamicModelerNode")
     dynamicModelerNode.SetToolName("Curve cut")
     dynamicModelerNode.SetNodeReferenceID("CurveCut.InputModel", modelNode.GetID())
     dynamicModelerNode.SetNodeReferenceID("CurveCut.InputCurve", curveNode.GetID())
 
-    # 3. Create output model nodes
+    # 3. Create output model nodes for BOTH inside and outside
     insideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
     insideModel.SetName("TempInsideModel")
     dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputInsideModel", insideModel.GetID())
+
+    outsideModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+    outsideModel.SetName("TempOutsideModel")
+    dynamicModelerNode.SetNodeReferenceID("CurveCut.OutputOutsideModel", outsideModel.GetID())
 
     # 4. Set parameters - use straight cut for cleaner boundaries
     dynamicModelerNode.SetAttribute("CurveCut.StraightCut", "true")
@@ -3017,14 +3591,59 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     try:
       slicer.modules.dynamicmodeler.logic().RunDynamicModelerTool(dynamicModelerNode)
 
-      # 6. Get vertex indices from the inside model
-      selectedVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+      # 6. Get vertex indices from BOTH models
+      insideVertices = self.mapCutModelToOriginalVertices(modelNode, insideModel)
+      outsideVertices = self.mapCutModelToOriginalVertices(modelNode, outsideModel)
 
-      print(f"Selection method: Slicer Curve Cut ({len(selectedPointIndices)} landmarks, {len(selectedVertices)} vertices selected)")
+      # Check if we got valid results
+      if len(insideVertices) == 0 and len(outsideVertices) == 0:
+        raise Exception("Curve cut produced no vertices in either model")
 
-      # 7. Cleanup temporary nodes
+      # 7. Get landmark positions to determine which side to select
+      polyData = modelNode.GetPolyData()
+      points = polyData.GetPoints()
+
+      landmarkPositions = []
+      for idx in selectedPointIndices:
+        pos = [0, 0, 0]
+        markupNode.GetNthControlPointPosition(idx, pos)
+        landmarkPositions.append(np.array(pos))
+
+      # Calculate center of landmarks
+      landmarkCenter = np.mean(landmarkPositions, axis=0)
+
+      # 8. Determine which model contains vertices closer to the landmarks
+      def avgDistanceFromCenter(vertices, center, points):
+        if len(vertices) == 0:
+          return float('inf')
+        distances = []
+        # Sample up to 100 vertices for efficiency
+        for v in vertices[:min(100, len(vertices))]:
+          pt = np.array(points.GetPoint(v))
+          distances.append(np.linalg.norm(pt - center))
+        return np.mean(distances)
+
+      insideAvgDist = avgDistanceFromCenter(insideVertices, landmarkCenter, points)
+      outsideAvgDist = avgDistanceFromCenter(outsideVertices, landmarkCenter, points)
+
+      # 9. Select the model that's closer to the landmarks
+      # The region we want should contain vertices closer to where we placed the landmarks
+      if insideAvgDist < outsideAvgDist:
+        selectedVertices = insideVertices
+        selectedSide = "inside"
+      else:
+        selectedVertices = outsideVertices
+        selectedSide = "outside"
+
+      print(f"Selection method: Slicer Curve Cut ({len(selectedPointIndices)} landmarks)")
+      print(f"  Inside model: {len(insideVertices)} vertices (avg dist: {insideAvgDist:.2f})")
+      print(f"  Outside model: {len(outsideVertices)} vertices (avg dist: {outsideAvgDist:.2f})")
+      print(f"  Selected: {selectedSide} model with {len(selectedVertices)} vertices")
+
+      # 10. Cleanup temporary nodes
       slicer.mrmlScene.RemoveNode(curveNode)
       slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(outsideModel)
       slicer.mrmlScene.RemoveNode(dynamicModelerNode)
 
       return selectedVertices
@@ -3033,6 +3652,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Cleanup on failure
       slicer.mrmlScene.RemoveNode(curveNode)
       slicer.mrmlScene.RemoveNode(insideModel)
+      slicer.mrmlScene.RemoveNode(outsideModel)
       slicer.mrmlScene.RemoveNode(dynamicModelerNode)
       raise e
 
