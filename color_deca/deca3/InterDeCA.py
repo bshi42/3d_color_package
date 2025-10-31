@@ -1432,6 +1432,36 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     dimReductionWidget.setLayout(dimReductionLayout)
     populationWidgetLayout.addRow("Dimensionality Reduction: ", dimReductionWidget)
 
+    # Number of PCs for PCA (similar to PCA Morphospace tab)
+    self.multiRecolorNumPCsSpin = qt.QSpinBox()
+    self.multiRecolorNumPCsSpin.setMinimum(2)
+    self.multiRecolorNumPCsSpin.setMaximum(10)
+    self.multiRecolorNumPCsSpin.setValue(2)
+    self.multiRecolorNumPCsSpin.setToolTip("Number of principal components to compute (only for PCA)")
+    self.multiRecolorNumPCsSpin.connect("valueChanged(int)", self.onMultiRecolorNumPCsChanged)
+    populationWidgetLayout.addRow("Number of PCs: ", self.multiRecolorNumPCsSpin)
+
+    # PC axis selection for plotting
+    axisLayout = qt.QHBoxLayout()
+
+    axisLayout.addWidget(qt.QLabel("X-axis:"))
+    self.multiRecolorXAxisCombo = qt.QComboBox()
+    self.multiRecolorXAxisCombo.setToolTip("Select PC for X-axis")
+    self.multiRecolorXAxisCombo.enabled = False
+    self.multiRecolorXAxisCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
+    axisLayout.addWidget(self.multiRecolorXAxisCombo)
+
+    axisLayout.addWidget(qt.QLabel("Y-axis:"))
+    self.multiRecolorYAxisCombo = qt.QComboBox()
+    self.multiRecolorYAxisCombo.setToolTip("Select PC for Y-axis")
+    self.multiRecolorYAxisCombo.enabled = False
+    self.multiRecolorYAxisCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
+    axisLayout.addWidget(self.multiRecolorYAxisCombo)
+
+    axisWidget = qt.QWidget()
+    axisWidget.setLayout(axisLayout)
+    populationWidgetLayout.addRow("Plot Axes: ", axisWidget)
+
     # Compare textures button
     self.compareTexturesButton = qt.QPushButton("Compare Textures")
     self.compareTexturesButton.setToolTip("Analyze all textures and create population comparison plot")
@@ -1460,6 +1490,85 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.individualTextureSelector.connect("currentTextChanged(const QString &)", self.onIndividualTextureChanged)
     self.applyIndividualTextureButton.connect('clicked(bool)', self.onApplyIndividualTextureButton)
     self.compareTexturesButton.connect('clicked(bool)', self.onCompareTexturesButton)
+    self.multiRecolorXAxisCombo.connect('currentIndexChanged(int)', self.onMultiRecolorAxisChanged)
+    self.multiRecolorYAxisCombo.connect('currentIndexChanged(int)', self.onMultiRecolorAxisChanged)
+
+    # Initialize PC axis selectors with default values
+    self.onMultiRecolorNumPCsChanged()
+
+    # Initialize storage for population analysis result
+    self.multiRecolorPopulationResult = None
+
+    # ========== Step 4: Morphospace ==========
+    morphospaceWidget = ctk.ctkCollapsibleButton()
+    morphospaceWidget.text = "Step 4: Morphospace"
+    morphospaceWidget.collapsed = True
+    multiRecolorTabLayout.addWidget(morphospaceWidget)
+    morphospaceWidgetLayout = qt.QFormLayout(morphospaceWidget)
+
+    # Starting texture selector
+    self.morphospaceTextureCombo = qt.QComboBox()
+    self.morphospaceTextureCombo.setToolTip("Select a texture as the starting point in PCA space")
+    self.morphospaceTextureCombo.enabled = False
+    self.morphospaceTextureCombo.setStyleSheet(ColorTheme.getComboBoxStyle())
+    morphospaceWidgetLayout.addRow("Starting Texture: ", self.morphospaceTextureCombo)
+
+    # X-axis slider (controlled by X-axis PC from Step 3)
+    self.morphospaceXSlider = qt.QSlider(qt.Qt.Horizontal)
+    self.morphospaceXSlider.setMinimum(0)
+    self.morphospaceXSlider.setMaximum(1000)  # Will be set dynamically based on data
+    self.morphospaceXSlider.setValue(500)
+    self.morphospaceXSlider.setTickInterval(100)
+    self.morphospaceXSlider.setTickPosition(qt.QSlider.TicksBelow)
+    self.morphospaceXSlider.enabled = False
+    self.morphospaceXSlider.setToolTip("Slide to explore color variation along X-axis PC")
+    self.morphospaceXSlider.connect('valueChanged(int)', self.onMorphospaceXSliderChanged)
+    morphospaceWidgetLayout.addRow("X-axis Position: ", self.morphospaceXSlider)
+
+    # X-axis value label
+    self.morphospaceXLabel = qt.QLabel("X: 0.00")
+    morphospaceWidgetLayout.addRow("", self.morphospaceXLabel)
+
+    # Y-axis slider (controlled by Y-axis PC from Step 3)
+    self.morphospaceYSlider = qt.QSlider(qt.Qt.Horizontal)
+    self.morphospaceYSlider.setMinimum(0)
+    self.morphospaceYSlider.setMaximum(1000)  # Will be set dynamically based on data
+    self.morphospaceYSlider.setValue(500)
+    self.morphospaceYSlider.setTickInterval(100)
+    self.morphospaceYSlider.setTickPosition(qt.QSlider.TicksBelow)
+    self.morphospaceYSlider.enabled = False
+    self.morphospaceYSlider.setToolTip("Slide to explore color variation along Y-axis PC")
+    self.morphospaceYSlider.connect('valueChanged(int)', self.onMorphospaceYSliderChanged)
+    morphospaceWidgetLayout.addRow("Y-axis Position: ", self.morphospaceYSlider)
+
+    # Y-axis value label
+    self.morphospaceYLabel = qt.QLabel("Y: 0.00")
+    morphospaceWidgetLayout.addRow("", self.morphospaceYLabel)
+
+    # Visualize button
+    self.visualizeMorphospaceButton = qt.QPushButton("Visualize Morphospace")
+    self.visualizeMorphospaceButton.toolTip = "Start morphospace visualization with selected texture"
+    self.visualizeMorphospaceButton.enabled = False
+    self.visualizeMorphospaceButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
+    self.visualizeMorphospaceButton.connect('clicked(bool)', self.onVisualizeMorphospace)
+    morphospaceWidgetLayout.addRow(self.visualizeMorphospaceButton)
+
+    # Morphospace log info
+    self.morphospaceLogInfo = qt.QTextEdit()
+    self.morphospaceLogInfo.setMaximumHeight(80)
+    self.morphospaceLogInfo.setReadOnly(True)
+    morphospaceWidgetLayout.addRow("Log: ", self.morphospaceLogInfo)
+
+    # Connect morphospace events
+    self.morphospaceTextureCombo.connect('currentIndexChanged(int)', self.onMorphospaceTextureChanged)
+
+    # Initialize morphospace state variables
+    self.morphospaceCurrentPoint = None  # Current point in PCA space
+    self.morphospaceStartingPoint = None  # Starting point from selected texture
+    self.morphospaceMovingPointSeries = None  # Plot series for the moving point
+    self.morphospaceMovingPointTable = None  # Table for the moving point
+    self.morphospaceXRange = None  # (min, max) for X-axis PC
+    self.morphospaceYRange = None  # (min, max) for Y-axis PC
 
     # Add vertical spacer so extra space goes below content
     multiRecolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
@@ -3908,7 +4017,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self._logToWidget(logWidget, f"Warning: Unknown view type '{viewType}'. Supported types: '3D', 'plot'")
       return False
 
-  def createPopulationPlot(self, reducedData, textureNames, method):
+  def createPopulationPlot(self, reducedData, textureNames, method, x_axis_idx=0, y_axis_idx=1, variance_explained=None):
     """
     Create a population analysis plot using Slicer's plotting functionality
     with equal X/Y numeric ranges.
@@ -3917,28 +4026,44 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     the Widget class after the Logic class has prepared the data.
 
     Args:
-      reducedData: numpy array of 2D coordinates for each texture
+      reducedData: numpy array of coordinates for each texture (n_textures x n_components)
       textureNames: list of texture names corresponding to the data points
       method: string indicating the dimensionality reduction method ("PCA" or "UMAP")
+      x_axis_idx: index of component to plot on X-axis (default: 0 for PC1)
+      y_axis_idx: index of component to plot on Y-axis (default: 1 for PC2)
+      variance_explained: array of variance explained ratios (for PCA only)
 
     Returns:
       dict with success status and plot node information
     """
     try:
+      # Validate axis indices
+      max_idx = reducedData.shape[1] - 1
+      x_axis_idx = min(x_axis_idx, max_idx)
+      y_axis_idx = min(y_axis_idx, max_idx)
+
       # --- series ---
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
       plotSeriesNode.SetName(f"{method}")
 
-      xArray = vtk.vtkFloatArray(); xArray.SetName(f"{method} Component 1")
-      yArray = vtk.vtkFloatArray(); yArray.SetName(f"{method} Component 2")
+      # Create axis labels with PC numbers
+      if method == "PCA":
+        x_label = f"PC{x_axis_idx + 1}"
+        y_label = f"PC{y_axis_idx + 1}"
+      else:
+        x_label = f"{method} Component {x_axis_idx + 1}"
+        y_label = f"{method} Component {y_axis_idx + 1}"
+
+      xArray = vtk.vtkFloatArray(); xArray.SetName(x_label)
+      yArray = vtk.vtkFloatArray(); yArray.SetName(y_label)
       xArray.SetNumberOfTuples(len(reducedData))
       yArray.SetNumberOfTuples(len(reducedData))
       labelsArray = vtk.vtkStringArray(); labelsArray.SetName("Texture Names")
       labelsArray.SetNumberOfTuples(len(reducedData))
 
       for i, (point, name) in enumerate(zip(reducedData, textureNames)):
-        xArray.SetValue(i, float(point[0]))
-        yArray.SetValue(i, float(point[1]))
+        xArray.SetValue(i, float(point[x_axis_idx]))
+        yArray.SetValue(i, float(point[y_axis_idx]))
         labelsArray.SetValue(i, name)
 
       tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
@@ -3960,13 +4085,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       plotChartNode.SetName(f"MultiRecolor_Population_Chart_{method}")
       plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
       plotChartNode.SetTitle(f"Multi-Texture Population Analysis ({method})")
-      plotChartNode.SetXAxisTitle(f"{method} Component 1")
-      plotChartNode.SetYAxisTitle(f"{method} Component 2")
+
+      # Set axis titles with variance explained if available
+      if method == "PCA" and variance_explained is not None and len(variance_explained) > max(x_axis_idx, y_axis_idx):
+        x_var = variance_explained[x_axis_idx] * 100
+        y_var = variance_explained[y_axis_idx] * 100
+        plotChartNode.SetXAxisTitle(f"PC{x_axis_idx + 1} ({x_var:.1f}%)")
+        plotChartNode.SetYAxisTitle(f"PC{y_axis_idx + 1} ({y_var:.1f}%)")
+      else:
+        plotChartNode.SetXAxisTitle(x_label)
+        plotChartNode.SetYAxisTitle(y_label)
 
       # Calculate axis ranges with proper validation
       if len(reducedData) > 0 and reducedData.shape[1] >= 2:
-        x_min, x_max = float(np.min(reducedData[:,0])), float(np.max(reducedData[:,0]))
-        y_min, y_max = float(np.min(reducedData[:,1])), float(np.max(reducedData[:,1]))
+        x_min, x_max = float(np.min(reducedData[:,x_axis_idx])), float(np.max(reducedData[:,x_axis_idx]))
+        y_min, y_max = float(np.min(reducedData[:,y_axis_idx])), float(np.max(reducedData[:,y_axis_idx]))
 
         # Ensure valid ranges (avoid NaN, inf, or identical min/max)
         if np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max):
@@ -5054,6 +5187,71 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if consolidatedClusters > initialClusters:
       self.multiRecolorConsolidatedClustersSpin.setValue(initialClusters)
 
+  def onMultiRecolorNumPCsChanged(self):
+    """Update PC axis selectors when number of PCs changes"""
+    numPCs = self.multiRecolorNumPCsSpin.value
+
+    # Store current selections
+    currentXAxis = self.multiRecolorXAxisCombo.currentIndex
+    currentYAxis = self.multiRecolorYAxisCombo.currentIndex
+
+    # Clear and repopulate axis selectors
+    self.multiRecolorXAxisCombo.clear()
+    self.multiRecolorYAxisCombo.clear()
+
+    for i in range(numPCs):
+      pc_label = f"PC{i+1}"
+      self.multiRecolorXAxisCombo.addItem(pc_label)
+      self.multiRecolorYAxisCombo.addItem(pc_label)
+
+    # Restore selections if valid, otherwise default to PC1 and PC2
+    if currentXAxis >= 0 and currentXAxis < numPCs:
+      self.multiRecolorXAxisCombo.setCurrentIndex(currentXAxis)
+    else:
+      self.multiRecolorXAxisCombo.setCurrentIndex(0)  # PC1
+
+    if currentYAxis >= 0 and currentYAxis < numPCs:
+      self.multiRecolorYAxisCombo.setCurrentIndex(currentYAxis)
+    else:
+      self.multiRecolorYAxisCombo.setCurrentIndex(min(1, numPCs - 1))  # PC2 if available
+
+  def onMultiRecolorAxisChanged(self):
+    """Update plot when PC axis selection changes"""
+    # Only update if we have a stored result from a previous analysis
+    if not hasattr(self, 'multiRecolorPopulationResult') or self.multiRecolorPopulationResult is None:
+      return
+
+    result = self.multiRecolorPopulationResult
+
+    # Only update for PCA (UMAP is always 2D)
+    if result.get("method") != "PCA":
+      return
+
+    # Get selected axes
+    x_axis_idx = self.multiRecolorXAxisCombo.currentIndex
+    y_axis_idx = self.multiRecolorYAxisCombo.currentIndex
+
+    # Get variance explained if available
+    variance_explained = None
+    if "pca_model" in result:
+      variance_explained = result["pca_model"].explained_variance_ratio_
+
+    # Update the plot with new axes
+    self.populationLogInfo.append(f"Updating plot to show PC{x_axis_idx+1} vs PC{y_axis_idx+1}...")
+    plotResult = self.createPopulationPlot(
+      result["reduced_data"],
+      result["texture_names"],
+      result["method"],
+      x_axis_idx=x_axis_idx,
+      y_axis_idx=y_axis_idx,
+      variance_explained=variance_explained
+    )
+
+    if plotResult.get("success", False):
+      self.populationLogInfo.append(f"Plot updated successfully")
+    else:
+      self.populationLogInfo.append("Plot update failed")
+
   def updateMultiRecolorTextureList(self):
     """Update the list of texture files for MultiRecolor"""
     textureDir = self.multiRecolorTextureDirectorySelector.currentPath
@@ -5280,7 +5478,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Get selected dimensionality reduction method
       dimReductionMethod = "PCA" if self.pcaRadioButton.isChecked() else "UMAP"
 
+      # Get number of PCs (only used for PCA)
+      n_components = self.multiRecolorNumPCsSpin.value
+
       self.populationLogInfo.append(f"Starting population analysis with {dimReductionMethod}...")
+      if dimReductionMethod == "PCA":
+        self.populationLogInfo.append(f"Computing {n_components} principal components...")
       self.populationLogInfo.append(f"Analyzing {len(self.multiRecolorTextureFiles)} textures...")
 
       logic = InterDeCALogic()
@@ -5292,6 +5495,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         clusteringPipeline=self.multiRecolorClusteringPipeline,
         faceAreas=self.multiRecolorFaceAreas,
         dimReductionMethod=dimReductionMethod,
+        n_components=n_components,
         progressCallback=self.updatePopulationProgress,
         logCallback=self.logPopulationMessage
       )
@@ -5299,12 +5503,54 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if result.get("success", False):
         self.populationLogInfo.append("Population analysis data preparation completed successfully!")
 
+        # Enable and populate axis selectors if PCA was used
+        if dimReductionMethod == "PCA" and "n_components" in result:
+          n_comps = result["n_components"]
+          self.multiRecolorXAxisCombo.clear()
+          self.multiRecolorYAxisCombo.clear()
+          for i in range(n_comps):
+            pc_label = f"PC{i+1}"
+            self.multiRecolorXAxisCombo.addItem(pc_label)
+            self.multiRecolorYAxisCombo.addItem(pc_label)
+
+          # Set default axes (PC1 vs PC2)
+          self.multiRecolorXAxisCombo.setCurrentIndex(0)
+          if n_comps > 1:
+            self.multiRecolorYAxisCombo.setCurrentIndex(1)
+
+          # Enable axis selectors
+          self.multiRecolorXAxisCombo.enabled = True
+          self.multiRecolorYAxisCombo.enabled = True
+
+          # Store the result for re-plotting with different axes
+          self.multiRecolorPopulationResult = result
+
+          # Enable morphospace controls (Step 4)
+          self.morphospaceTextureCombo.clear()
+          for textureName in result["texture_names"]:
+            self.morphospaceTextureCombo.addItem(textureName)
+          self.morphospaceTextureCombo.enabled = True
+
+          self.populationLogInfo.append("Step 4: Morphospace is now available")
+
+        # Get selected axes
+        x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+        y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+        # Get variance explained if available
+        variance_explained = None
+        if "pca_model" in result:
+          variance_explained = result["pca_model"].explained_variance_ratio_
+
         # Create the plot in the UI layer
         self.populationLogInfo.append("Creating population analysis plot...")
         plotResult = self.createPopulationPlot(
           result["reduced_data"],
           result["texture_names"],
-          result["method"]
+          result["method"],
+          x_axis_idx=x_axis_idx,
+          y_axis_idx=y_axis_idx,
+          variance_explained=variance_explained
         )
 
         if plotResult.get("success", False):
@@ -5322,6 +5568,418 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       qt.QApplication.restoreOverrideCursor()
       self.populationLogInfo.append(f"Error: {str(e)}")
       slicer.util.errorDisplay(f"Population analysis failed: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def onMorphospaceTextureChanged(self):
+    """Handle texture selection change in morphospace"""
+    # Enable visualize button if a texture is selected and we have PCA results
+    hasTexture = self.morphospaceTextureCombo.currentIndex >= 0
+    hasPCA = self.multiRecolorPopulationResult is not None and self.multiRecolorPopulationResult.get("method") == "PCA"
+    self.visualizeMorphospaceButton.enabled = hasTexture and hasPCA
+
+    # If morphospace is already active and texture changes, update the starting point
+    if hasPCA and hasTexture and self.morphospaceStartingPoint is not None:
+      try:
+        # Get the new texture's PCA coordinates
+        textureIndex = self.morphospaceTextureCombo.currentIndex
+        textureName = self.morphospaceTextureCombo.currentText
+        result = self.multiRecolorPopulationResult
+        textureNames = result["texture_names"]
+        reducedData = result["reduced_data"]
+
+        if textureName in textureNames:
+          textureIdx = textureNames.index(textureName)
+          self.morphospaceStartingPoint = reducedData[textureIdx].copy()
+
+          # Get the X and Y axis indices from Step 3
+          x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+          y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+          # Update slider positions to match the new starting point
+          if self.morphospaceXRange is not None and self.morphospaceYRange is not None:
+            x_min, x_max = self.morphospaceXRange
+            y_min, y_max = self.morphospaceYRange
+
+            x_start = self.morphospaceStartingPoint[x_axis_idx]
+            y_start = self.morphospaceStartingPoint[y_axis_idx]
+
+            # Convert starting coordinates to slider values (0-1000)
+            x_slider_value = int(((x_start - x_min) / (x_max - x_min)) * 1000) if x_max != x_min else 500
+            y_slider_value = int(((y_start - y_min) / (y_max - y_min)) * 1000) if y_max != y_min else 500
+
+            self.morphospaceXSlider.blockSignals(True)
+            self.morphospaceYSlider.blockSignals(True)
+            self.morphospaceXSlider.setValue(x_slider_value)
+            self.morphospaceYSlider.setValue(y_slider_value)
+            self.morphospaceXSlider.blockSignals(False)
+            self.morphospaceYSlider.blockSignals(False)
+
+            # Update labels
+            self.morphospaceXLabel.text = f"X: {x_start:.2f}"
+            self.morphospaceYLabel.text = f"Y: {y_start:.2f}"
+
+          # Update current point to the new starting point
+          self.morphospaceCurrentPoint = self.morphospaceStartingPoint.copy()
+
+          # Update plot and apply colors
+          self.updateMorphospacePoint()
+          self.applyMorphospaceColors(self.morphospaceCurrentPoint)
+
+          self.morphospaceLogInfo.append(f"Switched to texture: {textureName}")
+      except Exception as e:
+        self.morphospaceLogInfo.append(f"Error switching texture: {str(e)}")
+
+  def onMorphospaceXSliderChanged(self, value):
+    """Handle X-axis slider value changes in morphospace"""
+    if self.morphospaceCurrentPoint is None or self.morphospaceXRange is None:
+      return
+
+    # Convert slider value (0-1000) to actual PCA coordinate
+    x_min, x_max = self.morphospaceXRange
+    x_coord = x_min + (value / 1000.0) * (x_max - x_min)
+
+    # Update the X coordinate label
+    self.morphospaceXLabel.text = f"X: {x_coord:.2f}"
+
+    # Update visualization
+    self.updateMorphospaceVisualizationXY()
+
+  def onMorphospaceYSliderChanged(self, value):
+    """Handle Y-axis slider value changes in morphospace"""
+    if self.morphospaceCurrentPoint is None or self.morphospaceYRange is None:
+      return
+
+    # Convert slider value (0-1000) to actual PCA coordinate
+    y_min, y_max = self.morphospaceYRange
+    y_coord = y_min + (value / 1000.0) * (y_max - y_min)
+
+    # Update the Y coordinate label
+    self.morphospaceYLabel.text = f"Y: {y_coord:.2f}"
+
+    # Update visualization
+    self.updateMorphospaceVisualizationXY()
+
+  def onVisualizeMorphospace(self):
+    """Start morphospace visualization with selected texture"""
+    try:
+      # Check if we have PCA results
+      if not self.multiRecolorPopulationResult or self.multiRecolorPopulationResult.get("method") != "PCA":
+        self.morphospaceLogInfo.append("Error: Run PCA population analysis first (Step 3)")
+        return
+
+      # Get selected texture
+      textureIndex = self.morphospaceTextureCombo.currentIndex
+      if textureIndex < 0:
+        self.morphospaceLogInfo.append("Error: Select a starting texture")
+        return
+
+      textureName = self.morphospaceTextureCombo.currentText
+
+      self.morphospaceLogInfo.clear()
+      self.morphospaceLogInfo.append(f"Starting morphospace visualization with texture: {textureName}")
+
+      # Get the PCA coordinates for the selected texture
+      result = self.multiRecolorPopulationResult
+      textureNames = result["texture_names"]
+      reducedData = result["reduced_data"]
+
+      # Find the index of the selected texture
+      try:
+        textureIdx = textureNames.index(textureName)
+      except ValueError:
+        self.morphospaceLogInfo.append(f"Error: Texture {textureName} not found in PCA results")
+        return
+
+      # Store the starting point
+      self.morphospaceStartingPoint = reducedData[textureIdx].copy()
+      self.morphospaceCurrentPoint = self.morphospaceStartingPoint.copy()
+
+      # Get the X and Y axis indices from Step 3
+      x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+      y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+      # Calculate min/max ranges for X and Y axes based on all data
+      x_coords = reducedData[:, x_axis_idx]
+      y_coords = reducedData[:, y_axis_idx]
+
+      self.morphospaceXRange = (float(np.min(x_coords)), float(np.max(x_coords)))
+      self.morphospaceYRange = (float(np.min(y_coords)), float(np.max(y_coords)))
+
+      self.morphospaceLogInfo.append(f"Starting coordinates: X={self.morphospaceStartingPoint[x_axis_idx]:.2f}, Y={self.morphospaceStartingPoint[y_axis_idx]:.2f}")
+      self.morphospaceLogInfo.append(f"X-axis range: [{self.morphospaceXRange[0]:.2f}, {self.morphospaceXRange[1]:.2f}]")
+      self.morphospaceLogInfo.append(f"Y-axis range: [{self.morphospaceYRange[0]:.2f}, {self.morphospaceYRange[1]:.2f}]")
+
+      # Enable sliders
+      self.morphospaceXSlider.enabled = True
+      self.morphospaceYSlider.enabled = True
+
+      # Set slider positions to match the starting point
+      x_min, x_max = self.morphospaceXRange
+      y_min, y_max = self.morphospaceYRange
+
+      x_start = self.morphospaceStartingPoint[x_axis_idx]
+      y_start = self.morphospaceStartingPoint[y_axis_idx]
+
+      # Convert starting coordinates to slider values (0-1000)
+      x_slider_value = int(((x_start - x_min) / (x_max - x_min)) * 1000) if x_max != x_min else 500
+      y_slider_value = int(((y_start - y_min) / (y_max - y_min)) * 1000) if y_max != y_min else 500
+
+      self.morphospaceXSlider.blockSignals(True)
+      self.morphospaceYSlider.blockSignals(True)
+      self.morphospaceXSlider.setValue(x_slider_value)
+      self.morphospaceYSlider.setValue(y_slider_value)
+      self.morphospaceXSlider.blockSignals(False)
+      self.morphospaceYSlider.blockSignals(False)
+
+      # Update labels
+      self.morphospaceXLabel.text = f"X: {x_start:.2f}"
+      self.morphospaceYLabel.text = f"Y: {y_start:.2f}"
+
+      # Switch to plot+3D view layout
+      layoutManager = slicer.app.layoutManager()
+      layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutConventionalPlotView)
+
+      # Create or update the plot with the moving point
+      self.createMorphospacePlot()
+
+      # Apply the starting texture colors to the model
+      self.applyMorphospaceColors(self.morphospaceCurrentPoint)
+
+      self.morphospaceLogInfo.append("Morphospace visualization ready. Use sliders to explore PCA space.")
+
+    except Exception as e:
+      self.morphospaceLogInfo.append(f"Error: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateMorphospaceVisualizationXY(self):
+    """Update morphospace visualization based on X and Y slider positions"""
+    if not self.multiRecolorPopulationResult or self.morphospaceXRange is None or self.morphospaceYRange is None:
+      return
+
+    try:
+      result = self.multiRecolorPopulationResult
+
+      # Get the X and Y axis indices from Step 3
+      x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+      y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+      # Convert slider values to actual PCA coordinates
+      x_min, x_max = self.morphospaceXRange
+      y_min, y_max = self.morphospaceYRange
+
+      x_coord = x_min + (self.morphospaceXSlider.value / 1000.0) * (x_max - x_min)
+      y_coord = y_min + (self.morphospaceYSlider.value / 1000.0) * (y_max - y_min)
+
+      # Create the current point in full PCA space
+      # Start with the starting point and update only the X and Y axes
+      self.morphospaceCurrentPoint = self.morphospaceStartingPoint.copy()
+      self.morphospaceCurrentPoint[x_axis_idx] = x_coord
+      self.morphospaceCurrentPoint[y_axis_idx] = y_coord
+
+      # Update the plot
+      self.updateMorphospacePoint()
+
+      # Apply colors to the model
+      self.applyMorphospaceColors(self.morphospaceCurrentPoint)
+
+    except Exception as e:
+      self.morphospaceLogInfo.append(f"Error updating visualization: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def createMorphospacePlot(self):
+    """Create or update the morphospace plot with the moving point"""
+    try:
+      result = self.multiRecolorPopulationResult
+      if not result:
+        return
+
+      # Get the current axes
+      x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+      y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+      # Get variance explained
+      variance_explained = None
+      if "pca_model" in result:
+        variance_explained = result["pca_model"].explained_variance_ratio_
+
+      # Create the base plot (same as population analysis)
+      plotResult = self.createPopulationPlot(
+        result["reduced_data"],
+        result["texture_names"],
+        result["method"],
+        x_axis_idx=x_axis_idx,
+        y_axis_idx=y_axis_idx,
+        variance_explained=variance_explained
+      )
+
+      if not plotResult.get("success", False):
+        self.morphospaceLogInfo.append("Failed to create plot")
+        return
+
+      # Get the chart node
+      chartNode = plotResult.get("chart_node")
+      if not chartNode:
+        return
+
+      # Create a new series for the moving point
+      self.morphospaceMovingPointTable = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      self.morphospaceMovingPointTable.SetName("Morphospace_MovingPoint_Data")
+
+      # Create arrays for the moving point
+      xArray = vtk.vtkFloatArray()
+      xArray.SetName(f"PC{x_axis_idx + 1}")
+      yArray = vtk.vtkFloatArray()
+      yArray.SetName(f"PC{y_axis_idx + 1}")
+      labelArray = vtk.vtkStringArray()
+      labelArray.SetName("Label")
+
+      # Add the current point
+      xArray.InsertNextValue(float(self.morphospaceCurrentPoint[x_axis_idx]))
+      yArray.InsertNextValue(float(self.morphospaceCurrentPoint[y_axis_idx]))
+      labelArray.InsertNextValue("Current")
+
+      self.morphospaceMovingPointTable.AddColumn(xArray)
+      self.morphospaceMovingPointTable.AddColumn(yArray)
+      self.morphospaceMovingPointTable.AddColumn(labelArray)
+
+      # Create series for the moving point
+      self.morphospaceMovingPointSeries = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
+      self.morphospaceMovingPointSeries.SetName("MovingPoint")
+      self.morphospaceMovingPointSeries.SetAndObserveTableNodeID(self.morphospaceMovingPointTable.GetID())
+      self.morphospaceMovingPointSeries.SetXColumnName(f"PC{x_axis_idx + 1}")
+      self.morphospaceMovingPointSeries.SetYColumnName(f"PC{y_axis_idx + 1}")
+      self.morphospaceMovingPointSeries.SetLabelColumnName("Label")
+      self.morphospaceMovingPointSeries.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      self.morphospaceMovingPointSeries.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleSquare)
+      self.morphospaceMovingPointSeries.SetMarkerSize(12)
+      self.morphospaceMovingPointSeries.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+      self.morphospaceMovingPointSeries.SetColor(1.0, 0.0, 0.0)  # Red color for moving point
+
+      # Add to chart
+      chartNode.AddAndObservePlotSeriesNodeID(self.morphospaceMovingPointSeries.GetID())
+
+      self.morphospaceLogInfo.append("Plot created with moving point")
+
+    except Exception as e:
+      self.morphospaceLogInfo.append(f"Error creating morphospace plot: {str(e)}")
+      import traceback
+      traceback.print_exc()
+
+  def updateMorphospacePoint(self):
+    """Update the position of the moving point in the plot"""
+    if not self.morphospaceMovingPointTable or self.morphospaceCurrentPoint is None:
+      return
+
+    try:
+      # Get the current axes
+      x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
+      y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
+
+      # Update the table with new coordinates
+      xArray = self.morphospaceMovingPointTable.GetTable().GetColumn(0)
+      yArray = self.morphospaceMovingPointTable.GetTable().GetColumn(1)
+
+      if xArray and yArray:
+        xArray.SetValue(0, float(self.morphospaceCurrentPoint[x_axis_idx]))
+        yArray.SetValue(0, float(self.morphospaceCurrentPoint[y_axis_idx]))
+        self.morphospaceMovingPointTable.GetTable().Modified()
+
+    except Exception as e:
+      self.morphospaceLogInfo.append(f"Error updating point: {str(e)}")
+
+  def applyMorphospaceColors(self, pca_coordinates):
+    """Apply colors to the model based on PCA coordinates using inverse transform"""
+    try:
+      result = self.multiRecolorPopulationResult
+      if not result:
+        return
+
+      pca_model = result.get("pca_model")
+      if not pca_model:
+        return
+
+      # Get the atlas model
+      atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
+      if not atlasModel:
+        self.morphospaceLogInfo.append("Error: No atlas model selected")
+        return
+
+      # Clear any texture that might be applied to the model
+      displayNode = atlasModel.GetDisplayNode()
+      if displayNode:
+        try:
+          displayNode.SetTextureImageDataConnection(None)
+        except AttributeError:
+          try:
+            displayNode.SetAndObserveTextureImageData(None)
+          except AttributeError:
+            pass  # No texture to remove
+
+      # Apply inverse PCA transform to get the color vector
+      # color_vector = mean + pca_coordinates @ components
+      color_vector = pca_model.inverse_transform(pca_coordinates.reshape(1, -1))[0]
+
+      # Get the clustering pipeline to know how colors were structured
+      if not self.multiRecolorClusteringPipeline:
+        self.morphospaceLogInfo.append("Error: No clustering pipeline available")
+        return
+
+      # Check if subsampling was used
+      useSubsampling = result.get("use_subsampling", False)
+
+      logic = InterDeCALogic()
+
+      if useSubsampling:
+        # Subsampling approach: color_vector is (n_subsampled_faces * 3,)
+        # Reshape to (n_subsampled_faces, 3) for Lab colors
+        subsampledFaceIndices = self.multiRecolorClusteringPipeline.subsampledFaceIndices
+        n_subsampled = len(subsampledFaceIndices)
+
+        if len(color_vector) != n_subsampled * 3:
+          self.morphospaceLogInfo.append(f"Error: Color vector size mismatch. Expected {n_subsampled * 3}, got {len(color_vector)}")
+          return
+
+        # Reshape to (n_subsampled, 3) - these are Lab colors
+        subsampledColorsLab = color_vector.reshape(n_subsampled, 3)
+
+        # Clip Lab values to valid ranges
+        # L: 0-100, a: -128 to 127, b: -128 to 127
+        subsampledColorsLab[:, 0] = np.clip(subsampledColorsLab[:, 0], 0, 100)
+        subsampledColorsLab[:, 1] = np.clip(subsampledColorsLab[:, 1], -128, 127)
+        subsampledColorsLab[:, 2] = np.clip(subsampledColorsLab[:, 2], -128, 127)
+
+        # Apply the subsampled colors to the model
+        success = logic.applyMorphospaceColorsSubsampled(
+          atlasModel, subsampledColorsLab,
+          self.multiRecolorClusteringPipeline
+        )
+      else:
+        # Cluster-based approach: color_vector is (n_clusters,) area weights
+        # This is NOT colors, but area-weighted cluster assignments
+        # We need to reconstruct cluster colors from this
+        n_clusters = self.multiRecolorClusteringPipeline.consolidatedClusters
+
+        if len(color_vector) != n_clusters:
+          self.morphospaceLogInfo.append(f"Error: Color vector size mismatch. Expected {n_clusters}, got {len(color_vector)}")
+          return
+
+        # The color_vector represents area weights, not colors
+        # We need to convert this back to cluster colors somehow
+        # This approach doesn't make sense for morphospace - we should always use subsampling
+        self.morphospaceLogInfo.append("Error: Morphospace requires subsampling to be enabled in Step 1")
+        self.morphospaceLogInfo.append("Please re-run Step 1 with a non-zero 'Subsampled Faces' value")
+        return
+
+      if success:
+        self.morphospaceLogInfo.append("Colors applied to model")
+      else:
+        self.morphospaceLogInfo.append("Failed to apply colors")
+
+    except Exception as e:
+      self.morphospaceLogInfo.append(f"Error applying colors: {str(e)}")
       import traceback
       traceback.print_exc()
 
@@ -10163,8 +10821,208 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return False
 
+  def applyMorphospaceColorsToModel(self, modelNode, texturePath, reconstructedColors, clusteringPipeline, faceAreas=None):
+    """
+    Apply morphospace-generated colors to the model
+
+    This method takes reconstructed cluster colors from PCA inverse transform
+    and applies them to the model by assigning faces to clusters based on the
+    original texture.
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the original texture (used for face-to-cluster assignment)
+        reconstructedColors: Reconstructed cluster colors (n_clusters x 3) in RGB [0,1]
+        clusteringPipeline: ClusteringPipeline object with cluster assignments
+        faceAreas: Pre-computed face areas (optional)
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      # Load texture image
+      textureImage = imageio.imread(texturePath)
+      if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        return False
+
+      # Calculate face average colors from original texture
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        return False
+
+      # Apply neighbor averaging if it was used during clustering
+      if clusteringPipeline.useNeighborAverage:
+        faceColors = self._applyNeighborAveraging(polyData, faceColors, clusteringPipeline.faceAdjacency, None)
+        if faceColors is None:
+          faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+
+      # Convert face colors to Lab space for clustering assignment
+      faceColorsLab = self.rgb_to_lab(faceColors)
+
+      # Apply luminosity normalization if it was used during clustering
+      textureFilename = os.path.basename(texturePath)
+      if clusteringPipeline.normalizeLuminosity:
+        lcStats = clusteringPipeline.perTextureLCStats.get(textureFilename)
+        pooledStats = clusteringPipeline.pooledLCStats
+        if lcStats is not None and pooledStats is not None:
+          mu_img, sd_img = lcStats
+          mu_pool, sd_pool = pooledStats
+          faceColorsLab = self._applyLCTransform(faceColorsLab, mu_img, sd_img, mu_pool, sd_pool)
+
+      # Convert reconstructed colors to Lab space for distance calculation
+      reconstructedColorsRgb = (reconstructedColors * 255).astype(np.uint8)
+      reconstructedColorsLab = self.rgb_to_lab(reconstructedColorsRgb)
+
+      # Assign each face to the nearest reconstructed cluster color
+      numFaces = len(faceColorsLab)
+      numClusters = len(reconstructedColorsLab)
+
+      quantizedColors = np.zeros_like(faceColors)
+
+      # Check if subsampling was used
+      if clusteringPipeline.subsampledFaceIndices is not None:
+        subsampledFaceIndices = clusteringPipeline.subsampledFaceIndices
+        nearestNeighborMapping = clusteringPipeline.nearestNeighborMapping
+
+        # Assign subsampled faces to nearest cluster
+        subsampledFaceColors = faceColorsLab[subsampledFaceIndices]
+        distances = np.zeros((len(subsampledFaceIndices), numClusters))
+        for j in range(numClusters):
+          distances[:, j] = np.linalg.norm(subsampledFaceColors - reconstructedColorsLab[j], axis=1)
+
+        clusterAssignments = np.argmin(distances, axis=1)
+
+        # Apply colors to subsampled faces
+        for i, faceIdx in enumerate(subsampledFaceIndices):
+          clusterIdx = clusterAssignments[i]
+          quantizedColors[faceIdx] = reconstructedColorsRgb[clusterIdx]
+
+        # Propagate to non-subsampled faces
+        for faceIdx in range(numFaces):
+          if faceIdx not in subsampledFaceIndices:
+            nearestSubsampledIdx = nearestNeighborMapping.get(faceIdx, subsampledFaceIndices[0])
+            subsampledArrayIdx = np.where(subsampledFaceIndices == nearestSubsampledIdx)[0]
+            if len(subsampledArrayIdx) > 0:
+              clusterIdx = clusterAssignments[subsampledArrayIdx[0]]
+              quantizedColors[faceIdx] = reconstructedColorsRgb[clusterIdx]
+      else:
+        # No subsampling - assign all faces
+        distances = np.zeros((numFaces, numClusters))
+        for j in range(numClusters):
+          distances[:, j] = np.linalg.norm(faceColorsLab - reconstructedColorsLab[j], axis=1)
+
+        clusterAssignments = np.argmin(distances, axis=1)
+
+        for i in range(numFaces):
+          clusterIdx = clusterAssignments[i]
+          quantizedColors[i] = reconstructedColorsRgb[clusterIdx]
+
+      # Apply colors to model
+      cellData = polyData.GetCellData()
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("Colors")
+      colorArray.SetNumberOfTuples(numFaces)
+
+      for i in range(numFaces):
+        colorArray.SetTuple3(i, int(quantizedColors[i, 0]), int(quantizedColors[i, 1]), int(quantizedColors[i, 2]))
+
+      cellData.SetScalars(colorArray)
+      polyData.Modified()
+      modelNode.GetDisplayNode().SetScalarVisibility(True)
+
+      return True
+
+    except Exception as e:
+      print(f"Error applying morphospace colors: {e}")
+      import traceback
+      traceback.print_exc()
+      return False
+
+  def applyMorphospaceColorsSubsampled(self, modelNode, subsampledColorsLab, clusteringPipeline):
+    """
+    Apply morphospace-generated colors to the model using subsampled face colors directly
+
+    This method takes reconstructed subsampled face colors from PCA inverse transform
+    and applies them to the model, propagating to non-subsampled faces via nearest neighbor.
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        subsampledColorsLab: Reconstructed subsampled face colors (n_subsampled x 3) in Lab space
+        clusteringPipeline: ClusteringPipeline object with subsampling information
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        return False
+
+      numFaces = polyData.GetNumberOfCells()
+
+      # Get subsampling information
+      subsampledFaceIndices = clusteringPipeline.subsampledFaceIndices
+      nearestNeighborMapping = clusteringPipeline.nearestNeighborMapping
+
+      if subsampledFaceIndices is None:
+        print("Error: No subsampled face indices in clustering pipeline")
+        return False
+
+      # Convert Lab colors to RGB
+      subsampledColorsRgb = self.lab_to_rgb(subsampledColorsLab)
+
+      # Create color array for all faces
+      allFaceColors = np.zeros((numFaces, 3), dtype=np.uint8)
+
+      # Assign colors to subsampled faces
+      for i, faceIdx in enumerate(subsampledFaceIndices):
+        allFaceColors[faceIdx] = subsampledColorsRgb[i]
+
+      # Propagate colors to non-subsampled faces using nearest neighbor mapping
+      if nearestNeighborMapping is not None:
+        # Create a mapping from subsampled face index to array index for fast lookup
+        subsampledIndexToArrayIdx = {faceIdx: i for i, faceIdx in enumerate(subsampledFaceIndices)}
+
+        for faceIdx in range(numFaces):
+          if faceIdx not in subsampledIndexToArrayIdx:
+            # Find the nearest subsampled face
+            nearestSubsampledIdx = nearestNeighborMapping[faceIdx]
+            # Get the array index for this subsampled face
+            arrayIdx = subsampledIndexToArrayIdx.get(nearestSubsampledIdx)
+            if arrayIdx is not None:
+              allFaceColors[faceIdx] = subsampledColorsRgb[arrayIdx]
+
+      # Apply colors to model
+      cellData = polyData.GetCellData()
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("Colors")
+      colorArray.SetNumberOfTuples(numFaces)
+
+      for i in range(numFaces):
+        colorArray.SetTuple3(i, int(allFaceColors[i, 0]), int(allFaceColors[i, 1]), int(allFaceColors[i, 2]))
+
+      cellData.SetScalars(colorArray)
+      polyData.Modified()
+      modelNode.GetDisplayNode().SetScalarVisibility(True)
+
+      return True
+
+    except Exception as e:
+      print(f"Error applying morphospace subsampled colors: {e}")
+      import traceback
+      traceback.print_exc()
+      return False
+
   def performPopulationAnalysis(self, modelNode, textureDir, textureFiles, clusterCenters=None, clusteringPipeline=None,
-                                 faceAreas=None, dimReductionMethod="PCA", progressCallback=None, logCallback=None):
+                                 faceAreas=None, dimReductionMethod="PCA", n_components=3, progressCallback=None, logCallback=None):
     """
     Perform population analysis by creating area-weighted color vectors and dimensionality reduction
 
@@ -10176,11 +11034,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         clusteringPipeline: ClusteringPipeline object (preferred, overrides clusterCenters)
         faceAreas: Pre-computed face areas
         dimReductionMethod: "PCA" or "UMAP"
+        n_components: Number of components for dimensionality reduction (default: 3, only used for PCA)
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
 
     Returns:
-        dict with 'success' and plot information
+        dict with 'success', 'reduced_data', 'texture_names', 'method', and 'pca_model' (if PCA)
     """
     try:
       if logCallback:
@@ -10364,14 +11223,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       # Perform dimensionality reduction
       if dimReductionMethod == "PCA":
-        reducer = PCA(n_components=2, random_state=42)
+        # Use n_components parameter for PCA
+        reducer = PCA(n_components=n_components, random_state=42)
         reducedData = reducer.fit_transform(textureVectors)
 
         if logCallback:
           explained_variance = reducer.explained_variance_ratio_
-          logCallback(f"PCA explained variance: PC1={explained_variance[0]:.3f}, PC2={explained_variance[1]:.3f}")
+          variance_str = ", ".join([f"PC{i+1}={explained_variance[i]:.3f}" for i in range(min(len(explained_variance), 3))])
+          logCallback(f"PCA explained variance: {variance_str}")
 
       elif dimReductionMethod == "UMAP":
+        # UMAP always uses 2 components for visualization
         reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=min(15, len(textureVectors)-1))
         reducedData = reducer.fit_transform(textureVectors)
 
@@ -10380,17 +11242,29 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       if logCallback:
         logCallback(f"Population analysis data preparation completed successfully!")
-        logCallback(f"Prepared data for {len(textureNames)} textures in 2D {dimReductionMethod} space")
+        if dimReductionMethod == "PCA":
+          logCallback(f"Prepared data for {len(textureNames)} textures in {n_components}D {dimReductionMethod} space")
+        else:
+          logCallback(f"Prepared data for {len(textureNames)} textures in 2D {dimReductionMethod} space")
 
       if progressCallback:
         progressCallback(100)
 
-      return {
+      # Return results with PCA model if applicable
+      result = {
         "success": True,
         "reduced_data": reducedData,
         "texture_names": textureNames,
-        "method": dimReductionMethod
+        "method": dimReductionMethod,
+        "use_subsampling": useSubsampling
       }
+
+      # Include PCA model for axis selection
+      if dimReductionMethod == "PCA":
+        result["pca_model"] = reducer
+        result["n_components"] = n_components
+
+      return result
 
     except Exception as e:
       if logCallback:
