@@ -84,20 +84,38 @@ except ImportError:
     SKIMAGE_AVAILABLE = False  # Disables color quantization features
     print("Warning: scikit-image not available. Color quantization functionality will be limited.")
 
-# Imports functions from the original DeCA module to avoid code duplication
+# ATLAS Integration - replaces DeCA for shape correspondence
+# Color analysis features (Blender, EDA, quantization) are preserved as-is
 import sys
 import os
 
+# Import ATLAS shape bridge for dense correspondence operations
 try:
-    from deca.deca import decaLogic
-    print('Successfully imported DeCA module!')
-    print(f'decaLogic class: {decaLogic}')
+    # Add parent directory to path to find atlas_integration module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    
+    from atlas_integration.shape_bridge import get_shape_bridge
+    
+    # Get global shape bridge instance (provides DeCA-compatible API)
+    atlasShapeBridge = get_shape_bridge()
+    
+    if atlasShapeBridge.is_atlas_available():
+        print('Successfully loaded ATLAS shape correspondence modules!')
+    else:
+        print('ATLAS modules not found - using fallback VTK implementations')
+    
+    print(f'ATLAS Shape Bridge initialized: {atlasShapeBridge}')
+    
 except ImportError as e:
-    # Handles case where DeCA module is not available
-    print(f'Could not import DeCA module: {e}')
-    decaLogic = None
+    print(f'Could not import ATLAS integration: {e}')
+    print('Please ensure atlas_integration module is in the correct path')
+    atlasShapeBridge = None
 
-print(f'Final decaLogic value: {decaLogic}')
+# For backward compatibility during migration
+decaLogic = None  # No longer using DeCA
 
 def checkAndOfferPackageInstallation():
     """
@@ -375,7 +393,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     multiRecolorTab = qt.QWidget()
     multiRecolorTabLayout = qt.QFormLayout(multiRecolorTab)
 
-    tabsWidget.addTab(DeCATab, "DeCA")
+    tabsWidget.addTab(DeCATab, "ATLAS")
     if SHOW_VISUALIZE_RESULTS:
       tabsWidget.addTab(visualizeTab, "Visualize Results")
     tabsWidget.addTab(colorsEDATab, "Colors EDA")
@@ -562,10 +580,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     DeCATabLayout.addRow("Progress: ", self.progressWidgetDC)
 
     #
-    # Run DeCA Button
+    # Run ATLAS Button
     #
-    self.applyButtonDC = qt.QPushButton("Run DeCA and Texture Transfer")  # Creates main execution button
-    self.applyButtonDC.toolTip = "Run non-rigid alignment and texture transfer"  # Sets helpful tooltip
+    self.applyButtonDC = qt.QPushButton("Run ATLAS and Texture Transfer")  # Creates main execution button
+    self.applyButtonDC.toolTip = "Run ATLAS shape correspondence and texture transfer"  # Sets helpful tooltip
     self.applyButtonDC.enabled = False  # Disables until required inputs are provided
     self.applyButtonDC.setStyleSheet(ColorTheme.getButtonStyle('primary'))  # Applies primary button styling
     DeCATabLayout.addRow(self.applyButtonDC)  # Adds button to form layout
@@ -2934,7 +2952,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Hide unwanted models (planes, reference objects, etc.)
       self._hideUnwantedModels()
       
-      # Ensure only relevant DeCA models are visible
+      # Ensure only relevant ATLAS models are visible
       self._ensureModelsAreVisible()
       
       # Update the button text to indicate visualization is active
@@ -2954,29 +2972,29 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       os.makedirs(outputFolderDC)
 
       # Create main subdirectories
-      decaSubDir = os.path.join(outputFolderDC, "DeCA")
+      atlasSubDir = os.path.join(outputFolderDC, "ATLAS")
       colorAnalysisSubDir = os.path.join(outputFolderDC, "colorAnalysis")
-      os.makedirs(decaSubDir)
+      os.makedirs(atlasSubDir)
       os.makedirs(colorAnalysisSubDir)
 
-      # DeCA-only data goes in DeCA subdirectory
-      alignedLMFolderDC = os.path.join(decaSubDir, "alignedLMs")
+      # ATLAS shape correspondence data goes in ATLAS subdirectory
+      alignedLMFolderDC = os.path.join(atlasSubDir, "alignedLMs")
       os.makedirs(alignedLMFolderDC)
-      alignedModelFolderDC = os.path.join(decaSubDir, "alignedModels")
+      alignedModelFolderDC = os.path.join(atlasSubDir, "alignedModels")
       os.makedirs(alignedModelFolderDC)
 
-      tempLMFolderDC = os.path.join(decaSubDir, "tempAlignedLMs")
+      tempLMFolderDC = os.path.join(atlasSubDir, "tempAlignedLMs")
       os.makedirs(tempLMFolderDC)
-      tempModelFolderDC = os.path.join(decaSubDir, "tempAlignedModels")
+      tempModelFolderDC = os.path.join(atlasSubDir, "tempAlignedModels")
       os.makedirs(tempModelFolderDC)
 
-      # Resampled models (without UVs) are DeCA output
-      resampledModelFolderDC = os.path.join(decaSubDir, "resampledModels")
+      # Resampled models (without UVs) are ATLAS output
+      resampledModelFolderDC = os.path.join(atlasSubDir, "resampledModels")
       os.makedirs(resampledModelFolderDC)
 
       # initialize the filename dictionary
       fileNameDictionary['output'] = str(outputFolderDC)
-      fileNameDictionary['decaSubDir'] = str(decaSubDir)
+      fileNameDictionary['atlasSubDir'] = str(atlasSubDir)
       fileNameDictionary['colorAnalysisSubDir'] = str(colorAnalysisSubDir)
       fileNameDictionary['alignedLMs'] = str(alignedLMFolderDC)
       fileNameDictionary['alignedModels'] = str(alignedModelFolderDC)
@@ -2985,9 +3003,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       fileNameDictionary['tempAlignedModels'] = str(tempModelFolderDC)
 
       if DeCALOption:
-        DeCALOutputFolder = os.path.join(decaSubDir, "DeCALOutput")
-        os.makedirs(DeCALOutputFolder)
-        fileNameDictionary['DeCALOutput'] = str(DeCALOutputFolder)
+        ATLASOutputFolder = os.path.join(atlasSubDir, "ATLASOutput")
+        os.makedirs(ATLASOutputFolder)
+        fileNameDictionary['ATLASOutput'] = str(ATLASOutputFolder)
     except:
       logging.debug('Result directory failed: Could not create output folder')
     return fileNameDictionary
@@ -3241,12 +3259,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
 
     # Saves the atlas model to the colorAnalysis directory for later use
-    atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
+    atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
 
     # Saves the atlas landmarks alongside the model
-    atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    atlasLMPath = os.path.join(self.folderNames['output'], 'atlasLM.mrk.json')
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
 
@@ -3560,7 +3578,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Save an intermediate atlas file (RAS) so Blender can read it
     self.updateProgressDC(30, "Preparing atlas for UV mapping...")
-    atlas_preuv_obj = os.path.join(self.folderNames['decaSubDir'], 'decaAtlas_preUV.obj')
+    atlas_preuv_obj = os.path.join(self.folderNames['atlasSubDir'], 'atlasModel_preUV.obj')
     logic._save_model_with_cs(self.atlasModel, atlas_preuv_obj, 'RAS')
 
     # ---- 2) Blender cleanup + Smart UV ----
@@ -3582,7 +3600,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       else:
         self.logInfoDC.appendPlainText("Failed to find or install Blender automatically. Please set the path manually.")
       return
-    atlas_uv_obj = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasUV.obj')
+    atlas_uv_obj = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModelUV.obj')
     try:
       logic.blender_prepare_atlas(blender_exe, atlas_preuv_obj, atlas_uv_obj,
                                   merge_dist=merge_dist, smart_angle=smart_angle, island_margin=island_margin)
@@ -3600,7 +3618,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Ensure the new atlas model is visible but clean (no texture initially)
     if self.atlasModel:
-      self.atlasModel.SetName("DeCA Atlas Model")
+      self.atlasModel.SetName("ATLAS Model")
       displayNode = self.atlasModel.GetDisplayNode()
       if displayNode:
         displayNode.SetVisibility(True)
@@ -3617,9 +3635,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
 
     # Save atlas landmarks & a copy of the atlas (PLY) for provenance
-    atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasLM.mrk.json')
+    atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasLM.mrk.json')
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
-    atlasPlyPath  = os.path.join(self.folderNames['colorAnalysisSubDir'], 'decaAtlasModel.ply')
+    atlasPlyPath  = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModel.ply')
     logic._save_model_with_cs(self.atlasModel, atlasPlyPath, 'RAS')
 
     # ---- 3) Rigid alignment of subjects to atlas (Slicer) ----
@@ -3693,13 +3711,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Hide all landmarks for clean visualization
     self._hideAllLandmarks()
 
-    # Hide all other models except the DeCA Atlas Model
+    # Hide all other models except the ATLAS Model
     self._hideOtherModels()
 
     # Ensure the atlas model is prominent and clean (no texture/heatmap)
     if hasattr(self, 'atlasModel') and self.atlasModel:
       # Make sure atlas model has a clear name
-      self.atlasModel.SetName("DeCA Atlas Model")
+      self.atlasModel.SetName("ATLAS Model")
 
       # Ensure the model node itself is visible first
       self.atlasModel.SetDisplayVisibility(True)
@@ -3751,7 +3769,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       self.atlasModel.Modified()
 
-      self.logInfoDC.appendPlainText("DeCA Atlas Model displayed without texture or landmarks")
+      self.logInfoDC.appendPlainText("ATLAS Model displayed without texture or landmarks")
     else:
       self.logInfoDC.appendPlainText("Warning: Atlas model not found or not properly created")
 
@@ -3773,11 +3791,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if SHOW_VISUALIZE_RESULTS:
       self.updateBakedPreviewList()  # Updates preview list with results
 
-    # ---- 8) Update UI after DeCA completion ----
+    # ---- 8) Update UI after ATLAS completion ----
     self.updateUIAfterDeCACompletion()  # Refreshes UI elements
 
     # Reports success and resets UI state
-    self.logInfoDC.appendPlainText("DeCA analysis completed successfully!")  # Shows success message
+    self.logInfoDC.appendPlainText("ATLAS analysis completed successfully!")  # Shows success message
     self.resetProgressDC()  # Resets progress bar
     self.applyButtonDC.enabled = True  # Re-enables run button
 
@@ -4191,38 +4209,38 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     Update UI components after DeCA completes successfully.
 
     This function:
-    1. Preselects the "DeCA Atlas Model" in Colors EDA, Recolor, and MultiRecolor tabs
+    1. Preselects the "ATLAS Model" in Colors EDA, Recolor, and MultiRecolor tabs
     2. Auto-populates texture directories with the baked textures path
     3. Switches to the Recolor tab automatically
     4. Auto-selects average_texture.png
     5. Auto-applies the texture
     6. Maximizes the 3D viewer
     """
-    self.logInfoDC.appendPlainText("Starting UI automation after DeCA completion...")
+    self.logInfoDC.appendPlainText("Starting UI automation after ATLAS completion...")
 
     try:
-      # Find the "DeCA Atlas Model" in the scene
-      decaAtlasModel = None
+      # Find the "ATLAS Model" in the scene
+      atlasModel = None
       try:
         for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
-          if model.GetName() == "DeCA Atlas Model":
-            decaAtlasModel = model
+          if model.GetName() == "ATLAS Model":
+            atlasModel = model
             break
       except Exception as e:
-        self.logInfoDC.appendPlainText(f"Warning: Error searching for DeCA Atlas Model: {e}")
+        self.logInfoDC.appendPlainText(f"Warning: Error searching for ATLAS Model: {e}")
 
-      if decaAtlasModel:
+      if atlasModel:
         try:
-          # Preselect the DeCA Atlas Model in all relevant tabs
-          self.colorsAtlasModelSelect.setCurrentNode(decaAtlasModel)
-          self.recolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
-          self.multiRecolorAtlasModelSelect.setCurrentNode(decaAtlasModel)
+          # Preselect the ATLAS Model in all relevant tabs
+          self.colorsAtlasModelSelect.setCurrentNode(atlasModel)
+          self.recolorAtlasModelSelect.setCurrentNode(atlasModel)
+          self.multiRecolorAtlasModelSelect.setCurrentNode(atlasModel)
 
-          self.logInfoDC.appendPlainText("Auto-selected 'DeCA Atlas Model' in Colors EDA, Recolor, and MultiRecolor tabs")
+          self.logInfoDC.appendPlainText("Auto-selected 'ATLAS Model' in Colors EDA, Recolor, and MultiRecolor tabs")
         except Exception as e:
           self.logInfoDC.appendPlainText(f"Warning: Error setting atlas model selection: {e}")
       else:
-        self.logInfoDC.appendPlainText("Warning: Could not find 'DeCA Atlas Model' for auto-selection")
+        self.logInfoDC.appendPlainText("Warning: Could not find 'ATLAS Model' for auto-selection")
 
       # Auto-populate texture directories with baked textures path
       try:
@@ -4363,7 +4381,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.logInfoDC.appendPlainText(f"Traceback: {traceback.format_exc()}")
 
     # Final completion message
-    self.logInfoDC.appendPlainText("UI automation after DeCA completion finished.")
+    self.logInfoDC.appendPlainText("UI automation after ATLAS completion finished.")
 
 
   def onDCLApplyButton(self):
@@ -4455,12 +4473,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         pass
 
   def _hideOtherModels(self):
-    """Remove all models except the DeCA Atlas Model to prevent clutter"""
+    """Remove all models except the ATLAS Model to prevent clutter"""
     models_to_remove = []
     for model in slicer.util.getNodesByClass('vtkMRMLModelNode'):
       try:
-        # Only keep the DeCA Atlas Model
-        if model.GetName() != "DeCA Atlas Model":
+        # Only keep the ATLAS Model
+        if model.GetName() != "ATLAS Model":
           models_to_remove.append(model)
       except Exception:
         pass
@@ -6440,11 +6458,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print("No index found")
       return None
 
-  # Use downsampleModel from decaLogic to avoid duplication
+  # Use downsampleModel from ATLAS shape bridge
   def downsampleModel(self, model, spacingPercentage):
-    if decaLogic:
-      return decaLogic().downsampleModel(model, spacingPercentage)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.downsampleModel(model, spacingPercentage)
+    # Fallback implementation if ATLAS is not available
     points=model.GetPolyData()
     cleanFilter=vtk.vtkCleanPolyData()
     cleanFilter.SetToleranceIsAbsolute(False)
@@ -6453,11 +6471,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     cleanFilter.Update()
     return cleanFilter.GetOutput()
 
-  # Use addIndexArray from decaLogic to avoid duplication
+  # Use addIndexArray from ATLAS shape bridge
   def addIndexArray(self, mesh, arrayName):
-    if decaLogic:
-      return decaLogic().addIndexArray(mesh, arrayName)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addIndexArray(mesh, arrayName)
+    # Fallback implementation if ATLAS is not available
     indexArray = vtk.vtkIntArray()
     indexArray.SetNumberOfComponents(1)
     indexArray.SetName(arrayName)
@@ -6465,11 +6483,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       indexArray.InsertNextValue(i)
     mesh.GetPolyData().GetPointData().AddArray(indexArray)
 
-  # Use computeNormals from decaLogic to avoid duplication
+  # Use computeNormals from ATLAS shape bridge
   def computeNormals(self, inputModel):
-    if decaLogic:
-      return decaLogic().computeNormals(inputModel)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeNormals(inputModel)
+    # Fallback implementation if ATLAS is not available
     normals = vtk.vtkPolyDataNormals()
     normals.SetInputData(inputModel.GetPolyData())
     normals.SetAutoOrientNormals(True)
@@ -6588,24 +6606,24 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
     # Save the result model before removing baseNode from scene
     self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
-    outputModelName = 'decaResultModel.vtp'
-    outputModelPath = os.path.join(outputDirectory, "DeCA", outputModelName)
+    outputModelName = 'atlasResultModel.vtp'
+    outputModelPath = os.path.join(outputDirectory, "ATLAS", outputModelName)
 
     # Save the result model with error handling
     try:
       if baseNode and slicer.mrmlScene.IsNodePresent(baseNode):
         slicer.util.saveNode(baseNode, outputModelPath)
-        print(f"Successfully saved DeCA result model to: {outputModelPath}")
+        print(f"Successfully saved ATLAS result model to: {outputModelPath}")
       else:
         print(f"Warning: baseNode is not valid or not in scene, skipping save to {outputModelPath}")
     except Exception as e:
-      print(f"Warning: Failed to save DeCA result model to {outputModelPath}: {e}")
+      print(f"Warning: Failed to save ATLAS result model to {outputModelPath}: {e}")
 
     # Now remove baseNode from scene
     slicer.mrmlScene.RemoveNode(baseNode)
 
     #  Save resampled models (VTK/PLY) and OBJ copies that reuse atlas UV (for Blender bake)
-    resampledModelPath = os.path.join(outputDirectory, "DeCA", "resampledModels")
+    resampledModelPath = os.path.join(outputDirectory, "ATLAS", "resampledModels")
     if os.path.exists(resampledModelPath):
       tempModelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "tempResampledModel")
       outOBJdir = os.path.join(outputDirectory, "colorAnalysis", "resampledOBJ_withUV")
@@ -6649,7 +6667,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     denseCorrespondenceGroupMirror = self.denseCorrespondenceBaseMesh(mirrorLandmarks, mirrorModels, baseMesh, baseLandmarks)
     self.addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, self.modelNames, baseMesh)
     # save results to output directory
-    outputModelName = 'decaSymmetryResultModel.vtp'
+    outputModelName = 'atlasSymmetryResultModel.vtp'
     outputModelPath = os.path.join(outputDir, outputModelName)
     slicer.util.saveNode(baseNode, outputModelPath)
 
@@ -6671,15 +6689,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLandmarkNode.GetDisplayNode().SetPointLabelsVisibility(False)
     return averageModelNode, averageLandmarkNode
 
-  # Use getLandmarkFileByID from decaLogic to avoid duplication
+  # Use getLandmarkFileByID from ATLAS shape bridge
   def getLandmarkFileByID(self, directory, subjectID):
-    if decaLogic:
+    if atlasShapeBridge:
       try:
-        return decaLogic().getLandmarkFileByID(directory, subjectID)
+        return atlasShapeBridge.getLandmarkFileByID(directory, subjectID)
       except Exception as e:
-        print(f"Error using decaLogic.getLandmarkFileByID: {e}")
+        print(f"Error using atlasShapeBridge.getLandmarkFileByID: {e}")
         # Fall back to local implementation
-    # Fallback implementation if decaLogic is not available
+    # Fallback implementation if ATLAS is not available
     fileList = os.listdir(directory)
     for fileName in fileList:
       fileNameBase = Path(fileName)
@@ -6789,11 +6807,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           except:
             print(f"could not find nodes to remove for {subjectID}")
 
-  # Use distanceMatrix from decaLogic to avoid duplication
+  # Use distanceMatrix from ATLAS shape bridge
   def distanceMatrix(self, a):
-    if decaLogic:
-      return decaLogic().distanceMatrix(a)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.distanceMatrix(a)
+    # Fallback implementation if ATLAS is not available
     """
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
@@ -6805,21 +6823,21 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     dz=fnx(a[:,2])
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
-  # Use numpyToFiducialNode from decaLogic to avoid duplication
+  # Use numpyToFiducialNode from ATLAS shape bridge
   def numpyToFiducialNode(self, numpyArray, nodeName):
-    if decaLogic:
-      return decaLogic().numpyToFiducialNode(numpyArray, nodeName)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.numpyToFiducialNode(numpyArray, nodeName)
+    # Fallback implementation if ATLAS is not available
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
     for index in range(len(numpyArray)):
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
     return fiducialNode
 
-  # Use computeAverageLM from decaLogic to avoid duplication
+  # Use computeAverageLM from ATLAS shape bridge
   def computeAverageLM(self, fiducialGroup):
-    if decaLogic:
-      return decaLogic().computeAverageLM(fiducialGroup)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeAverageLM(fiducialGroup)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -6832,11 +6850,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
     return averageLMNode
 
-  # Use fiducialNodeToPolyData from decaLogic to avoid duplication
+  # Use fiducialNodeToPolyData from ATLAS shape bridge
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
-    if decaLogic:
-      return decaLogic().fiducialNodeToPolyData(nodeLocation, loadOption)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.fiducialNodeToPolyData(nodeLocation, loadOption)
+    # Fallback implementation if ATLAS is not available
     point = [0,0,0]
     polydataPoints = vtk.vtkPolyData()
     points = vtk.vtkPoints()
@@ -6908,11 +6926,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     modelGroup.Update()
     return names, modelGroup.GetOutput()
 
-  # Use procrustesImposition from decaLogic to avoid duplication
+  # Use procrustesImposition from ATLAS shape bridge
   def procrustesImposition(self, originalLandmarks, sizeOption):
-    if decaLogic:
-      return decaLogic().procrustesImposition(originalLandmarks, sizeOption)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.procrustesImposition(originalLandmarks, sizeOption)
+    # Fallback implementation if ATLAS is not available
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
     if(sizeOption):
       procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
@@ -6922,11 +6940,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     meanShape = procrustesFilter.GetMeanPoints()
     return [meanShape, procrustesFilter.GetOutput()]
 
-  # Use getClosestToMeanIndex from decaLogic to avoid duplication
+  # Use getClosestToMeanIndex from ATLAS shape bridge
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
-    if decaLogic:
-      return decaLogic().getClosestToMeanIndex(meanShape, alignedPoints)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.getClosestToMeanIndex(meanShape, alignedPoints)
+    # Fallback implementation if ATLAS is not available
     import operator
     sampleNumber = alignedPoints.GetNumberOfBlocks()
     procrustesDistances = []
@@ -6946,15 +6964,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     except:
       return 0
 
-  # Use getClosestToMeanPath from decaLogic to avoid duplication
+  # Use getClosestToMeanPath from ATLAS shape bridge
   def getClosestToMeanPath(self, landmarkDirectory):
-    if decaLogic:
+    if atlasShapeBridge:
       try:
-        return decaLogic().getClosestToMeanPath(landmarkDirectory)
+        return atlasShapeBridge.getClosestToMeanPath(landmarkDirectory)
       except Exception as e:
-        print(f"Error using decaLogic.getClosestToMeanPath: {e}")
+        print(f"Error using atlasShapeBridge.getClosestToMeanPath: {e}")
         # Fall back to local implementation
-    # Fallback implementation if decaLogic is not available
+    # Fallback implementation if ATLAS is not available
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
     if not lmNames:
       print(f"No landmarks found in {landmarkDirectory}")
@@ -7123,11 +7141,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Warning: Empty correspondingMesh for iteration {iteration}, returning original")
       return baseMesh
 
-  # Use convertPointsToVTK from decaLogic to avoid duplication
+  # Use convertPointsToVTK from ATLAS shape bridge
   def convertPointsToVTK(self, points):
-    if decaLogic:
-      return decaLogic().convertPointsToVTK(points)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.convertPointsToVTK(points)
+    # Fallback implementation if ATLAS is not available
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
     points_vtk = vtk.vtkPoints()
     points_vtk.SetData(array_vtk)
@@ -7135,11 +7153,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     polydata_vtk.SetPoints(points_vtk)
     return polydata_vtk
 
-  # Use computeAverageModelFromGroup from decaLogic to avoid duplication
+  # Use computeAverageModelFromGroup from ATLAS shape bridge
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
-    if decaLogic:
-      return decaLogic().computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.computeAverageModelFromGroup(denseCorrespondenceGroup, baseIndex)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
@@ -7159,11 +7177,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     averageModel.SetPolys(baseMesh.GetPolys())
     return averageModel
 
-  # Use addMagnitudeFeature from decaLogic to avoid duplication
+  # Use addMagnitudeFeature from ATLAS shape bridge
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
-    if decaLogic:
-      return decaLogic().addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addMagnitudeFeature(denseCorrespondenceGroup, modelNameArray, model)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
@@ -7198,11 +7216,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
-  # Use addMagnitudeFeatureSymmetry from decaLogic to avoid duplication
+  # Use addMagnitudeFeatureSymmetry from ATLAS shape bridge
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
-    if decaLogic:
-      return decaLogic().addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
-    # Fallback implementation if decaLogic is not available
+    if atlasShapeBridge:
+      return atlasShapeBridge.addMagnitudeFeatureSymmetry(denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model)
+    # Fallback implementation if ATLAS is not available
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
     statsArray = np.zeros((pointNumber, sampleNumber))
