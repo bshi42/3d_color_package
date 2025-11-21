@@ -1309,6 +1309,23 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorTextureDirectorySelector.setToolTip("Select directory containing texture images")
     clusteringWidgetLayout.addRow("Texture Directory: ", self.multiRecolorTextureDirectorySelector)
 
+    # Mode selection: Clustering vs Subsample-only
+    self.multiRecolorModeGroup = qt.QButtonGroup()
+    self.multiRecolorClusteringRadio = qt.QRadioButton("Clustering")
+    self.multiRecolorClusteringRadio.setChecked(True)  # Default to clustering
+    self.multiRecolorClusteringRadio.setToolTip("Perform full clustering with color quantization")
+    self.multiRecolorSubsampleOnlyRadio = qt.QRadioButton("Subsample and Average Only")
+    self.multiRecolorSubsampleOnlyRadio.setToolTip("Only subsample and average face colors, skip clustering")
+    self.multiRecolorModeGroup.addButton(self.multiRecolorClusteringRadio, 0)
+    self.multiRecolorModeGroup.addButton(self.multiRecolorSubsampleOnlyRadio, 1)
+
+    modeLayout = qt.QHBoxLayout()
+    modeLayout.addWidget(self.multiRecolorClusteringRadio)
+    modeLayout.addWidget(self.multiRecolorSubsampleOnlyRadio)
+    modeWidget = qt.QWidget()
+    modeWidget.setLayout(modeLayout)
+    clusteringWidgetLayout.addRow("Mode: ", modeWidget)
+
     # Normalize luminosity checkbox
     self.multiRecolorNormalizeLuminosityCheckbox = qt.QCheckBox()
     self.multiRecolorNormalizeLuminosityCheckbox.setChecked(False)
@@ -1422,12 +1439,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.pcaRadioButton = qt.QRadioButton("PCA")
     self.pcaRadioButton.setChecked(True)  # Default selection
     self.umapRadioButton = qt.QRadioButton("UMAP")
+    self.icaRadioButton = qt.QRadioButton("ICA")
     self.dimReductionMethodGroup.addButton(self.pcaRadioButton, 0)
     self.dimReductionMethodGroup.addButton(self.umapRadioButton, 1)
+    self.dimReductionMethodGroup.addButton(self.icaRadioButton, 2)
 
     dimReductionLayout = qt.QHBoxLayout()
     dimReductionLayout.addWidget(self.pcaRadioButton)
     dimReductionLayout.addWidget(self.umapRadioButton)
+    dimReductionLayout.addWidget(self.icaRadioButton)
     dimReductionWidget = qt.QWidget()
     dimReductionWidget.setLayout(dimReductionLayout)
     populationWidgetLayout.addRow("Dimensionality Reduction: ", dimReductionWidget)
@@ -1435,7 +1455,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Number of PCs for PCA (similar to PCA Morphospace tab)
     self.multiRecolorNumPCsSpin = qt.QSpinBox()
     self.multiRecolorNumPCsSpin.setMinimum(2)
-    self.multiRecolorNumPCsSpin.setMaximum(10)
+    self.multiRecolorNumPCsSpin.setMaximum(20)
     self.multiRecolorNumPCsSpin.setValue(2)
     self.multiRecolorNumPCsSpin.setToolTip("Number of principal components to compute (only for PCA)")
     self.multiRecolorNumPCsSpin.connect("valueChanged(int)", self.onMultiRecolorNumPCsChanged)
@@ -1483,6 +1503,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Connect MultiRecolor UI events
     self.multiRecolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onMultiRecolorParameterChanged)
     self.multiRecolorTextureDirectorySelector.connect("currentPathChanged(QString)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorClusteringRadio.connect("toggled(bool)", self.onMultiRecolorModeChanged)
+    self.multiRecolorSubsampleOnlyRadio.connect("toggled(bool)", self.onMultiRecolorModeChanged)
     self.multiRecolorNormalizeLuminosityCheckbox.connect("toggled(bool)", self.onMultiRecolorParameterChanged)
     self.multiRecolorInitialClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
     self.multiRecolorConsolidatedClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
@@ -4028,9 +4050,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     Args:
       reducedData: numpy array of coordinates for each texture (n_textures x n_components)
       textureNames: list of texture names corresponding to the data points
-      method: string indicating the dimensionality reduction method ("PCA" or "UMAP")
-      x_axis_idx: index of component to plot on X-axis (default: 0 for PC1)
-      y_axis_idx: index of component to plot on Y-axis (default: 1 for PC2)
+      method: string indicating the dimensionality reduction method ("PCA", "ICA", or "UMAP")
+      x_axis_idx: index of component to plot on X-axis (default: 0 for PC1/IC1)
+      y_axis_idx: index of component to plot on Y-axis (default: 1 for PC2/IC2)
       variance_explained: array of variance explained ratios (for PCA only)
 
     Returns:
@@ -4046,11 +4068,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
       plotSeriesNode.SetName(f"{method}")
 
-      # Create axis labels with PC numbers
+      # Create axis labels based on method
       if method == "PCA":
         x_label = f"PC{x_axis_idx + 1}"
         y_label = f"PC{y_axis_idx + 1}"
-      else:
+      elif method == "ICA":
+        x_label = f"IC{x_axis_idx + 1}"
+        y_label = f"IC{y_axis_idx + 1}"
+      else:  # UMAP or other
         x_label = f"{method} Component {x_axis_idx + 1}"
         y_label = f"{method} Component {y_axis_idx + 1}"
 
@@ -5178,6 +5203,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if textureDirectorySelected:
       self.updateMultiRecolorTextureList()
 
+  def onMultiRecolorModeChanged(self):
+    """Handle mode change between clustering and subsample-only"""
+    isClusteringMode = self.multiRecolorClusteringRadio.isChecked()
+
+    # Enable/disable clustering-specific controls based on mode
+    self.multiRecolorInitialClustersSpin.setEnabled(isClusteringMode)
+    self.multiRecolorConsolidatedClustersSpin.setEnabled(isClusteringMode)
+    self.multiRecolorNormalizeLuminosityCheckbox.setEnabled(isClusteringMode)
+
   def onMultiRecolorClusterCountChanged(self):
     """Validate that consolidated clusters <= initial clusters"""
     initialClusters = self.multiRecolorInitialClustersSpin.value
@@ -5216,28 +5250,30 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.multiRecolorYAxisCombo.setCurrentIndex(min(1, numPCs - 1))  # PC2 if available
 
   def onMultiRecolorAxisChanged(self):
-    """Update plot when PC axis selection changes"""
+    """Update plot when axis selection changes"""
     # Only update if we have a stored result from a previous analysis
     if not hasattr(self, 'multiRecolorPopulationResult') or self.multiRecolorPopulationResult is None:
       return
 
     result = self.multiRecolorPopulationResult
 
-    # Only update for PCA (UMAP is always 2D)
-    if result.get("method") != "PCA":
+    # Only update for PCA, ICA, and UMAP (all support variable axes)
+    if result.get("method") not in ["PCA", "ICA", "UMAP"]:
       return
 
     # Get selected axes
     x_axis_idx = self.multiRecolorXAxisCombo.currentIndex
     y_axis_idx = self.multiRecolorYAxisCombo.currentIndex
 
-    # Get variance explained if available
+    # Get variance explained if available (only for PCA)
     variance_explained = None
-    if "pca_model" in result:
+    method = result.get("method", "PCA")
+    if method == "PCA" and "pca_model" in result:
       variance_explained = result["pca_model"].explained_variance_ratio_
 
     # Update the plot with new axes
-    self.populationLogInfo.append(f"Updating plot to show PC{x_axis_idx+1} vs PC{y_axis_idx+1}...")
+    comp_label = "PC" if method == "PCA" else "IC" if method == "ICA" else "Component"
+    self.populationLogInfo.append(f"Updating plot to show {comp_label}{x_axis_idx+1} vs {comp_label}{y_axis_idx+1}...")
     plotResult = self.createPopulationPlot(
       result["reduced_data"],
       result["texture_names"],
@@ -5275,7 +5311,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.individualTextureSelector.addItems(self.multiRecolorTextureFiles)
 
   def onClusterButton(self):
-    """Handle Step 1: Multi-texture clustering"""
+    """Handle Step 1: Multi-texture clustering or subsample-only mode"""
     try:
       qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
       self.clusteringProgressBar.setVisible(True)
@@ -5284,10 +5320,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
       textureDir = self.multiRecolorTextureDirectorySelector.currentPath
-      initialClusters = self.multiRecolorInitialClustersSpin.value
-      consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
       numSubsampledFaces = self.multiRecolorNumSubsampledFacesSpin.value
-      normalizeLuminosity = self.multiRecolorNormalizeLuminosityCheckbox.isChecked()
       useNeighborAverage = self.multiRecolorNeighborAverageCheckbox.isChecked()
 
       if not atlasModel:
@@ -5302,65 +5335,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.clusteringLogInfo.append("Error: No texture files found")
         return
 
-      self.clusteringLogInfo.append(f"Starting per-texture clustering pipeline...")
-      self.clusteringLogInfo.append(f"Initial clusters: {initialClusters}, Consolidated: {consolidatedClusters}")
-      self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
-      self.clusteringLogInfo.append(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
-      self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
-      self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+      # Check which mode is selected
+      isClusteringMode = self.multiRecolorClusteringRadio.isChecked()
 
-      logic = InterDeCALogic()
-
-      # Get cached face areas
-      cachedFaceAreas = self.getCachedFaceAreas(atlasModel)
-      if cachedFaceAreas is None:
-        self.clusteringLogInfo.append("Error: Failed to get face areas")
-        return
-
-      # Run the multi-texture clustering pipeline
-      result = logic.performMultiTextureClustering(
-        atlasModel, textureDir, self.multiRecolorTextureFiles,
-        initialClusters, consolidatedClusters,
-        numSubsampledFaces=numSubsampledFaces,
-        normalizeLuminosity=normalizeLuminosity,
-        useNeighborAverage=useNeighborAverage,
-        faceAreas=cachedFaceAreas,
-        progressCallback=self.updateClusteringProgress,
-        logCallback=self.logClusteringMessage
-      )
-
-      if result.get("success", False):
-        self.multiRecolorClusteringPipeline = result["pipeline"]
-        self.multiRecolorFaceAreas = cachedFaceAreas  # Use cached areas
-
-        # For backward compatibility, store shared palette as cluster centers
-        if self.multiRecolorClusteringPipeline.sharedPalette is not None:
-          self.multiRecolorClusterCenters = logic.lab_to_rgb(
-            self.multiRecolorClusteringPipeline.sharedPalette
-          ).astype(np.uint8)
-          self.clusteringLogInfo.append(f"Computed shared palette from {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
-        elif self.multiRecolorClusteringPipeline.referenceCentroids is not None:
-          # Fallback to reference centroids if shared palette not available
-          self.multiRecolorClusterCenters = logic.lab_to_rgb(
-            self.multiRecolorClusteringPipeline.referenceCentroids
-          ).astype(np.uint8)
-          self.clusteringLogInfo.append("Warning: Using reference centroids (shared palette not computed)")
-        else:
-          self.multiRecolorClusterCenters = None
-
-        self.clusteringLogInfo.append("Multi-texture clustering pipeline completed successfully!")
-        self.clusteringLogInfo.append(f"Processed {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
-        self.clusteringLogInfo.append(f"Created {consolidatedClusters} consolidated clusters (from {initialClusters} initial clusters)")
-
-        # Enable Step 2 controls
-        self.individualTextureSelector.setEnabled(True)
-        self.onIndividualTextureChanged()  # Update button states
-
-        # Enable Step 3 controls
-        self.compareTexturesButton.enabled = True
-
+      if isClusteringMode:
+        # Full clustering mode
+        self._performClusteringMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage)
       else:
-        self.clusteringLogInfo.append("Multi-texture clustering failed - check log for details")
+        # Subsample-only mode
+        self._performSubsampleOnlyMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage)
 
       self.clusteringProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
@@ -5373,14 +5356,126 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       import traceback
       traceback.print_exc()
 
+  def _performClusteringMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage):
+    """Perform full clustering mode with color quantization"""
+    initialClusters = self.multiRecolorInitialClustersSpin.value
+    consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
+    normalizeLuminosity = self.multiRecolorNormalizeLuminosityCheckbox.isChecked()
+
+    self.clusteringLogInfo.append(f"Starting per-texture clustering pipeline...")
+    self.clusteringLogInfo.append(f"Initial clusters: {initialClusters}, Consolidated: {consolidatedClusters}")
+    self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
+    self.clusteringLogInfo.append(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
+    self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
+    self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+
+    logic = InterDeCALogic()
+
+    # Get cached face areas
+    cachedFaceAreas = self.getCachedFaceAreas(atlasModel)
+    if cachedFaceAreas is None:
+      self.clusteringLogInfo.append("Error: Failed to get face areas")
+      return
+
+    # Run the multi-texture clustering pipeline
+    result = logic.performMultiTextureClustering(
+      atlasModel, textureDir, self.multiRecolorTextureFiles,
+      initialClusters, consolidatedClusters,
+      numSubsampledFaces=numSubsampledFaces,
+      normalizeLuminosity=normalizeLuminosity,
+      useNeighborAverage=useNeighborAverage,
+      faceAreas=cachedFaceAreas,
+      progressCallback=self.updateClusteringProgress,
+      logCallback=self.logClusteringMessage
+    )
+
+    if result.get("success", False):
+      self.multiRecolorClusteringPipeline = result["pipeline"]
+      self.multiRecolorFaceAreas = cachedFaceAreas  # Use cached areas
+
+      # For backward compatibility, store shared palette as cluster centers
+      if self.multiRecolorClusteringPipeline.sharedPalette is not None:
+        self.multiRecolorClusterCenters = logic.lab_to_rgb(
+          self.multiRecolorClusteringPipeline.sharedPalette
+        ).astype(np.uint8)
+        self.clusteringLogInfo.append(f"Computed shared palette from {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
+      elif self.multiRecolorClusteringPipeline.referenceCentroids is not None:
+        # Fallback to reference centroids if shared palette not available
+        self.multiRecolorClusterCenters = logic.lab_to_rgb(
+          self.multiRecolorClusteringPipeline.referenceCentroids
+        ).astype(np.uint8)
+        self.clusteringLogInfo.append("Warning: Using reference centroids (shared palette not computed)")
+      else:
+        self.multiRecolorClusterCenters = None
+
+      self.clusteringLogInfo.append("Multi-texture clustering pipeline completed successfully!")
+      self.clusteringLogInfo.append(f"Processed {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
+      self.clusteringLogInfo.append(f"Created {consolidatedClusters} consolidated clusters (from {initialClusters} initial clusters)")
+
+      # Enable Step 2 controls
+      self.individualTextureSelector.setEnabled(True)
+      self.onIndividualTextureChanged()  # Update button states
+
+      # Enable Step 3 controls
+      self.compareTexturesButton.enabled = True
+
+    else:
+      self.clusteringLogInfo.append("Multi-texture clustering failed - check log for details")
+
+  def _performSubsampleOnlyMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage):
+    """Perform subsample-only mode without clustering"""
+    self.clusteringLogInfo.append(f"Starting subsample and average mode...")
+    self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
+    self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
+    self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+
+    logic = InterDeCALogic()
+
+    # Get cached face areas
+    cachedFaceAreas = self.getCachedFaceAreas(atlasModel)
+    if cachedFaceAreas is None:
+      self.clusteringLogInfo.append("Error: Failed to get face areas")
+      return
+
+    # Run subsample-only pipeline
+    result = logic.performSubsampleOnly(
+      atlasModel, self.multiRecolorTextureFiles,
+      numSubsampledFaces=numSubsampledFaces,
+      useNeighborAverage=useNeighborAverage,
+      faceAreas=cachedFaceAreas,
+      progressCallback=self.updateClusteringProgress,
+      logCallback=self.logClusteringMessage
+    )
+
+    if result.get("success", False):
+      self.multiRecolorClusteringPipeline = result["pipeline"]
+      self.multiRecolorFaceAreas = cachedFaceAreas
+      # In subsample-only mode, we don't have cluster centers
+      self.multiRecolorClusterCenters = None
+
+      self.clusteringLogInfo.append("Subsample and average completed successfully!")
+      self.clusteringLogInfo.append(f"Processed {len(self.multiRecolorClusteringPipeline.textureFiles)} textures")
+
+      # Enable Step 2 controls
+      self.individualTextureSelector.setEnabled(True)
+      self.onIndividualTextureChanged()  # Update button states
+
+      # Enable Step 3 controls
+      self.compareTexturesButton.enabled = True
+
+    else:
+      self.clusteringLogInfo.append("Subsample and average failed - check log for details")
+
   def onIndividualTextureChanged(self):
     """Handle texture selection change in Step 2"""
     textureSelected = bool(self.individualTextureSelector.currentText)
     clustersAvailable = self.multiRecolorClusterCenters is not None
+    isSubsampleOnlyMode = self.multiRecolorSubsampleOnlyRadio.isChecked()
 
-    # Enable apply button if texture is selected and clusters are available
-    # Enable raw texture option if texture is selected (doesn't need clusters)
-    self.applyIndividualTextureButton.enabled = textureSelected and clustersAvailable
+    # Enable apply button if texture is selected and either:
+    # - clusters are available (clustering mode), or
+    # - we're in subsample-only mode (no clusters needed)
+    self.applyIndividualTextureButton.enabled = textureSelected and (clustersAvailable or isSubsampleOnlyMode)
     self.individualRawTextureCheckbox.setEnabled(textureSelected)
 
   def onApplyIndividualTextureButton(self):
@@ -5413,10 +5508,27 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       logic = InterDeCALogic()
 
+      # Check if we're in subsample-only mode
+      isSubsampleOnlyMode = self.multiRecolorSubsampleOnlyRadio.isChecked()
+
       if useRawTexture:
         # Apply raw texture directly without any processing
         self.individualLogInfo.append("Using: Raw texture (no processing)")
         success = logic.applyTextureToModel(atlasModel, texturePath)
+      elif isSubsampleOnlyMode:
+        # Apply with subsampling but no color quantization
+        if self.multiRecolorClusteringPipeline is None:
+          self.individualLogInfo.append("Error: No pipeline available. Run Step 1 first.")
+          return
+
+        self.individualLogInfo.append("Using: Subsampled face averaging (no color quantization)")
+        success = logic.applyTextureWithSubsamplingOnly(
+          atlasModel, texturePath,
+          clusteringPipeline=self.multiRecolorClusteringPipeline,
+          faceAreas=self.multiRecolorFaceAreas,
+          progressCallback=self.updateIndividualProgress,
+          logCallback=self.logIndividualMessage
+        )
       else:
         # Apply with clustered palette
         if self.multiRecolorClusterCenters is None:
@@ -5467,8 +5579,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.populationLogInfo.append("Error: No atlas model selected")
         return
 
-      if self.multiRecolorClusterCenters is None:
+      # Check if we have either cluster centers (clustering mode) or pipeline (subsample-only mode)
+      isSubsampleOnlyMode = self.multiRecolorSubsampleOnlyRadio.isChecked()
+      if self.multiRecolorClusterCenters is None and not isSubsampleOnlyMode:
         self.populationLogInfo.append("Error: No cluster centers available. Run clustering first.")
+        return
+
+      if self.multiRecolorClusteringPipeline is None:
+        self.populationLogInfo.append("Error: No pipeline available. Run Step 1 first.")
         return
 
       if not self.multiRecolorTextureFiles:
@@ -5476,14 +5594,21 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         return
 
       # Get selected dimensionality reduction method
-      dimReductionMethod = "PCA" if self.pcaRadioButton.isChecked() else "UMAP"
+      if self.pcaRadioButton.isChecked():
+        dimReductionMethod = "PCA"
+      elif self.umapRadioButton.isChecked():
+        dimReductionMethod = "UMAP"
+      elif self.icaRadioButton.isChecked():
+        dimReductionMethod = "ICA"
+      else:
+        dimReductionMethod = "PCA"  # Default fallback
 
-      # Get number of PCs (only used for PCA)
+      # Get number of components (used for PCA and ICA)
       n_components = self.multiRecolorNumPCsSpin.value
 
       self.populationLogInfo.append(f"Starting population analysis with {dimReductionMethod}...")
-      if dimReductionMethod == "PCA":
-        self.populationLogInfo.append(f"Computing {n_components} principal components...")
+      if dimReductionMethod in ["PCA", "ICA"]:
+        self.populationLogInfo.append(f"Computing {n_components} components...")
       self.populationLogInfo.append(f"Analyzing {len(self.multiRecolorTextureFiles)} textures...")
 
       logic = InterDeCALogic()
@@ -5503,17 +5628,26 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if result.get("success", False):
         self.populationLogInfo.append("Population analysis data preparation completed successfully!")
 
-        # Enable and populate axis selectors if PCA was used
-        if dimReductionMethod == "PCA" and "n_components" in result:
+        # Enable and populate axis selectors if PCA, ICA, or UMAP was used
+        if dimReductionMethod in ["PCA", "ICA", "UMAP"] and "n_components" in result:
           n_comps = result["n_components"]
           self.multiRecolorXAxisCombo.clear()
           self.multiRecolorYAxisCombo.clear()
-          for i in range(n_comps):
-            pc_label = f"PC{i+1}"
-            self.multiRecolorXAxisCombo.addItem(pc_label)
-            self.multiRecolorYAxisCombo.addItem(pc_label)
 
-          # Set default axes (PC1 vs PC2)
+          # Use appropriate labels based on method
+          if dimReductionMethod == "PCA":
+            component_label = "PC"
+          elif dimReductionMethod == "ICA":
+            component_label = "IC"
+          else:  # UMAP
+            component_label = "UMAP"
+
+          for i in range(n_comps):
+            comp_label = f"{component_label}{i+1}"
+            self.multiRecolorXAxisCombo.addItem(comp_label)
+            self.multiRecolorYAxisCombo.addItem(comp_label)
+
+          # Set default axes (Component 1 vs Component 2)
           self.multiRecolorXAxisCombo.setCurrentIndex(0)
           if n_comps > 1:
             self.multiRecolorYAxisCombo.setCurrentIndex(1)
@@ -5537,9 +5671,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
         y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
 
-        # Get variance explained if available
+        # Get variance explained if available (only for PCA)
         variance_explained = None
-        if "pca_model" in result:
+        method = result.get("method", "PCA")
+        if method == "PCA" and "pca_model" in result:
           variance_explained = result["pca_model"].explained_variance_ratio_
 
         # Create the plot in the UI layer
@@ -5573,13 +5708,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
   def onMorphospaceTextureChanged(self):
     """Handle texture selection change in morphospace"""
-    # Enable visualize button if a texture is selected and we have PCA results
+    # Enable visualize button if a texture is selected and we have PCA, ICA, or UMAP results
     hasTexture = self.morphospaceTextureCombo.currentIndex >= 0
-    hasPCA = self.multiRecolorPopulationResult is not None and self.multiRecolorPopulationResult.get("method") == "PCA"
-    self.visualizeMorphospaceButton.enabled = hasTexture and hasPCA
+    hasReducer = self.multiRecolorPopulationResult is not None and self.multiRecolorPopulationResult.get("method") in ["PCA", "ICA", "UMAP"]
+    self.visualizeMorphospaceButton.enabled = hasTexture and hasReducer
 
     # If morphospace is already active and texture changes, update the starting point
-    if hasPCA and hasTexture and self.morphospaceStartingPoint is not None:
+    if hasReducer and hasTexture and self.morphospaceStartingPoint is not None:
       try:
         # Get the new texture's PCA coordinates
         textureIndex = self.morphospaceTextureCombo.currentIndex
@@ -5663,9 +5798,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   def onVisualizeMorphospace(self):
     """Start morphospace visualization with selected texture"""
     try:
-      # Check if we have PCA results
-      if not self.multiRecolorPopulationResult or self.multiRecolorPopulationResult.get("method") != "PCA":
-        self.morphospaceLogInfo.append("Error: Run PCA population analysis first (Step 3)")
+      # Check if we have PCA, ICA, or UMAP results
+      if not self.multiRecolorPopulationResult or self.multiRecolorPopulationResult.get("method") not in ["PCA", "ICA", "UMAP"]:
+        self.morphospaceLogInfo.append("Error: Run PCA, ICA, or UMAP population analysis first (Step 3)")
         return
 
       # Get selected texture
@@ -5800,9 +5935,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
       y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
 
-      # Get variance explained
+      # Get variance explained (only for PCA)
       variance_explained = None
-      if "pca_model" in result:
+      method = result.get("method", "PCA")
+      if method == "PCA" and "pca_model" in result:
         variance_explained = result["pca_model"].explained_variance_ratio_
 
       # Create the base plot (same as population analysis)
@@ -5828,11 +5964,22 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.morphospaceMovingPointTable = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
       self.morphospaceMovingPointTable.SetName("Morphospace_MovingPoint_Data")
 
-      # Create arrays for the moving point
+      # Create arrays for the moving point with appropriate labels
+      method = result.get("method", "PCA")
+      if method == "PCA":
+        x_comp_label = f"PC{x_axis_idx + 1}"
+        y_comp_label = f"PC{y_axis_idx + 1}"
+      elif method == "ICA":
+        x_comp_label = f"IC{x_axis_idx + 1}"
+        y_comp_label = f"IC{y_axis_idx + 1}"
+      else:
+        x_comp_label = f"{method}_C{x_axis_idx + 1}"
+        y_comp_label = f"{method}_C{y_axis_idx + 1}"
+
       xArray = vtk.vtkFloatArray()
-      xArray.SetName(f"PC{x_axis_idx + 1}")
+      xArray.SetName(x_comp_label)
       yArray = vtk.vtkFloatArray()
-      yArray.SetName(f"PC{y_axis_idx + 1}")
+      yArray.SetName(y_comp_label)
       labelArray = vtk.vtkStringArray()
       labelArray.SetName("Label")
 
@@ -5849,8 +5996,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.morphospaceMovingPointSeries = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
       self.morphospaceMovingPointSeries.SetName("MovingPoint")
       self.morphospaceMovingPointSeries.SetAndObserveTableNodeID(self.morphospaceMovingPointTable.GetID())
-      self.morphospaceMovingPointSeries.SetXColumnName(f"PC{x_axis_idx + 1}")
-      self.morphospaceMovingPointSeries.SetYColumnName(f"PC{y_axis_idx + 1}")
+      self.morphospaceMovingPointSeries.SetXColumnName(x_comp_label)
+      self.morphospaceMovingPointSeries.SetYColumnName(y_comp_label)
       self.morphospaceMovingPointSeries.SetLabelColumnName("Label")
       self.morphospaceMovingPointSeries.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
       self.morphospaceMovingPointSeries.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleSquare)
@@ -5891,15 +6038,18 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.morphospaceLogInfo.append(f"Error updating point: {str(e)}")
 
   def applyMorphospaceColors(self, pca_coordinates):
-    """Apply colors to the model based on PCA coordinates using inverse transform"""
+    """Apply colors to the model based on PCA/ICA coordinates using inverse transform"""
     try:
       result = self.multiRecolorPopulationResult
       if not result:
         return
 
-      pca_model = result.get("pca_model")
-      if not pca_model:
+      # Get the model (works for both PCA and ICA)
+      model = result.get("model") or result.get("pca_model")
+      if not model:
         return
+
+      method = result.get("method", "PCA")
 
       # Get the atlas model
       atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
@@ -5918,9 +6068,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           except AttributeError:
             pass  # No texture to remove
 
-      # Apply inverse PCA transform to get the color vector
-      # color_vector = mean + pca_coordinates @ components
-      color_vector = pca_model.inverse_transform(pca_coordinates.reshape(1, -1))[0]
+      # Apply inverse transform to get the color vector
+      # color_vector = mean + coordinates @ components (works for both PCA and ICA)
+      color_vector = model.inverse_transform(pca_coordinates.reshape(1, -1))[0]
 
       # Get the clustering pipeline to know how colors were structured
       if not self.multiRecolorClusteringPipeline:
@@ -9725,6 +9875,133 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return {"success": False}
 
+  def performSubsampleOnly(self, modelNode, textureFiles, numSubsampledFaces=None, useNeighborAverage=False, faceAreas=None, progressCallback=None, logCallback=None):
+    """
+    Perform subsampling and face averaging without clustering
+
+    Args:
+        modelNode: VTK model node to analyze
+        textureFiles: List of texture filenames (stored for later use in Steps 2-4)
+        numSubsampledFaces: Number of faces to subsample (optional, uses all if None)
+        useNeighborAverage: Whether to use average color of neighboring faces
+        faceAreas: Pre-computed face areas (optional, will calculate if None)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        dict with 'success', 'pipeline' (ClusteringPipeline object), 'face_areas'
+    """
+    try:
+      if logCallback:
+        logCallback(f"Starting subsample and average pipeline...")
+        logCallback(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
+
+      if progressCallback:
+        progressCallback(2)
+
+      if not SKIMAGE_AVAILABLE:
+        if logCallback:
+          logCallback("Error: scikit-image not available for color space conversion")
+        return {"success": False}
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return {"success": False}
+
+      # Use provided face areas or calculate them
+      if faceAreas is None:
+        if logCallback:
+          logCallback("Calculating face areas...")
+
+        faceAreas = self._calculateFaceAreas(polyData)
+        if faceAreas is None:
+          if logCallback:
+            logCallback("Error: Failed to calculate face areas")
+          return {"success": False}
+      else:
+        if logCallback:
+          logCallback("Using provided face areas")
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Build face adjacency graph if needed (for subsampling or neighbor averaging)
+      faceAdjacency = None
+      if (numSubsampledFaces is not None and numSubsampledFaces > 0) or useNeighborAverage:
+        if logCallback:
+          logCallback("Building face adjacency graph...")
+
+        # Clean mesh first
+        polyData = self._cleanMesh(polyData, logCallback)
+
+        # Build adjacency
+        faceAdjacency = self._buildFaceAdjacencyGraph(polyData, logCallback)
+        if faceAdjacency is None:
+          if logCallback:
+            logCallback("Error: Failed to build face adjacency graph")
+          return {"success": False}
+
+      # Subsample faces if requested
+      subsampledFaceIndices = None
+      nearestNeighborMapping = None
+      if numSubsampledFaces is not None and numSubsampledFaces > 0:
+        if logCallback:
+          logCallback(f"Performing face subsampling...")
+
+        # Use pre-built adjacency if available, otherwise build it
+        if faceAdjacency is None:
+          subsampledFaceIndices, nearestNeighborMapping, faceAdjacency = self._subsampleFacesUniformly(
+            polyData, numSubsampledFaces, logCallback
+          )
+        else:
+          # Reuse the pre-built adjacency graph
+          subsampledFaceIndices, nearestNeighborMapping, _ = self._subsampleFacesUniformly(
+            polyData, numSubsampledFaces, logCallback
+          )
+
+        if subsampledFaceIndices is None:
+          if logCallback:
+            logCallback("Error: Face subsampling failed")
+          return {"success": False}
+
+      # Create a simple pipeline object for subsample-only mode
+      # We use ClusteringPipeline but with clustering disabled
+      pipeline = ClusteringPipeline(1, 1, False, useNeighborAverage)
+
+      # Store subsampling information in pipeline
+      pipeline.subsampledFaceIndices = subsampledFaceIndices
+      pipeline.nearestNeighborMapping = nearestNeighborMapping
+      pipeline.faceAdjacency = faceAdjacency
+
+      # Store texture file list for later use
+      pipeline.textureFiles = textureFiles
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback(f"Subsample and average pipeline completed successfully!")
+        if subsampledFaceIndices is not None:
+          logCallback(f"Subsampled to {len(subsampledFaceIndices)} faces")
+        logCallback(f"Ready to process {len(textureFiles)} textures in Steps 2-4")
+
+      return {
+        "success": True,
+        "pipeline": pipeline,
+        "face_areas": faceAreas,
+        "num_textures_processed": len(textureFiles)
+      }
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in subsample and average pipeline: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return {"success": False}
+
   def _clusterAndConsolidateSingleTexture(self, faceColorsLab, initialClusters, consolidatedClusters, logCallback=None):
     """
     Perform initial clustering and hierarchical consolidation on a single texture
@@ -10821,6 +11098,178 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       traceback.print_exc()
       return False
 
+  def applyTextureWithSubsamplingOnly(self, modelNode, texturePath, clusteringPipeline=None, faceAreas=None, progressCallback=None, logCallback=None):
+    """
+    Apply texture with subsampling and face averaging, but without color quantization
+
+    Args:
+        modelNode: VTK model node to apply colors to
+        texturePath: Path to the texture image file
+        clusteringPipeline: ClusteringPipeline object with subsampling info
+        faceAreas: Pre-computed face areas (optional, for caching)
+        progressCallback: Function to call with progress updates (0-100)
+        logCallback: Function to call with log messages
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+      textureFilename = os.path.basename(texturePath)
+
+      if logCallback:
+        logCallback(f"Applying texture with subsampling only: {textureFilename}")
+
+      if clusteringPipeline is None:
+        if logCallback:
+          logCallback("Error: No clustering pipeline provided")
+        return False
+
+      if progressCallback:
+        progressCallback(5)
+
+      # Load texture image
+      try:
+        textureImage = imageio.imread(texturePath)
+        if len(textureImage.shape) != 3 or textureImage.shape[2] < 3:
+          if logCallback:
+            logCallback("Error: Invalid texture format")
+          return False
+      except Exception as e:
+        if logCallback:
+          logCallback(f"Error loading texture: {e}")
+        return False
+
+      # Get model polydata
+      polyData = modelNode.GetPolyData()
+      if not polyData:
+        if logCallback:
+          logCallback("Error: No polydata in model")
+        return False
+
+      if progressCallback:
+        progressCallback(15)
+
+      # Calculate face average colors
+      if logCallback:
+        logCallback("Calculating average face colors...")
+
+      faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+      if faceColors is None:
+        if logCallback:
+          logCallback("Error: Failed to calculate face colors")
+        return False
+
+      if progressCallback:
+        progressCallback(40)
+
+      # Apply neighbor averaging if it was used during subsampling
+      if clusteringPipeline.useNeighborAverage:
+        if logCallback:
+          logCallback("Applying neighbor average smoothing to face colors...")
+
+        faceColors = self._applyNeighborAveraging(polyData, faceColors, clusteringPipeline.faceAdjacency, logCallback)
+        if faceColors is None:
+          if logCallback:
+            logCallback("Warning: Neighbor averaging failed, continuing with original colors")
+          faceColors = self._calculateFaceAverageColors(polyData, textureImage, "RGB")
+
+      if progressCallback:
+        progressCallback(50)
+
+      # Check if subsampling was used
+      if clusteringPipeline.subsampledFaceIndices is not None:
+        # Use subsampled faces only
+        subsampledFaceIndices = clusteringPipeline.subsampledFaceIndices
+        nearestNeighborMapping = clusteringPipeline.nearestNeighborMapping
+
+        if logCallback:
+          logCallback(f"Using subsampled faces ({len(subsampledFaceIndices)}) for color assignment...")
+
+        # Get colors only for subsampled faces
+        subsampledFaceColors = faceColors[subsampledFaceIndices]
+
+        # Create color array for all faces, using nearest neighbor mapping
+        numFaces = polyData.GetNumberOfCells()
+        displayColors = np.zeros((numFaces, 3), dtype=np.uint8)
+
+        # Assign colors to all faces based on nearest subsampled face
+        for faceIdx in range(numFaces):
+          nearestSampledIdx = nearestNeighborMapping[faceIdx]
+          # Find which position this sampled face is in the subsampled array
+          sampledPosition = np.where(subsampledFaceIndices == nearestSampledIdx)[0][0]
+          displayColors[faceIdx] = subsampledFaceColors[sampledPosition]
+      else:
+        # No subsampling - use all face colors directly
+        if logCallback:
+          logCallback("No subsampling - using all face colors directly...")
+
+        displayColors = faceColors
+
+      if progressCallback:
+        progressCallback(80)
+
+      # Apply colors to the model
+      if logCallback:
+        logCallback("Applying colors to model...")
+
+      # Create color array for VTK
+      colorArray = vtk.vtkUnsignedCharArray()
+      colorArray.SetNumberOfComponents(3)
+      colorArray.SetName("Colors")
+      colorArray.SetNumberOfTuples(polyData.GetNumberOfCells())
+
+      for i in range(len(displayColors)):
+        color = displayColors[i].astype(int)
+        colorArray.SetTuple3(i, color[0], color[1], color[2])
+
+      # Add colors to the polydata
+      polyData.GetCellData().SetScalars(colorArray)
+      polyData.Modified()
+      modelNode.Modified()
+
+      if progressCallback:
+        progressCallback(90)
+
+      # Update display to show colors
+      displayNode = modelNode.GetDisplayNode()
+      if displayNode:
+        if logCallback:
+          logCallback("Configuring display node...")
+
+        # Turn off texture first
+        displayNode.SetTextureImageDataConnection(None)
+
+        # Enable scalar visibility and set to use RGB colors directly
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalarName("Colors")
+
+        # Set to use cell data (not point data)
+        displayNode.SetActiveAttributeLocation(vtk.vtkDataObject.CELL)
+
+        # Set scalar range to use direct mapping (RGB values 0-255)
+        displayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseDirectMapping)
+
+        if logCallback:
+          logCallback("Display node configured for color visualization")
+      else:
+        if logCallback:
+          logCallback("Warning: No display node found")
+
+      if progressCallback:
+        progressCallback(100)
+
+      if logCallback:
+        logCallback("Texture with subsampling applied successfully")
+
+      return True
+
+    except Exception as e:
+      if logCallback:
+        logCallback(f"Error in texture with subsampling: {str(e)}")
+      import traceback
+      traceback.print_exc()
+      return False
+
   def applyMorphospaceColorsToModel(self, modelNode, texturePath, reconstructedColors, clusteringPipeline, faceAreas=None):
     """
     Apply morphospace-generated colors to the model
@@ -11033,13 +11482,13 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         clusterCenters: Pre-computed cluster centers (RGB colors) - for backward compatibility
         clusteringPipeline: ClusteringPipeline object (preferred, overrides clusterCenters)
         faceAreas: Pre-computed face areas
-        dimReductionMethod: "PCA" or "UMAP"
-        n_components: Number of components for dimensionality reduction (default: 3, only used for PCA)
+        dimReductionMethod: "PCA", "UMAP", or "ICA"
+        n_components: Number of components for dimensionality reduction (default: 3, used for PCA and ICA)
         progressCallback: Function to call with progress updates (0-100)
         logCallback: Function to call with log messages
 
     Returns:
-        dict with 'success', 'reduced_data', 'texture_names', 'method', and 'pca_model' (if PCA)
+        dict with 'success', 'reduced_data', 'texture_names', 'method', and 'model' (if PCA or ICA)
     """
     try:
       if logCallback:
@@ -11057,6 +11506,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if dimReductionMethod == "UMAP" and not UMAP_AVAILABLE:
         if logCallback:
           logCallback("Error: UMAP not available. Please install umap-learn.")
+        return {"success": False}
+
+      if dimReductionMethod == "ICA" and not SKLEARN_AVAILABLE:
+        if logCallback:
+          logCallback("Error: sklearn not available for ICA")
         return {"success": False}
 
       # Get model polydata
@@ -11232,6 +11686,15 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           variance_str = ", ".join([f"PC{i+1}={explained_variance[i]:.3f}" for i in range(min(len(explained_variance), 3))])
           logCallback(f"PCA explained variance: {variance_str}")
 
+      elif dimReductionMethod == "ICA":
+        # Use n_components parameter for ICA
+        reducer = FastICA(n_components=n_components, random_state=42, max_iter=500)
+        reducedData = reducer.fit_transform(textureVectors)
+
+        if logCallback:
+          logCallback(f"ICA computed {n_components} independent components")
+          logCallback(f"ICA convergence: {reducer.n_iter_} iterations")
+
       elif dimReductionMethod == "UMAP":
         # UMAP always uses 2 components for visualization
         reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=min(15, len(textureVectors)-1))
@@ -11242,7 +11705,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       if logCallback:
         logCallback(f"Population analysis data preparation completed successfully!")
-        if dimReductionMethod == "PCA":
+        if dimReductionMethod in ["PCA", "ICA"]:
           logCallback(f"Prepared data for {len(textureNames)} textures in {n_components}D {dimReductionMethod} space")
         else:
           logCallback(f"Prepared data for {len(textureNames)} textures in 2D {dimReductionMethod} space")
@@ -11250,7 +11713,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(100)
 
-      # Return results with PCA model if applicable
+      # Return results with model if applicable
       result = {
         "success": True,
         "reduced_data": reducedData,
@@ -11259,10 +11722,14 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         "use_subsampling": useSubsampling
       }
 
-      # Include PCA model for axis selection
-      if dimReductionMethod == "PCA":
-        result["pca_model"] = reducer
+      # Include model for axis selection and morphospace
+      if dimReductionMethod in ["PCA", "ICA"]:
+        result["model"] = reducer  # Generic model key for both PCA and ICA
+        result["pca_model"] = reducer  # Keep for backward compatibility with PCA
         result["n_components"] = n_components
+      elif dimReductionMethod == "UMAP":
+        result["model"] = reducer  # Generic model key for UMAP
+        result["n_components"] = 2  # UMAP always uses 2 components
 
       return result
 
