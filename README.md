@@ -355,6 +355,11 @@ def clusterColors(colors, n_clusters=5):
    - Use MultiRecolor tab
    - Perform comparative analysis
    - Generate clustering results
+   - Visualize population structure
+   - - PCA finds linear relationships between colors
+   - - UMAP finds non-linear relationships between colors
+   - - ICA finds independent components of color variation
+
 
 ### PCA Color Morphospace Workflow (NEW)
 
