@@ -7692,7 +7692,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if(not meshFileName.startswith(".")):
         meshFilePath = os.path.join(meshDirectory, meshFileName)
         currentMeshNode = slicer.util.loadModel(meshFilePath)
-        subjectID = os.path.splitext(meshFileName)[0]
+        # Extract subject ID by removing only the first extension (e.g., .obj from .obj.rcInfo)
+        name_parts = meshFileName.split('.', 1)
+        subjectID = name_parts[0] if len(name_parts) > 1 else meshFileName
         currentLMNode = self.getLandmarkFileByID(lmDirectory, subjectID)
         if currentLMNode:
           lmFilePath = os.path.join(lmDirectory, subjectID)
@@ -7892,9 +7894,22 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   def getModelFileByID(self, directory, subjectID):
     fileList = os.listdir(directory)
+    # Only process files with valid model extensions
+    model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']
     for fileName in fileList:
-      fileNameBase = Path(fileName).stem
-      if str(subjectID) == str(fileNameBase):
+      # Get the first extension only (e.g., .obj from .obj.rcInfo)
+      name_parts = fileName.split('.', 1)
+      if len(name_parts) < 2:
+        continue  # No extension found
+      first_ext = '.' + name_parts[1].split('.')[0]
+      file_ext = first_ext.lower()
+      # Skip non-model files (e.g., .mtl)
+      if file_ext not in model_extensions:
+        continue
+      # Get the base name by removing only the first extension
+      fileNameBase = name_parts[0]
+      # Check for partial match: filename base should start with the subject ID
+      if str(fileNameBase).startswith(str(subjectID)):
         filePath = os.path.join(directory, fileName)
         try:
           currentNode = self._load_model_with_cs(filePath, 'RAS')
@@ -7918,7 +7933,9 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if(not meshFileName.startswith(".")):
         lmFileList = os.listdir(lmDirectory)
         meshFilePath = os.path.join(meshDirectory, meshFileName)
-        subjectID = os.path.splitext(meshFileName)[0]
+        # Extract subject ID by removing only the first extension (e.g., .obj from .obj.rcInfo)
+        name_parts = meshFileName.split('.', 1)
+        subjectID = name_parts[0] if len(name_parts) > 1 else meshFileName
         currentLMNode = self.getLandmarkFileByID(lmDirectory, subjectID)
         if currentLMNode :
           try:
