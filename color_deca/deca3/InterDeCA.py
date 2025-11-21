@@ -7054,12 +7054,39 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.morphospaceXLabel.text = f"X: {x_start:.2f}"
       self.morphospaceYLabel.text = f"Y: {y_start:.2f}"
 
-      # Switch to plot+3D view layout
-      layoutManager = slicer.app.layoutManager()
-      layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutConventionalPlotView)
-
       # Create or update the plot with the moving point
       self.createMorphospacePlot()
+
+      # Switch to custom 3D + Plot layout (after plot is created)
+      logic = InterDeCALogic()
+      logic.setMorphospaceLayout()
+
+      # Display the chart in the plot view
+      if hasattr(self, 'morphospaceChartNode') and self.morphospaceChartNode:
+        lm = slicer.app.layoutManager()
+        print(f"[Morphospace] Attempting to display chart in plot view")
+        print(f"[Morphospace] Chart node ID: {self.morphospaceChartNode.GetID()}")
+
+        # Try multiple times to get the plot widget (layout might not be fully ready)
+        plotWidget = None
+        for attempt in range(5):
+          plotWidget = lm.plotWidget(0)
+          if plotWidget:
+            print(f"[Morphospace] Got plot widget on attempt {attempt + 1}")
+            break
+          slicer.app.processEvents()
+
+        if plotWidget:
+          plotViewNode = plotWidget.mrmlPlotViewNode()
+          print(f"[Morphospace] Plot view node: {plotViewNode}")
+          if plotViewNode:
+            print(f"[Morphospace] Setting chart node ID on plot view")
+            plotViewNode.SetPlotChartNodeID(self.morphospaceChartNode.GetID())
+            print(f"[Morphospace] Chart displayed successfully")
+          else:
+            print(f"[Morphospace] ERROR: Could not get plot view node")
+        else:
+          print(f"[Morphospace] ERROR: Could not get plot widget")
 
       # Apply the starting texture colors to the model
       self.applyMorphospaceColors(self.morphospaceCurrentPoint)
@@ -7118,30 +7145,40 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
       y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
 
-      # Get variance explained (only for PCA)
-      variance_explained = None
-      method = result.get("method", "PCA")
-      if method == "PCA" and "pca_model" in result:
-        variance_explained = result["pca_model"].explained_variance_ratio_
+      # Check if we already have a chart node for morphospace
+      if hasattr(self, 'morphospaceChartNode') and self.morphospaceChartNode:
+        chartNode = self.morphospaceChartNode
+        # Remove old moving point series if it exists
+        if hasattr(self, 'morphospaceMovingPointSeries') and self.morphospaceMovingPointSeries:
+          chartNode.RemovePlotSeriesNodeID(self.morphospaceMovingPointSeries.GetID())
+      else:
+        # Get variance explained (only for PCA)
+        variance_explained = None
+        method = result.get("method", "PCA")
+        if method == "PCA" and "pca_model" in result:
+          variance_explained = result["pca_model"].explained_variance_ratio_
 
-      # Create the base plot (same as population analysis)
-      plotResult = self.createPopulationPlot(
-        result["reduced_data"],
-        result["texture_names"],
-        result["method"],
-        x_axis_idx=x_axis_idx,
-        y_axis_idx=y_axis_idx,
-        variance_explained=variance_explained
-      )
+        # Create the base plot (same as population analysis)
+        plotResult = self.createPopulationPlot(
+          result["reduced_data"],
+          result["texture_names"],
+          result["method"],
+          x_axis_idx=x_axis_idx,
+          y_axis_idx=y_axis_idx,
+          variance_explained=variance_explained
+        )
 
-      if not plotResult.get("success", False):
-        self.morphospaceLogInfo.append("Failed to create plot")
-        return
+        if not plotResult.get("success", False):
+          self.morphospaceLogInfo.append("Failed to create plot")
+          return
 
-      # Get the chart node
-      chartNode = plotResult.get("chart_node")
-      if not chartNode:
-        return
+        # Get the chart node
+        chartNode = plotResult.get("chart_node")
+        if not chartNode:
+          return
+
+        # Store the chart node for later use (e.g., displaying in layout)
+        self.morphospaceChartNode = chartNode
 
       # Create a new series for the moving point
       self.morphospaceMovingPointTable = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
@@ -7215,7 +7252,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if xArray and yArray:
         xArray.SetValue(0, float(self.morphospaceCurrentPoint[x_axis_idx]))
         yArray.SetValue(0, float(self.morphospaceCurrentPoint[y_axis_idx]))
+
+        # Notify the table that it has been modified
         self.morphospaceMovingPointTable.GetTable().Modified()
+        self.morphospaceMovingPointTable.Modified()
+
+        # Also notify the series
+        if hasattr(self, 'morphospaceMovingPointSeries') and self.morphospaceMovingPointSeries:
+          self.morphospaceMovingPointSeries.Modified()
 
     except Exception as e:
       self.morphospaceLogInfo.append(f"Error updating point: {str(e)}")
@@ -13118,6 +13162,45 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       import traceback
       traceback.print_exc()
       return False
+
+  def setMorphospaceLayout(self):
+    """
+    Set up a custom layout with 3D view on the left and plot view on the right.
+
+    This layout is optimized for morphospace exploration, allowing simultaneous
+    viewing of the 3D model and the PCA/ICA/UMAP scatter plot.
+
+    Returns:
+        int: The custom layout ID (501)
+    """
+    try:
+      lm = slicer.app.layoutManager()
+      layoutNode = lm.layoutLogic().GetLayoutNode()
+
+      CUSTOM_LAYOUT_ID = 501  # Using 501 as custom layout ID (any unused integer >= 100 works)
+
+      layoutXml = """<layout type="horizontal" split="true"><item stretch="1"><view class="vtkMRMLViewNode" singletontag="1"><property name="viewlabel" action="default">1</property></view></item><item stretch="1"><view class="vtkMRMLPlotViewNode" singletontag="Plot"><property name="viewlabel" action="default">P</property></view></item></layout>"""
+
+      # Register the custom layout
+      print(f"[Morphospace] Registering custom layout {CUSTOM_LAYOUT_ID}")
+      layoutNode.AddLayoutDescription(CUSTOM_LAYOUT_ID, layoutXml)
+
+      # Apply the layout using the layout manager
+      print(f"[Morphospace] Applying layout {CUSTOM_LAYOUT_ID}")
+      lm.setLayout(CUSTOM_LAYOUT_ID)
+
+      # Process events to ensure layout is applied
+      slicer.app.processEvents()
+
+      print(f"[Morphospace] Layout applied successfully")
+
+      return CUSTOM_LAYOUT_ID
+
+    except Exception as e:
+      print(f"[Morphospace] Error setting morphospace layout: {e}")
+      import traceback
+      traceback.print_exc()
+      return None
 
 class ColorTheme:
     """Centralized color theme management for InterDeCA.
