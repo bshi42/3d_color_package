@@ -5183,7 +5183,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self._logToWidget(logWidget, f"Warning: Unknown view type '{viewType}'. Supported types: '3D', 'plot'")
       return False
 
-  def createPopulationPlot(self, reducedData, textureNames, method, x_axis_idx=0, y_axis_idx=1, variance_explained=None):
+  def createPopulationPlot(self, reducedData, textureNames, method, x_axis_idx=0, y_axis_idx=1, variance_explained=None, displayInLayout=True):
     """
     Create a population analysis plot using Slicer's plotting functionality
     with equal X/Y numeric ranges.
@@ -5198,6 +5198,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       x_axis_idx: index of component to plot on X-axis (default: 0 for PC1/IC1)
       y_axis_idx: index of component to plot on Y-axis (default: 1 for PC2/IC2)
       variance_explained: array of variance explained ratios (for PCA only)
+      displayInLayout: if True, switch to plot layout and display the chart (default: True)
+                       Set to False when creating chart for use in a custom layout
 
     Returns:
       dict with success status and plot node information
@@ -5305,48 +5307,51 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         # No data or insufficient dimensions, use auto-range
         self._logToWidget(self.populationLogInfo, "Warning: Insufficient data for manual range setting, using auto-range")
 
-      # Maximize plot viewer and show the plot
-      self._logToWidget(self.populationLogInfo, "Attempting to maximize plot viewer...")
-      plotLayoutSuccess = self.maximizePlotViewer(self.populationLogInfo)
-      if not plotLayoutSuccess:
-        self._logToWidget(self.populationLogInfo, "Warning: Could not set optimal plot layout, using current layout")
+      # Only switch layout and display if displayInLayout is True
+      # When called from morphospace, we skip this to avoid layout conflicts
+      if displayInLayout:
+        # Maximize plot viewer and show the plot
+        self._logToWidget(self.populationLogInfo, "Attempting to maximize plot viewer...")
+        plotLayoutSuccess = self.maximizePlotViewer(self.populationLogInfo)
+        if not plotLayoutSuccess:
+          self._logToWidget(self.populationLogInfo, "Warning: Could not set optimal plot layout, using current layout")
 
-      # Show the plot in the plot view
-      layoutManager = slicer.app.layoutManager()
-      if layoutManager is not None:
-        # Try to get plot widget and display the chart
-        plotWidget = layoutManager.plotWidget(0)
-        if plotWidget is not None:
-          plotViewNode = plotWidget.mrmlPlotViewNode()
-          if plotViewNode is not None:
-            plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-            self._logToWidget(self.populationLogInfo, "Plot successfully displayed in plot viewer")
+        # Show the plot in the plot view
+        layoutManager = slicer.app.layoutManager()
+        if layoutManager is not None:
+          # Try to get plot widget and display the chart
+          plotWidget = layoutManager.plotWidget(0)
+          if plotWidget is not None:
+            plotViewNode = plotWidget.mrmlPlotViewNode()
+            if plotViewNode is not None:
+              plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+              self._logToWidget(self.populationLogInfo, "Plot successfully displayed in plot viewer")
 
-            # Force the plot widget to fit the view
-            try:
-              plotWidget.fitToContent()
-            except:
-              pass  # fitToContent might not be available in all Slicer versions
+              # Force the plot widget to fit the view
+              try:
+                plotWidget.fitToContent()
+              except:
+                pass  # fitToContent might not be available in all Slicer versions
+            else:
+              self._logToWidget(self.populationLogInfo, "Warning: Plot view node not available")
           else:
-            self._logToWidget(self.populationLogInfo, "Warning: Plot view node not available")
-        else:
-          self._logToWidget(self.populationLogInfo, "Warning: Could not access plot widget - plot will be available in Data module")
+            self._logToWidget(self.populationLogInfo, "Warning: Could not access plot widget - plot will be available in Data module")
 
-          # Fallback: Try to switch to a different layout that might work better
-          try:
-            # Try the tabbed slice view which often has plot capabilities
-            layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutTabbedSliceView)
-            slicer.app.processEvents()
-            plotWidget = layoutManager.plotWidget(0)
-            if plotWidget is not None:
-              plotViewNode = plotWidget.mrmlPlotViewNode()
-              if plotViewNode is not None:
-                plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
-                self._logToWidget(self.populationLogInfo, "Plot displayed using fallback layout")
-          except:
-            pass
-      else:
-        self._logToWidget(self.populationLogInfo, "Warning: Layout manager not available")
+            # Fallback: Try to switch to a different layout that might work better
+            try:
+              # Try the tabbed slice view which often has plot capabilities
+              layoutManager.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutTabbedSliceView)
+              slicer.app.processEvents()
+              plotWidget = layoutManager.plotWidget(0)
+              if plotWidget is not None:
+                plotViewNode = plotWidget.mrmlPlotViewNode()
+                if plotViewNode is not None:
+                  plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+                  self._logToWidget(self.populationLogInfo, "Plot displayed using fallback layout")
+            except:
+              pass
+        else:
+          self._logToWidget(self.populationLogInfo, "Warning: Layout manager not available")
 
       return {"success": True, "chart_node": plotChartNode, "series_node": plotSeriesNode, "table_node": tableNode}
 
@@ -7057,36 +7062,25 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       # Create or update the plot with the moving point
       self.createMorphospacePlot()
 
-      # Switch to custom 3D + Plot layout (after plot is created)
-      logic = InterDeCALogic()
-      logic.setMorphospaceLayout()
-
-      # Display the chart in the plot view
+      # Display the chart using ShowChartInLayout (this links chart to a plot view)
       if hasattr(self, 'morphospaceChartNode') and self.morphospaceChartNode:
-        lm = slicer.app.layoutManager()
-        print(f"[Morphospace] Attempting to display chart in plot view")
-        print(f"[Morphospace] Chart node ID: {self.morphospaceChartNode.GetID()}")
-
-        # Try multiple times to get the plot widget (layout might not be fully ready)
-        plotWidget = None
-        for attempt in range(5):
-          plotWidget = lm.plotWidget(0)
-          if plotWidget:
-            print(f"[Morphospace] Got plot widget on attempt {attempt + 1}")
-            break
+        try:
+          plotsLogic = slicer.modules.plots.logic()
+          plotsLogic.ShowChartInLayout(self.morphospaceChartNode)
           slicer.app.processEvents()
+        except Exception:
+          pass  # Silently handle if ShowChartInLayout fails
 
-        if plotWidget:
-          plotViewNode = plotWidget.mrmlPlotViewNode()
-          print(f"[Morphospace] Plot view node: {plotViewNode}")
-          if plotViewNode:
-            print(f"[Morphospace] Setting chart node ID on plot view")
-            plotViewNode.SetPlotChartNodeID(self.morphospaceChartNode.GetID())
-            print(f"[Morphospace] Chart displayed successfully")
-          else:
-            print(f"[Morphospace] ERROR: Could not get plot view node")
-        else:
-          print(f"[Morphospace] ERROR: Could not get plot widget")
+      # Switch to our custom 3D + Plot layout for side-by-side view
+      logic = InterDeCALogic()
+      layout_id, plotViewNode = logic.setMorphospaceLayout()
+      
+      # Ensure chart is set on the plot view node in our custom layout
+      if plotViewNode and hasattr(self, 'morphospaceChartNode') and self.morphospaceChartNode:
+        if plotViewNode.GetPlotChartNodeID() != self.morphospaceChartNode.GetID():
+          plotViewNode.SetPlotChartNodeID(self.morphospaceChartNode.GetID())
+          slicer.app.processEvents()
+          slicer.util.forceRenderAllViews()
 
       # Apply the starting texture colors to the model
       self.applyMorphospaceColors(self.morphospaceCurrentPoint)
@@ -7159,13 +7153,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
           variance_explained = result["pca_model"].explained_variance_ratio_
 
         # Create the base plot (same as population analysis)
+        # Pass displayInLayout=False to avoid layout switching - we'll display in our custom layout
         plotResult = self.createPopulationPlot(
           result["reduced_data"],
           result["texture_names"],
           result["method"],
           x_axis_idx=x_axis_idx,
           y_axis_idx=y_axis_idx,
-          variance_explained=variance_explained
+          variance_explained=variance_explained,
+          displayInLayout=False
         )
 
         if not plotResult.get("success", False):
@@ -7245,24 +7241,38 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       x_axis_idx = self.multiRecolorXAxisCombo.currentIndex if self.multiRecolorXAxisCombo.enabled else 0
       y_axis_idx = self.multiRecolorYAxisCombo.currentIndex if self.multiRecolorYAxisCombo.enabled else 1
 
+      # Get the new coordinates
+      new_x = float(self.morphospaceCurrentPoint[x_axis_idx])
+      new_y = float(self.morphospaceCurrentPoint[y_axis_idx])
+
       # Update the table with new coordinates
-      xArray = self.morphospaceMovingPointTable.GetTable().GetColumn(0)
-      yArray = self.morphospaceMovingPointTable.GetTable().GetColumn(1)
+      table = self.morphospaceMovingPointTable.GetTable()
+      xArray = table.GetColumn(0)
+      yArray = table.GetColumn(1)
 
-      if xArray and yArray:
-        xArray.SetValue(0, float(self.morphospaceCurrentPoint[x_axis_idx]))
-        yArray.SetValue(0, float(self.morphospaceCurrentPoint[y_axis_idx]))
-
-        # Notify the table that it has been modified
-        self.morphospaceMovingPointTable.GetTable().Modified()
+      if xArray and yArray and table.GetNumberOfRows() > 0:
+        xArray.SetValue(0, new_x)
+        yArray.SetValue(0, new_y)
+        
+        # Mark arrays and table as modified
+        xArray.Modified()
+        yArray.Modified()
+        table.Modified()
         self.morphospaceMovingPointTable.Modified()
 
-        # Also notify the series
+        # Force plot update by removing and re-adding the series
         if hasattr(self, 'morphospaceMovingPointSeries') and self.morphospaceMovingPointSeries:
-          self.morphospaceMovingPointSeries.Modified()
+          if hasattr(self, 'morphospaceChartNode') and self.morphospaceChartNode:
+            seriesId = self.morphospaceMovingPointSeries.GetID()
+            # Remove the series
+            self.morphospaceChartNode.RemovePlotSeriesNodeID(seriesId)
+            # Re-add the series (this forces the plot to re-read the data)
+            self.morphospaceChartNode.AddAndObservePlotSeriesNodeID(seriesId)
 
     except Exception as e:
       self.morphospaceLogInfo.append(f"Error updating point: {str(e)}")
+      import traceback
+      traceback.print_exc()
 
   def applyMorphospaceColors(self, pca_coordinates):
     """Apply colors to the model based on PCA/ICA coordinates using inverse transform"""
@@ -13171,7 +13181,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     viewing of the 3D model and the PCA/ICA/UMAP scatter plot.
 
     Returns:
-        int: The custom layout ID (501)
+        tuple: (custom_layout_id, plot_view_node) or (None, None) on error
     """
     try:
       lm = slicer.app.layoutManager()
@@ -13179,28 +13189,32 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       CUSTOM_LAYOUT_ID = 501  # Using 501 as custom layout ID (any unused integer >= 100 works)
 
-      layoutXml = """<layout type="horizontal" split="true"><item stretch="1"><view class="vtkMRMLViewNode" singletontag="1"><property name="viewlabel" action="default">1</property></view></item><item stretch="1"><view class="vtkMRMLPlotViewNode" singletontag="Plot"><property name="viewlabel" action="default">P</property></view></item></layout>"""
+      layoutXml = """<layout type="horizontal" split="true"><item stretch="1"><view class="vtkMRMLViewNode" singletontag="1"><property name="viewlabel" action="default">1</property></view></item><item stretch="1"><view class="vtkMRMLPlotViewNode" singletontag="PlotViewMorphospace"><property name="viewlabel" action="default">P</property></view></item></layout>"""
 
-      # Register the custom layout
-      print(f"[Morphospace] Registering custom layout {CUSTOM_LAYOUT_ID}")
+      # Register and apply the custom layout
       layoutNode.AddLayoutDescription(CUSTOM_LAYOUT_ID, layoutXml)
-
-      # Apply the layout using the layout manager
-      print(f"[Morphospace] Applying layout {CUSTOM_LAYOUT_ID}")
       lm.setLayout(CUSTOM_LAYOUT_ID)
 
-      # Process events to ensure layout is applied
-      slicer.app.processEvents()
+      # Process events to ensure layout is fully applied
+      for _ in range(3):
+        slicer.app.processEvents()
 
-      print(f"[Morphospace] Layout applied successfully")
+      # Get the plot view node from the layout
+      plotViewNode = None
+      for attempt in range(10):
+        plotWidget = lm.plotWidget(0)
+        if plotWidget:
+          plotViewNode = plotWidget.mrmlPlotViewNode()
+          if plotViewNode:
+            break
+        slicer.app.processEvents()
+        import time
+        time.sleep(0.05)
 
-      return CUSTOM_LAYOUT_ID
+      return CUSTOM_LAYOUT_ID, plotViewNode
 
-    except Exception as e:
-      print(f"[Morphospace] Error setting morphospace layout: {e}")
-      import traceback
-      traceback.print_exc()
-      return None
+    except Exception:
+      return None, None
 
 class ColorTheme:
     """Centralized color theme management for InterDeCA.
