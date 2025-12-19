@@ -491,8 +491,33 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.outputDirectoryDC.setToolTip("Select directory for DeCA output")
     inputDirLayout.addRow("Output directory: ", self.outputDirectoryDC)
 
+
     # Add spacing
     DeCATabLayout.addRow(" ", qt.QLabel())
+
+    #
+    # Atlas Override Section
+    #
+    self.atlasOverrideCollapsibleButton = ctk.ctkCollapsibleButton()
+    self.atlasOverrideCollapsibleButton.text = "Atlas Override (Optional)"
+    self.atlasOverrideCollapsibleButton.collapsed = True
+    self.atlasOverrideCollapsibleButton.setStyleSheet(ColorTheme.getHeaderStyle())
+    DeCATabLayout.addRow(self.atlasOverrideCollapsibleButton)
+    atlasOverrideLayout = qt.QFormLayout(self.atlasOverrideCollapsibleButton)
+
+    # Atlas Model
+    self.atlasModelOverride = ctk.ctkPathLineEdit()
+    self.atlasModelOverride.filters = ctk.ctkPathLineEdit.Files
+    self.atlasModelOverride.nameFilters = ["*.ply", "*.stl", "*.obj", "*.vtk", "*.vtp"]
+    self.atlasModelOverride.setToolTip("Select a pre-calculated atlas model to skip generation")
+    atlasOverrideLayout.addRow("Atlas Model: ", self.atlasModelOverride)
+
+    # Atlas Landmarks
+    self.atlasLandmarkOverride = ctk.ctkPathLineEdit()
+    self.atlasLandmarkOverride.filters = ctk.ctkPathLineEdit.Files
+    self.atlasLandmarkOverride.nameFilters = ["*.mrk.json", "*.fcsv", "*.json"]
+    self.atlasLandmarkOverride.setToolTip("Select corresponding landmarks for the atlas model")
+    atlasOverrideLayout.addRow("Atlas Landmarks: ", self.atlasLandmarkOverride)
 
     # --- Blender integration ---
     # Configures external Blender processing for UV mapping and texture baking
@@ -719,6 +744,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.textureDirectoryDC.connect('currentPathChanged(QString)', self.onTextureDirectoryChangedDC)  # Handles texture path changes
     self.blenderExeEdit.connect('validInputChanged(bool)', self.onParameterSelectDC)  # Validates Blender executable path
     self.cancelButtonDC.connect('clicked(bool)', self.onCancelOperationDC)  # Connects cancel button to handler
+    self.atlasModelOverride.connect('validInputChanged(bool)', self.onParameterSelectDC)
+    self.atlasLandmarkOverride.connect('validInputChanged(bool)', self.onParameterSelectDC)
 
     # Restores previously saved directory paths from persistent settings
     self.restoreSavedDirectories()  # Loads saved paths for user convenience
@@ -2203,12 +2230,9 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     
     # Check calling context if needed (not implemented yet, relying on selectors)
     
-    # Debug info
-    print(f"DEBUG: updateSelectionMethodDisplay | Markup: {hasMarkup} ({markupNode.GetName() if markupNode else 'None'}) | Model: {hasModel} ({regionModelNode.GetName() if regionModelNode else 'None'})")
-    
     if hasattr(self, 'applyLandmarkSelectionButton'):
         newState = hasModel and hasMarkup
-        print(f"DEBUG: Setting Apply Button Enabled: {newState}")
+
         self.applyLandmarkSelectionButton.enabled = newState
             
     if hasattr(self, 'exportLandmarkSelectionButton'):
@@ -4297,10 +4321,34 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       self.logInfoDC.appendPlainText(f"Warning: Failed to load representative model: {e}")
 
-    # ---- 1) Generate atlas (Slicer) ----
-    # Always generating atlas and using rigid body alignment (no scaling)
-    self.updateProgressDC(10, "Generating atlas...")
-    self.atlasModel, self.atlasLMs = self.generateNewAtlas(False, self.logInfoDC)
+    # ---- 1) Generate atlas or Load Existing Atlas ----
+    atlasOverridePath = self.atlasModelOverride.currentPath
+    atlasLandmarksOverridePath = self.atlasLandmarkOverride.currentPath
+    
+    if atlasOverridePath and atlasLandmarksOverridePath:
+      self.updateProgressDC(10, "Loading external atlas...")
+      self.logInfoDC.appendPlainText(f"Atlas Override enabled. Loading atlas from: {atlasOverridePath}")
+      
+      try:
+        self.atlasModel = slicer.util.loadModel(atlasOverridePath)
+        self.atlasLMs = slicer.util.loadMarkups(atlasLandmarksOverridePath)
+        
+        if self.atlasModel and self.atlasLMs:
+             self.logInfoDC.appendPlainText("Successfully loaded external Atlas Model and Landmarks.")
+        else:
+             self.logInfoDC.appendPlainText("Error: Failed to load external Atlas Model or Landmarks.")
+             self.atlasModel = None
+             self.atlasLMs = None
+             
+      except Exception as e:
+        self.logInfoDC.appendPlainText(f"Error loading external atlas: {e}")
+        self.atlasModel = None
+        self.atlasLMs = None
+        
+    else:
+      # Always generating atlas and using rigid body alignment (no scaling)
+      self.updateProgressDC(10, "Generating atlas...")
+      self.atlasModel, self.atlasLMs = self.generateNewAtlas(False, self.logInfoDC)
 
     # Check if atlas generation was successful
     if self.atlasModel is None or self.atlasLMs is None:
