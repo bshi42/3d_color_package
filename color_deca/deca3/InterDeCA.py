@@ -36,21 +36,7 @@ import imageio # slicer.util.pip_install('imageio')
 import glob
 import colorsys
 
-# Import PCA Morphospace module for color morphospace analysis
-try:
-    import sys
-    import os
-    # Add the pca_morphospace directory to Python path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    pca_morphospace_dir = os.path.join(current_dir, 'pca_morphospace')
-    if pca_morphospace_dir not in sys.path:
-        sys.path.insert(0, pca_morphospace_dir)
 
-    # Now import the module
-    import PCAMorphospace
-    PCA_MORPHOSPACE_AVAILABLE = True
-except ImportError as e:
-    PCA_MORPHOSPACE_AVAILABLE = False
 
 # Attempts to import optional machine learning libraries
 try:
@@ -396,10 +382,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     meshSelectionTab = qt.QWidget()
     meshSelectionTabLayout = qt.QFormLayout(meshSelectionTab)
-    colorsEDATab = qt.QWidget()
-    colorsEDATabLayout = qt.QFormLayout(colorsEDATab)
-    recolorTab = qt.QWidget()
-    recolorTabLayout = qt.QFormLayout(recolorTab)
     multiRecolorTab = qt.QWidget()
     multiRecolorTabLayout = qt.QFormLayout(multiRecolorTab)
 
@@ -407,20 +389,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     tabsWidget.addTab(meshSelectionTab, "Mesh Selection")
     if SHOW_VISUALIZE_RESULTS:
       tabsWidget.addTab(visualizeTab, "Visualize Results")
-    tabsWidget.addTab(colorsEDATab, "Colors EDA")
-    tabsWidget.addTab(recolorTab, "Recolor")
     tabsWidget.addTab(multiRecolorTab, "MultiRecolor")
 
     # Add PCA Morphospace tab if module is available
-    if PCA_MORPHOSPACE_AVAILABLE:
-      try:
-        pcaMorphospaceWidget = PCAMorphospace.PCAMorphospaceWidget(self)
-        pcaMorphospaceTab = pcaMorphospaceWidget.setup()
-        tabsWidget.addTab(pcaMorphospaceTab, "PCA Morphospace")
-      except Exception as e:
-        print(f"Error creating PCA Morphospace tab: {e}")
-        import traceback
-        traceback.print_exc()
+
 
     self.layout.addWidget(tabsWidget)
 
@@ -895,378 +867,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self.visOriginalModelFileSelector.connect("currentIndexChanged(int)", self.onVisOriginalModelFileSelected)
       self.interpolationSlider.connect("valueChanged(double)", self.onInterpolationSliderChanged)
       self.tabsWidget.connect('currentChanged(int)', self.onTabChanged)
-      self.startVisualizationButton.connect('clicked(bool)', self.onStartVisualizationButton)
-
-    # Auto-detect Blender executable on startup
-    self.autoDetectBlender()
-
-    ################################### Phase 1: Data Sampling ###################################
-    # Data Sampling section
-    # Creates interface for sampling color data from textured models
-    dataSamplingWidget = ctk.ctkCollapsibleButton()
-    dataSamplingWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    dataSamplingWidget.setStyleSheet(ColorTheme.getHeaderStyle())
-    dataSamplingWidgetLayout = qt.QFormLayout(dataSamplingWidget)
-    dataSamplingWidgetLayout.setVerticalSpacing(6)
-    dataSamplingWidgetLayout.setHorizontalSpacing(8)
-    dataSamplingWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    dataSamplingWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    dataSamplingWidget.text = "Phase 1: Data Sampling"  # First step: extract colors
-    colorsEDATabLayout.addRow(dataSamplingWidget)
-
-    # Atlas model selector for Colors EDA
-    self.colorsAtlasModelSelect = slicer.qMRMLNodeComboBox()
-    self.colorsAtlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.colorsAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.colorsAtlasModelSelect.setToolTip("Select the atlas model for color analysis")
-    self.colorsAtlasModelSelect.selectNodeUponCreation = False
-    self.colorsAtlasModelSelect.noneEnabled = True
-    self.colorsAtlasModelSelect.addEnabled = False
-    self.colorsAtlasModelSelect.removeEnabled = False
-    self.colorsAtlasModelSelect.showHidden = False
-    self.colorsAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    dataSamplingWidgetLayout.addRow("Model: ", self.colorsAtlasModelSelect)
-
-    # Baked textures directory selector
-    self.bakedTexturesDirectorySelector = ctk.ctkPathLineEdit()
-    self.bakedTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.bakedTexturesDirectorySelector.setToolTip("Select directory containing baked atlas-space textures")
-    dataSamplingWidgetLayout.addRow("Textures Directory: ", self.bakedTexturesDirectorySelector)
-
-    # Percentage of faces to sample
-    self.faceSamplePercentSpin = qt.QDoubleSpinBox()
-    self.faceSamplePercentSpin.setRange(1.0, 100.0)
-    self.faceSamplePercentSpin.setSingleStep(5.0)
-    self.faceSamplePercentSpin.setSuffix(" %")
-    self.faceSamplePercentSpin.setValue(10.0)  # Default to all faces
-    self.faceSamplePercentSpin.setToolTip("Percentage of faces to randomly sample from the atlas model")
-    dataSamplingWidgetLayout.addRow("Sample Percentage: ", self.faceSamplePercentSpin)
-
-    # Sample Data button
-    self.sampleDataButton = qt.QPushButton("Sample Data")
-    self.sampleDataButton.toolTip = "Sample faces and calculate color averages from textures"
-    self.sampleDataButton.enabled = False
-    self.sampleDataButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    dataSamplingWidgetLayout.addRow(self.sampleDataButton)
-
-    # Sampling progress and status
-    self.samplingProgressBar = qt.QProgressBar()
-    self.samplingProgressBar.setVisible(False)
-    dataSamplingWidgetLayout.addRow("Sampling Progress: ", self.samplingProgressBar)
-
-    self.samplingStatusLabel = qt.QLabel("No data sampled")
-    self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('neutral'))
-    dataSamplingWidgetLayout.addRow("Status: ", self.samplingStatusLabel)
-
-    ################################### Colors EDA Tab ###################################
-    ################################### Phase 2: Analysis & Plotting ###################################
-    # Analysis section
-    # Creates interface for statistical analysis and visualization of color data
-    analysisWidget = ctk.ctkCollapsibleButton()
-    analysisWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    analysisWidget.setStyleSheet(ColorTheme.getHeaderStyle())
-    analysisWidgetLayout = qt.QFormLayout(analysisWidget)
-    analysisWidgetLayout.setVerticalSpacing(6)
-    analysisWidgetLayout.setHorizontalSpacing(8)
-    analysisWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    analysisWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    analysisWidget.text = "Phase 2: Analysis & Plotting"  # Second step: analyze patterns
-    analysisWidget.collapsed = True  
-    colorsEDATabLayout.addRow(analysisWidget)
-
-    # Color space selection - compact layout
-    self.colorSpaceWidget = qt.QWidget()
-    self.colorSpaceWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.colorSpaceWidget.setFixedHeight(25)  # Fixed height for consistency
-    self.colorSpaceLayout = qt.QHBoxLayout(self.colorSpaceWidget)
-    self.colorSpaceLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
-    self.colorSpaceLayout.setSpacing(15)  # Slightly more space between buttons
-
-    self.rgbRadio = qt.QRadioButton("RGB")
-    self.hsvRadio = qt.QRadioButton("HSV")
-    self.hsvRadio.setChecked(True)
-
-    self.colorSpaceButtonGroup = qt.QButtonGroup()
-    self.colorSpaceButtonGroup.addButton(self.rgbRadio)
-    self.colorSpaceButtonGroup.addButton(self.hsvRadio)
-    self.colorSpaceLayout.addWidget(self.rgbRadio)
-    self.colorSpaceLayout.addWidget(self.hsvRadio)
-    self.colorSpaceLayout.addStretch()  # Push buttons to the left
-
-    analysisWidgetLayout.addRow("Color Space:", self.colorSpaceWidget)
-
-    # Dimensionality reduction algorithm selection - compact layout
-    self.dimRedWidget = qt.QWidget()
-    self.dimRedWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.dimRedWidget.setFixedHeight(25)  # Fixed height for consistency
-    self.dimRedLayout = qt.QHBoxLayout(self.dimRedWidget)
-    self.dimRedLayout.setContentsMargins(0, 2, 0, 2)  # Small vertical margins
-    self.dimRedLayout.setSpacing(15)  # Slightly more space between buttons
-
-    self.pcaRadio = qt.QRadioButton("PCA")
-    self.pcaRadio.setChecked(True)
-    self.icaRadio = qt.QRadioButton("ICA")
-    self.umapRadio = qt.QRadioButton("UMAP")
-
-    self.dimRedButtonGroup = qt.QButtonGroup()
-    self.dimRedButtonGroup.addButton(self.pcaRadio)
-    self.dimRedButtonGroup.addButton(self.icaRadio)
-    self.dimRedButtonGroup.addButton(self.umapRadio)
-    self.dimRedLayout.addWidget(self.pcaRadio)
-    self.dimRedLayout.addWidget(self.icaRadio)
-    self.dimRedLayout.addWidget(self.umapRadio)
-    self.dimRedLayout.addStretch()  # Push buttons to the left
-
-    analysisWidgetLayout.addRow("Dimensionality Reduction:", self.dimRedWidget)
-
-    # Enable/disable based on availability
-    if not SKLEARN_AVAILABLE:
-        self.pcaRadio.setEnabled(False)
-        self.icaRadio.setEnabled(False)
-        self.pcaRadio.setToolTip("sklearn not available")
-        self.icaRadio.setToolTip("sklearn not available")
-    if not UMAP_AVAILABLE:
-        self.umapRadio.setEnabled(False)
-        self.umapRadio.setToolTip("umap-learn not available")
-
-    # View mode selection - 2D vs Channel views
-    self.viewModeWidget = qt.QWidget()
-    self.viewModeWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Fixed)
-    self.viewModeWidget.setFixedHeight(25)
-    self.viewModeLayout = qt.QHBoxLayout(self.viewModeWidget)
-    self.viewModeLayout.setContentsMargins(0, 2, 0, 2)
-    self.viewModeLayout.setSpacing(15)
-
-    self.view2DRadio = qt.QRadioButton("2D (Dim Reduction)")
-    self.view2DRadio.setChecked(True)
-    self.viewChannelRadio = qt.QRadioButton("Channel Histograms")
-
-    self.viewModeButtonGroup = qt.QButtonGroup()
-    self.viewModeButtonGroup.addButton(self.view2DRadio)
-    self.viewModeButtonGroup.addButton(self.viewChannelRadio)
-    self.viewModeLayout.addWidget(self.view2DRadio)
-    self.viewModeLayout.addWidget(self.viewChannelRadio)
-    self.viewModeLayout.addStretch()
-
-    analysisWidgetLayout.addRow("View Mode:", self.viewModeWidget)
-
-    # Plot button (renamed from "Run Analysis")
-    self.plotButton = qt.QPushButton("Plot")
-    self.plotButton.toolTip = "Generate plots from sampled data using selected analysis settings"
-    self.plotButton.enabled = False
-    self.plotButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    analysisWidgetLayout.addRow(self.plotButton)
-
-    # Analysis progress and log information
-    self.analysisProgressBar = qt.QProgressBar()
-    self.analysisProgressBar.setVisible(False)
-    analysisWidgetLayout.addRow("Analysis Progress: ", self.analysisProgressBar)
-
-    self.colorsEDALogInfo = qt.QPlainTextEdit()
-    self.colorsEDALogInfo.setPlaceholderText("Colors EDA log information")
-    self.colorsEDALogInfo.setReadOnly(True)
-    self.colorsEDALogInfo.setMaximumHeight(150)
-    analysisWidgetLayout.addRow(self.colorsEDALogInfo)
-
-    # Channel Histogram controls (rendered in the main plot viewer)
-    self.histCollapsible = ctk.ctkCollapsibleButton()
-    self.histCollapsible.text = "Channel Histogram Options"
-    self.histCollapsible.collapsed = False
-    self.histCollapsible.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    self.histCollapsible.setStyleSheet(ColorTheme.getHeaderStyle())
-    self.histLayout = qt.QFormLayout(self.histCollapsible)
-    self.histLayout.setContentsMargins(0, 0, 0, 0)
-    self.histLayout.setSpacing(4)
-
-    self.histChannelSelector = qt.QComboBox()
-    self.histChannelSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.histChannelSelector.addItems(["Channel 1", "Channel 2", "Channel 3"])  # Labels updated after run
-    self.histChannelSelector.setEnabled(False)
-    self.histLayout.addRow("Channel:", self.histChannelSelector)
-
-    # Color-by-bin-average toggle
-    self.colorByBinAvgCheck = qt.QCheckBox("Color bars by bin average")
-    self.colorByBinAvgCheck.setChecked(False)
-    self.histLayout.addRow(self.colorByBinAvgCheck)
-
-    # HSV Options section
-    self.hsvOptionsLabel = qt.QLabel("HSV Options:")
-    self.hsvOptionsLabel.setStyleSheet(ColorTheme.getSectionLabelStyle())
-    self.histLayout.addRow(self.hsvOptionsLabel)
-
-    # Color enhancement option for 2D plots
-    self.enhanceColorsCheck = qt.QCheckBox("Enhance colors in 2D plot for visibility")
-    self.enhanceColorsCheck.setChecked(False)  # Default to actual colors
-    self.enhanceColorsCheck.setToolTip("When checked, boosts saturation/value for better visibility. When unchecked, uses actual colors from data.")
-    self.histLayout.addRow(self.enhanceColorsCheck)
-
-    # HSV Filtering section
-    self.hsvFilterLabel = qt.QLabel("HSV Filtering (affects dim reduction & hue histogram):")
-    self.hsvFilterLabel.setStyleSheet(ColorTheme.getSectionLabelStyle())
-    self.histLayout.addRow(self.hsvFilterLabel)
-
-    # Saturation cutoff (percent)
-    self.satCutoffSpin = qt.QDoubleSpinBox()
-    self.satCutoffSpin.setRange(0.0, 100.0)
-    self.satCutoffSpin.setSingleStep(5.0)
-    self.satCutoffSpin.setSuffix(" %")
-    self.satCutoffSpin.setValue(10.0)   # default from our earlier fix
-    self.satCutoffSpin.setToolTip("Minimum saturation threshold for HSV filtering")
-    self.histLayout.addRow("Saturation cutoff:", self.satCutoffSpin)
-
-    self.valueCutoffSpin = qt.QDoubleSpinBox()
-    self.valueCutoffSpin.setRange(0.0, 100.0)
-    self.valueCutoffSpin.setSingleStep(5.0)
-    self.valueCutoffSpin.setSuffix(" %")
-    self.valueCutoffSpin.setValue(10.0)   # default from our earlier fix
-    self.valueCutoffSpin.setToolTip("Minimum value/brightness threshold for HSV filtering")
-    self.histLayout.addRow("Value cutoff:", self.valueCutoffSpin)
-
-    # Note: Removed auto-refresh event hooks - now manual refresh via Plot button
-
-    # Keep references to created MRML nodes (tables/series/charts) for cleanup
-    self.histTableNodes = []
-    self.histSeriesNodes = []
-    self.histChartNodes = []
-
-    analysisWidgetLayout.addRow(self.histCollapsible)
-    
-    # Hide histogram options by default (only show when Channel Histograms view mode is selected)
-    self.histCollapsible.setVisible(False)
-
-    # Store reference to analysis widget for enabling/disabling
-    self.analysisWidget = analysisWidget
-    
-    # Note: Following MultiRecolor pattern - don't disable parent collapsible,
-    # only disable individual interactive controls
-
-    # Connections for histogram controls
-    self.histChannelSelector.connect("currentIndexChanged(int)", self.onHistChannelChanged)
-
-    # Connections for Phase 1: Data Sampling
-    self.colorsAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onSamplingParameterChanged)
-    self.bakedTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onSamplingParameterChanged)
-    self.sampleDataButton.connect('clicked(bool)', self.onSampleDataButton)
-
-    # Connections for Phase 2: Analysis & Plotting
-    self.plotButton.connect('clicked(bool)', self.onPlotButton)
-    self.viewModeButtonGroup.connect('buttonClicked(QAbstractButton*)', self.onViewModeChanged)
-
-    # Connections for Region Selection
-    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
-    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
-    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
-    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
-    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
-
-    # Initialize sampled data storage
-    self.sampledColorData = None
-    self.sampledSpecimenNames = None
-    self.sampledFaceIndices = None
-
-    # Add vertical spacer so extra space goes below content
-    colorsEDATabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
-
-    ################################### Recolor Tab ###################################
-    # Layout within the Recolor tab
-    recolorWidget = ctk.ctkCollapsibleButton()
-    recolorWidget.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Maximum)
-    recolorWidget.setStyleSheet(ColorTheme.getHeaderStyle())
-    recolorWidgetLayout = qt.QFormLayout(recolorWidget)
-    recolorWidgetLayout.setVerticalSpacing(4)
-    recolorWidgetLayout.setHorizontalSpacing(8)
-    recolorWidgetLayout.setFormAlignment(qt.Qt.AlignTop)
-    recolorWidgetLayout.setLabelAlignment(qt.Qt.AlignLeft | qt.Qt.AlignVCenter)
-    recolorWidget.text = "Recolor Settings"
-    recolorTabLayout.addRow(recolorWidget)
-
-    # Atlas model selector for Recolor
-    self.recolorAtlasModelSelect = slicer.qMRMLNodeComboBox()
-    self.recolorAtlasModelSelect.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.recolorAtlasModelSelect.nodeTypes = (("vtkMRMLModelNode"), "")
-    self.recolorAtlasModelSelect.setToolTip("Select the atlas model for recoloring")
-    self.recolorAtlasModelSelect.selectNodeUponCreation = False
-    self.recolorAtlasModelSelect.noneEnabled = True
-    self.recolorAtlasModelSelect.addEnabled = False
-    self.recolorAtlasModelSelect.removeEnabled = False
-    self.recolorAtlasModelSelect.showHidden = False
-    self.recolorAtlasModelSelect.setMRMLScene(slicer.mrmlScene)
-    recolorWidgetLayout.addRow("Model: ", self.recolorAtlasModelSelect)
-
-    # Textures directory selector
-    self.recolorTexturesDirectorySelector = ctk.ctkPathLineEdit()
-    self.recolorTexturesDirectorySelector.filters = ctk.ctkPathLineEdit.Dirs
-    self.recolorTexturesDirectorySelector.setToolTip("Select directory containing texture images")
-    recolorWidgetLayout.addRow("Textures Directory: ", self.recolorTexturesDirectorySelector)
-
-    # Texture selection dropdown
-    self.recolorTextureSelector = qt.QComboBox()
-    self.recolorTextureSelector.setStyleSheet(ColorTheme.getComboBoxStyle())
-    self.recolorTextureSelector.setToolTip("Select a texture to apply to the model")
-    self.recolorTextureSelector.enabled = False
-    recolorWidgetLayout.addRow("Select Texture: ", self.recolorTextureSelector)
-
-    # Average face color checkbox
-    self.averageFaceColorCheckbox = qt.QCheckBox()
-    self.averageFaceColorCheckbox.setChecked(False)
-    self.averageFaceColorCheckbox.setToolTip("If checked, each face will be colored with the average color from the texture instead of using the texture directly")
-    recolorWidgetLayout.addRow("Average Face Colors: ", self.averageFaceColorCheckbox)
-
-    # Quantize colors checkbox
-    self.quantizeColorsCheckbox = qt.QCheckBox()
-    self.quantizeColorsCheckbox.setChecked(False)
-    self.quantizeColorsCheckbox.setEnabled(False)  # Initially disabled
-    self.quantizeColorsCheckbox.setToolTip("If checked, quantize the average face colors using k-means clustering in CIE Lab color space")
-    recolorWidgetLayout.addRow("Quantize Colors: ", self.quantizeColorsCheckbox)
-
-    # Number of color clusters
-    self.numColorClustersSpin = qt.QSpinBox()
-    self.numColorClustersSpin.setRange(2, 64)
-    self.numColorClustersSpin.setValue(8)  # Default value
-    self.numColorClustersSpin.setEnabled(False)  # Initially disabled
-    self.numColorClustersSpin.setToolTip("Number of color clusters for quantization (2-64)")
-    recolorWidgetLayout.addRow("Number of Colors: ", self.numColorClustersSpin)
-
-    # High contrast palette checkbox
-    self.useHighContrastPaletteCheckbox = qt.QCheckBox()
-    self.useHighContrastPaletteCheckbox.setChecked(False)
-    self.useHighContrastPaletteCheckbox.setEnabled(False)  # Initially disabled
-    self.useHighContrastPaletteCheckbox.setToolTip("If checked, use a high contrast color palette instead of the quantized colors from the texture")
-    recolorWidgetLayout.addRow("High Contrast Palette: ", self.useHighContrastPaletteCheckbox)
-
-    # Apply texture button
-    self.applyRecolorButton = qt.QPushButton("Apply Texture")
-    self.applyRecolorButton.toolTip = "Apply the selected texture to the atlas model"
-    self.applyRecolorButton.enabled = False
-    self.applyRecolorButton.setStyleSheet(ColorTheme.getButtonStyle('primary'))
-    recolorWidgetLayout.addRow(self.applyRecolorButton)
-
-    # Progress and log information for Recolor
-    self.recolorProgressBar = qt.QProgressBar()
-    self.recolorProgressBar.setVisible(False)
-    recolorWidgetLayout.addRow("Progress: ", self.recolorProgressBar)
-
-    self.recolorLogInfo = qt.QPlainTextEdit()
-    self.recolorLogInfo.setPlaceholderText("Recolor log information")
-    self.recolorLogInfo.setReadOnly(True)
-    self.recolorLogInfo.setMaximumHeight(150)
-    recolorWidgetLayout.addRow(self.recolorLogInfo)
-
-    # Connections for Recolor
-    self.recolorAtlasModelSelect.connect("currentNodeChanged(vtkMRMLNode*)", self.onRecolorParameterChanged)
-    self.recolorTexturesDirectorySelector.connect("currentPathChanged(QString)", self.onRecolorTexturesDirectoryChanged)
-    self.recolorTextureSelector.connect("currentIndexChanged(int)", self.onRecolorParameterChanged)
-    self.averageFaceColorCheckbox.connect("toggled(bool)", self.onAverageFaceColorToggled)
-    self.quantizeColorsCheckbox.connect("toggled(bool)", self.onQuantizeColorsToggled)
-    self.numColorClustersSpin.connect("valueChanged(int)", self.onRecolorParameterChanged)
-    self.useHighContrastPaletteCheckbox.connect("toggled(bool)", self.onRecolorParameterChanged)
-    self.applyRecolorButton.connect('clicked(bool)', self.onApplyRecolorButton)
-
-    # Add vertical spacer so extra space goes below content
-    recolorTabLayout.addItem(qt.QSpacerItem(0, 0, qt.QSizePolicy.Minimum, qt.QSizePolicy.Expanding))
-
-    ################################### MultiRecolor Tab ###################################
 
     # Step 1: Multi-texture clustering section
     clusteringWidget = ctk.ctkCollapsibleButton()
@@ -1603,6 +1203,19 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     except Exception as e:
       print(f"Note: Could not collapse Data Probe panel: {e}")
 
+    # --- Mesh Selection Connections ---
+    self.regionMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onRegionSelectionInputChanged)
+    self.selectionMarkupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
+    self.mirrorSelectionCheckbox.connect("toggled(bool)", self.onRegionSelectionInputChanged)
+    
+    self.createMarkupButton.connect('clicked(bool)', self.onCreateOrPlaceMarkup)
+    self.clearSelectionButton.connect('clicked(bool)', self.onClearSelection)
+    self.applyLandmarkSelectionButton.connect('clicked(bool)', self.onApplyLandmarkSelection)
+    self.exportLandmarkSelectionButton.connect('clicked(bool)', self.onExportLandmarkSelection)
+
+    # Initialize button states
+    self.onRegionSelectionInputChanged()
+
   def setupKeyboardShortcuts(self):
     """Setup keyboard shortcuts for the module"""
     try:
@@ -1667,6 +1280,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self._currentMarkupNode.RemoveObserver(self._markupEndInteractionObserver)
       if hasattr(self, '_markupPointAddedObserver'):
         self._currentMarkupNode.RemoveObserver(self._markupPointAddedObserver)
+      if hasattr(self, '_markupPointRemovedObserver'):
+        self._currentMarkupNode.RemoveObserver(self._markupPointRemovedObserver)
 
   def restoreTextureDirectories(self):
     """Restore texture directory paths from saved settings"""
@@ -1675,64 +1290,15 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if savedDecaTexture and not self.textureDirectoryDC.currentPath:
       self.textureDirectoryDC.setCurrentPath(savedDecaTexture)
     
-    # For Colors EDA, Recolor, and MultiRecolor: share texture directories
-    # Try to restore from saved settings, or sync from other tabs if empty
-    savedBakedTextures = self.settings.value("bakedTexturesDirectory", "")
-    savedRecolor = self.settings.value("recolorTexturesDirectory", "")
+    # Restore MultiRecolor texture directory
     savedMultiRecolor = self.settings.value("multiRecolorTextureDirectory", "")
-    
-    # Use the first available non-empty path as the common texture directory
-    commonTexturePath = savedBakedTextures or savedRecolor or savedMultiRecolor
-    
-    if commonTexturePath:
-      # Set all three texture directories to the common path
-      self.bakedTexturesDirectorySelector.setCurrentPath(commonTexturePath)
-      self.recolorTexturesDirectorySelector.setCurrentPath(commonTexturePath)
-      self.multiRecolorTextureDirectorySelector.setCurrentPath(commonTexturePath)
+    if savedMultiRecolor and not self.multiRecolorTextureDirectorySelector.currentPath:
+      self.multiRecolorTextureDirectorySelector.setCurrentPath(savedMultiRecolor)
   
   def saveTextureDirectory(self, key, path):
-    """Save a texture directory path to settings and sync across tabs"""
+    """Save a texture directory path to settings"""
     if path:
       self.settings.setValue(key, path)
-      # Sync texture directories across Colors EDA, Recolor, and MultiRecolor tabs
-      self.syncTextureDirectories(key, path)
-  
-  def syncTextureDirectories(self, sourceKey, path):
-    """Sync texture directory across Colors EDA, Recolor, and MultiRecolor tabs"""
-    if not path:
-      return
-    
-    # Sync between Colors EDA, Recolor, and MultiRecolor (not DeCA)
-    # Only update if the target directory is empty
-    if sourceKey == "bakedTexturesDirectory":
-      # Update Recolor if empty
-      if not self.recolorTexturesDirectorySelector.currentPath:
-        self.recolorTexturesDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("recolorTexturesDirectory", path)
-      # Update MultiRecolor if empty
-      if not self.multiRecolorTextureDirectorySelector.currentPath:
-        self.multiRecolorTextureDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("multiRecolorTextureDirectory", path)
-    
-    elif sourceKey == "recolorTexturesDirectory":
-      # Update Colors EDA if empty
-      if not self.bakedTexturesDirectorySelector.currentPath:
-        self.bakedTexturesDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("bakedTexturesDirectory", path)
-      # Update MultiRecolor if empty
-      if not self.multiRecolorTextureDirectorySelector.currentPath:
-        self.multiRecolorTextureDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("multiRecolorTextureDirectory", path)
-    
-    elif sourceKey == "multiRecolorTextureDirectory":
-      # Update Colors EDA if empty
-      if not self.bakedTexturesDirectorySelector.currentPath:
-        self.bakedTexturesDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("bakedTexturesDirectory", path)
-      # Update Recolor if empty
-      if not self.recolorTexturesDirectorySelector.currentPath:
-        self.recolorTexturesDirectorySelector.setCurrentPath(path)
-        self.settings.setValue("recolorTexturesDirectory", path)
 
 
   def autoDetectBlender(self):
@@ -2168,6 +1734,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       self._markupEndInteractionObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointEndInteractionEvent, self._onMarkupPointEndInteraction)
       # Observe when a new point is added (for auto-selection on placement)
       self._markupPointAddedObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self._onMarkupPointAdded)
+      # Also observe PointRemovedEvent just to be safe
+      self._markupPointRemovedObserver = markupNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointRemovedEvent, self._onMarkupPointModified)
 
     # Update button text and display based on markup type
     self._updateDrawButtonText()
@@ -2626,8 +2194,25 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   
   def _updateSelectionMethodDisplay(self):
     """Update the selection method display based on markup type and point count"""
-    # Removed selection method label display
-    pass
+    markupNode = self.selectionMarkupSelector.currentNode()
+    hasMarkup = bool(markupNode)
+    
+    # Try to get model from regionMeshSelector if available
+    regionModelNode = self.regionMeshSelector.currentNode() if hasattr(self, 'regionMeshSelector') else None
+    hasModel = bool(regionModelNode)
+    
+    # Check calling context if needed (not implemented yet, relying on selectors)
+    
+    # Debug info
+    print(f"DEBUG: updateSelectionMethodDisplay | Markup: {hasMarkup} ({markupNode.GetName() if markupNode else 'None'}) | Model: {hasModel} ({regionModelNode.GetName() if regionModelNode else 'None'})")
+    
+    if hasattr(self, 'applyLandmarkSelectionButton'):
+        newState = hasModel and hasMarkup
+        print(f"DEBUG: Setting Apply Button Enabled: {newState}")
+        self.applyLandmarkSelectionButton.enabled = newState
+            
+    if hasattr(self, 'exportLandmarkSelectionButton'):
+        self.exportLandmarkSelectionButton.enabled = hasModel and hasMarkup
   
   def _getSelectedPoints(self, markupNode):
     """Get list of selected landmark point indices"""
@@ -5388,11 +4973,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       if atlasModel:
         try:
           # Preselect the ATLAS Model in all relevant tabs
-          self.colorsAtlasModelSelect.setCurrentNode(atlasModel)
-          self.recolorAtlasModelSelect.setCurrentNode(atlasModel)
           self.multiRecolorAtlasModelSelect.setCurrentNode(atlasModel)
+          self.regionMeshSelector.setCurrentNode(atlasModel)
 
-          self.logInfoDC.appendPlainText("Auto-selected 'ATLAS Model' in Colors EDA, Recolor, and MultiRecolor tabs")
+          self.logInfoDC.appendPlainText("Auto-selected 'ATLAS Model' in MultiRecolor and Mesh Selection tabs")
         except Exception as e:
           self.logInfoDC.appendPlainText(f"Warning: Error setting atlas model selection: {e}")
       else:
@@ -5645,732 +5229,6 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         slicer.mrmlScene.RemoveNode(model)
       except Exception:
         pass
-
-  ################################### Colors EDA Functions ###################################
-
-  def onSamplingParameterChanged(self):
-    """Enable/disable the sample data button based on parameter selection"""
-    atlasSelected = bool(self.colorsAtlasModelSelect.currentNode())
-    texturesSelected = bool(self.bakedTexturesDirectorySelector.currentPath and
-                           os.path.isdir(self.bakedTexturesDirectorySelector.currentPath))
-    self.sampleDataButton.enabled = atlasSelected and texturesSelected
-
-    # Auto-select the atlas model in region selection target mesh
-    atlasModel = self.colorsAtlasModelSelect.currentNode()
-    if atlasModel:
-      # Only auto-select if the region mesh selector is empty or different
-      currentRegionMesh = self.regionMeshSelector.currentNode()
-      if not currentRegionMesh or currentRegionMesh.GetID() != atlasModel.GetID():
-        self.regionMeshSelector.setCurrentNode(atlasModel)
-
-    # Save the texture directory for persistence
-    if self.bakedTexturesDirectorySelector.currentPath:
-      self.saveTextureDirectory("bakedTexturesDirectory", self.bakedTexturesDirectorySelector.currentPath)
-
-  def onSampleDataButton(self):
-    """Sample faces and calculate color averages from textures"""
-    try:
-      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-      self.samplingProgressBar.setVisible(True)
-      self.samplingProgressBar.setValue(0)
-
-      # Get parameters
-      atlasModel = self.colorsAtlasModelSelect.currentNode()
-      texturesDir = self.bakedTexturesDirectorySelector.currentPath
-      randomSeed = 42
-      samplePercent = float(self.faceSamplePercentSpin.value)
-
-      self.samplingStatusLabel.setText("Sampling in progress...")
-      self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('progress'))
-
-      # Run the sampling (always samples full model)
-      logic = InterDeCALogic()
-      result = logic.sampleColorData(
-        atlasModel, texturesDir, randomSeed, samplePercent,
-        progressCallback=self.updateSamplingProgress,
-        logCallback=self.logSamplingMessage
-      )
-
-      if result and result.get('success'):
-        # Store the sampled data
-        self.sampledColorData = result['colorData']
-        self.sampledSpecimenNames = result['specimenNames']
-        self.sampledFaceIndices = result['faceIndices']
-
-        # Update status
-        nSpecimens = len(self.sampledSpecimenNames)
-        nFaces = len(self.sampledFaceIndices)
-
-        self.samplingStatusLabel.setText(f"Sampled {nFaces} faces from {nSpecimens} specimens")
-        self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('success'))
-
-        # Enable analysis phase (following MultiRecolor pattern)
-        self.plotButton.enabled = True
-
-        # Expand the analysis widget to show it's now active
-        self.analysisWidget.collapsed = False
-
-        self.colorsEDALogInfo.appendPlainText(f"Data sampling completed successfully!")
-        self.colorsEDALogInfo.appendPlainText(f"Sampled {nFaces} faces ({samplePercent:.1f}%) from {nSpecimens} specimens")
-      else:
-        self.samplingStatusLabel.setText("Sampling failed")
-        self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('error'))
-        self.colorsEDALogInfo.appendPlainText("Data sampling failed - check log for details")
-
-      self.samplingProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-
-    except Exception as e:
-      self.samplingProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-      self.samplingStatusLabel.setText("Sampling failed")
-      self.samplingStatusLabel.setStyleSheet(ColorTheme.getStatusLabelStyle('error'))
-      self.colorsEDALogInfo.appendPlainText(f"Error during sampling: {str(e)}")
-      slicer.util.errorDisplay(f"Data sampling failed: {str(e)}")
-      import traceback
-      traceback.print_exc()
-
-  def updateSamplingProgress(self, value):
-    """Update sampling progress bar"""
-    self.samplingProgressBar.setValue(int(value))
-    slicer.app.processEvents()
-
-  def logSamplingMessage(self, message):
-    """Log message during sampling"""
-    self.colorsEDALogInfo.appendPlainText(message)
-    slicer.app.processEvents()
-
-  def _ensureMainPlotViewNode(self):
-    """Get the main plot view node for displaying charts"""
-    try:
-      layoutManager = slicer.app.layoutManager()
-      plotWidget = layoutManager.plotWidget(0)
-      if plotWidget:
-        return plotWidget.mrmlPlotViewNode()
-      return None
-    except Exception:
-      return None
-
-  def _refreshCurrentHistogram(self):
-    """Re-render the histogram/scatter view using current UI options."""
-    if not hasattr(self, '_lastColorData') or not hasattr(self, '_lastColorSpace'):
-        return
-    if not self.viewChannelRadio.isChecked():
-        return  # only relevant to histogram view
-    try:
-        chan = int(self.histChannelSelector.currentIndex)
-    except Exception:
-        chan = 0
-    try:
-        self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, chan)
-    except Exception as e:
-        try: self.colorsEDALogInfo.appendPlainText(f"Refresh failed: {e}")
-        except: pass
-
-
-  def onPlotButton(self):
-    """Generate plots from sampled data using selected analysis settings"""
-    try:
-      # Check if we have sampled data
-      if self.sampledColorData is None:
-        slicer.util.errorDisplay("No sampled data available. Please run 'Sample Data' first.")
-        return
-
-      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-      self.analysisProgressBar.setVisible(True)
-      self.analysisProgressBar.setValue(0)
-
-      # Use full dataset (region filtering checkbox removed)
-      colorDataToAnalyze = self.sampledColorData
-      faceIndicesToAnalyze = self.sampledFaceIndices
-      useRegion = False  # Region filtering disabled
-
-      if useRegion and hasattr(self, 'selectedRegionFaces'):
-        # Filter faces to only those in the selected region
-        regionFaceSet = self.selectedRegionFaces
-
-        # Find which sampled face indices are in the region
-        maskIndices = [i for i, faceIdx in enumerate(self.sampledFaceIndices) if faceIdx in regionFaceSet]
-
-        if len(maskIndices) == 0:
-          slicer.util.warningDisplay("No sampled faces found in selected region. Using full dataset.")
-          self.colorsEDALogInfo.appendPlainText("Warning: No sampled faces in region, using full dataset")
-        else:
-          # Filter the color data to only include region faces
-          colorDataToAnalyze = self.sampledColorData[:, maskIndices, :]
-          faceIndicesToAnalyze = [self.sampledFaceIndices[i] for i in maskIndices]
-
-          nRegionFaces = len(faceIndicesToAnalyze)
-          nTotalFaces = len(self.sampledFaceIndices)
-          self.colorsEDALogInfo.appendPlainText(f"Using selected region: {nRegionFaces}/{nTotalFaces} sampled faces ({100*nRegionFaces/nTotalFaces:.1f}%)")
-
-      # Get analysis parameters
-      colorSpace = "HSV" if self.hsvRadio.isChecked() else "RGB"
-
-      if self.pcaRadio.isChecked():
-        dimRedAlgo = "PCA"
-      elif self.icaRadio.isChecked():
-        dimRedAlgo = "ICA"
-      else:
-        dimRedAlgo = "UMAP"
-
-      # Get HSV cutoff parameters for dimensionality reduction
-      satCutoff = float(self.satCutoffSpin.value)
-      valueCutoff = float(self.valueCutoffSpin.value)
-      enhanceColors = bool(self.enhanceColorsCheck.isChecked())
-
-      self.colorsEDALogInfo.appendPlainText(f"Starting analysis on sampled data...")
-      self.colorsEDALogInfo.appendPlainText(f"Color space: {colorSpace}")
-      self.colorsEDALogInfo.appendPlainText(f"Dimensionality reduction: {dimRedAlgo}")
-
-      # Run the analysis on pre-sampled (and optionally filtered) data
-      logic = InterDeCALogic()
-      result = logic.runColorsEDAFromSampledData(
-        colorDataToAnalyze, self.sampledSpecimenNames, colorSpace, dimRedAlgo,
-        progressCallback=self.updateAnalysisProgress,
-        logCallback=self.logAnalysisMessage,
-        satCutoff=satCutoff,
-        valueCutoff=valueCutoff,
-        enhanceColors=enhanceColors
-      )
-
-      if result and isinstance(result, dict) and result.get('success'):
-        self.colorsEDALogInfo.appendPlainText("Analysis completed successfully!")
-
-        # Get model name for plot title
-        atlasModel = self.colorsAtlasModelSelect.currentNode()
-        modelName = atlasModel.GetName() if atlasModel else "Unknown Model"
-
-        # Create plot using Widget's plot creation method
-        plotResult = self.createColorsEDAPlot(
-          result['reducedData'],
-          result['specimenNames'],
-          result['nFaces'],
-          result['colorSpace'],
-          result['algorithm'],
-          result.get('originalColorData'),
-          result.get('enhanceColors', False),
-          modelName=modelName,
-          useRegion=useRegion
-        )
-
-        # Save color data and enable histogram selector
-        if 'colorData' in result:
-          self._lastColorData = result['colorData']  # Full dataset
-          self._lastColorSpace = colorSpace
-          self._refreshHistogramChannelOptions(colorSpace)
-          # Default to first channel
-          self.histChannelSelector.setCurrentIndex(0)
-
-          # Store the cutoff values used for this analysis
-          self._lastSatCutoff = satCutoff
-          self._lastValueCutoff = valueCutoff
-
-          # Store the 2D plot chart node for view switching
-          if plotResult and plotResult.get('chartNode'):
-            self._last2DPlotChartNode = plotResult['chartNode']
-
-          # Show appropriate view based on radio button selection
-          if self.view2DRadio.isChecked():
-            self.colorsEDALogInfo.appendPlainText("Results plotted in 2D viewer")
-            # Try to maximize the plot viewer
-            try:
-              self.maximizePlotViewer(self.colorsEDALogInfo)
-            except Exception as e:
-              self.colorsEDALogInfo.appendPlainText(f"Note: Could not maximize plot viewer: {e}")
-          else:
-            self.colorsEDALogInfo.appendPlainText("Channel histogram view enabled")
-            try:
-              self._refreshCurrentHistogram()
-            except Exception as e:
-              self.colorsEDALogInfo.appendPlainText(f"Failed to show histogram: {e}")
-      else:
-        self.colorsEDALogInfo.appendPlainText("Analysis failed - check log for details")
-
-      self.analysisProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-
-    except Exception as e:
-      self.analysisProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-      self.colorsEDALogInfo.appendPlainText(f"Error: {str(e)}")
-      slicer.util.errorDisplay(f"Analysis failed: {str(e)}")
-      import traceback
-      traceback.print_exc()
-
-  def updateAnalysisProgress(self, value):
-    """Update analysis progress bar"""
-    self.analysisProgressBar.setValue(int(value))
-    slicer.app.processEvents()
-
-  def logAnalysisMessage(self, message):
-    """Log message during analysis"""
-    self.colorsEDALogInfo.appendPlainText(message)
-    slicer.app.processEvents()
-
-  # Legacy function names kept for compatibility with existing logic methods
-  def updateColorsEDAProgress(self, value):
-    """Update progress bar (legacy compatibility)"""
-    self.analysisProgressBar.setValue(int(value))
-    slicer.app.processEvents()
-
-  def logColorsEDAMessage(self, message):
-    """Log message to the Colors EDA log (legacy compatibility)"""
-    self.colorsEDALogInfo.appendPlainText(message)
-    slicer.app.processEvents()
-
-  def _clearHistogramNodes(self):
-    """Remove previously created MRML nodes for histograms to keep scene clean."""
-    try:
-      for n in getattr(self, 'histSeriesNodes', []):
-        if n:
-          slicer.mrmlScene.RemoveNode(n)
-      for n in getattr(self, 'histTableNodes', []):
-        if n:
-          slicer.mrmlScene.RemoveNode(n)
-      for n in getattr(self, 'histChartNodes', []):
-        if n:
-          slicer.mrmlScene.RemoveNode(n)
-    except Exception as e:
-      print(f"Histogram cleanup warning: {e}")
-    self.histSeriesNodes = []
-    self.histTableNodes = []
-    self.histChartNodes = []
-
-  def _createDensityHistogramPlot(self, data, bins, value_range, title, x_label, color=(0.4, 0.4, 0.4)):
-    """Create a density histogram (bars) and return the chart node."""
-    # Compute density histogram (ignore NaNs)
-    data = np.asarray(data)
-    data = data[np.isfinite(data)]
-    if data.size == 0:
-      raise ValueError("Empty data for density plot")
-    density, edges = np.histogram(data, bins=bins, range=value_range, density=True)
-    centers = (edges[:-1] + edges[1:]) / 2.0
-
-    # Create table with X (bin centers) and Y (density)
-    xArray = vtk.vtkFloatArray(); xArray.SetName("Value")
-    xArray.SetNumberOfTuples(len(centers))
-    yArray = vtk.vtkFloatArray(); yArray.SetName("Density")
-    yArray.SetNumberOfTuples(len(density))
-    for i in range(len(centers)):
-      xArray.SetValue(i, float(centers[i]))
-      yArray.SetValue(i, float(density[i]))
-
-    tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
-    tableNode.AddColumn(xArray)
-    tableNode.AddColumn(yArray)
-
-    seriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-    seriesNode.SetAndObserveTableNodeID(tableNode.GetID())
-    seriesNode.SetXColumnName("Value")
-    seriesNode.SetYColumnName("Density")
-    seriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeBar)
-    try:
-      seriesNode.SetColor(*color)
-    except Exception:
-      pass
-
-    chartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-    chartNode.AddAndObservePlotSeriesNodeID(seriesNode.GetID())
-    chartNode.SetTitle(title)
-    chartNode.SetXAxisTitle(x_label)
-    chartNode.SetYAxisTitle("Density")
-    chartNode.SetLegendVisibility(False)
-
-    # Track nodes for cleanup
-    self.histTableNodes.append(tableNode)
-    self.histSeriesNodes.append(seriesNode)
-    self.histChartNodes.append(chartNode)
-
-    return chartNode
-
-  def _ensureMainPlotViewNode(self):
-    """Get the main plot view node used by the module (same pane as scatter)."""
-    try:
-      layoutManager = slicer.app.layoutManager()
-      plotWidget = layoutManager.plotWidget(0)
-      return plotWidget.mrmlPlotViewNode()
-    except Exception:
-      return None
-
-  def _refreshHistogramChannelOptions(self, colorSpace):
-    labels = ["R", "G", "B"] if colorSpace != "HSV" else ["Hue", "Saturation", "Value"]
-    self.histChannelSelector.blockSignals(True)
-    self.histChannelSelector.clear()
-    self.histChannelSelector.addItems(labels)
-    self.histChannelSelector.setEnabled(True)
-    self.histChannelSelector.blockSignals(False)
-
-  def onViewModeChanged(self, button):
-    """Handle view mode radio button changes"""
-    try:
-      # Show/hide channel histogram options based on view mode
-      if self.viewChannelRadio.isChecked():
-        self.histCollapsible.setVisible(True)
-      else:
-        self.histCollapsible.setVisible(False)
-      
-      # Switch the actual plot view if data is available
-      if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace'):
-        if self.viewChannelRadio.isChecked():
-          # Switch to channel histogram view
-          self._refreshCurrentHistogram()
-        elif self.view2DRadio.isChecked():
-          # Switch to 2D dimensionality reduction view
-          if hasattr(self, '_last2DPlotChartNode') and self._last2DPlotChartNode:
-            plotViewNode = self._ensureMainPlotViewNode()
-            if plotViewNode:
-              plotViewNode.SetPlotChartNodeID(self._last2DPlotChartNode.GetID())
-              try:
-                self.colorsEDALogInfo.appendPlainText("Switched to 2D dimensionality reduction view")
-              except Exception:
-                pass
-            else:
-              try:
-                self.colorsEDALogInfo.appendPlainText("Warning: Could not access plot view")
-              except Exception:
-                pass
-          else:
-            try:
-              self.colorsEDALogInfo.appendPlainText("Warning: No 2D plot available. Run analysis first.")
-            except Exception:
-              pass
-    except Exception as e:
-      msg = f"Failed to switch view mode: {e}"
-      print(msg)
-      try:
-        self.colorsEDALogInfo.appendPlainText(msg)
-      except Exception:
-        pass
-
-  def onHistChannelChanged(self, index):
-    try:
-      if hasattr(self, '_lastColorData') and hasattr(self, '_lastColorSpace') and self.viewChannelRadio.isChecked():
-        # self._plotHistogramInMainView(self._lastColorData, self._lastColorSpace, int(index))
-        self._refreshCurrentHistogram()
-    except Exception as e:
-      msg = f"Failed to update histogram: {e}"
-      print(msg)
-      try:
-        self.colorsEDALogInfo.appendPlainText(msg)
-      except Exception:
-        pass
-
-  def _createHueHistogramDensityChart(self, hue_degrees, bins=72, sat=None, val=None,
-                                    color_by_bin_average=False, line_width=12):
-    """
-    Build a vertical-segment hue histogram (density). When color_by_bin_average=True,
-    each segment is colored by the mean RGB of samples that fell into that bin;
-    otherwise colored by the bin center hue.
-
-    Args:
-        hue_degrees: array of hue values in degrees [0,360)
-        bins: number of bins
-        sat: optional array of saturation values (0..100) aligned with hue_degrees
-        val: optional array of value/brightness (0..100) aligned with hue_degrees
-        color_by_bin_average: bool
-    """
-    self._clearHistogramNodes()
-
-    hue_degrees = np.asarray(hue_degrees)
-    hue_degrees = hue_degrees[np.isfinite(hue_degrees)]
-    if hue_degrees.size == 0:
-        raise ValueError("Empty hue data for histogram")
-
-    # Histogram (density) + edges
-    density, edges = np.histogram(hue_degrees, bins=bins, range=(0.0, 360.0), density=True)
-    centers = (edges[:-1] + edges[1:]) / 2.0
-
-    # Precompute bin indices per sample for coloring-by-average if needed
-    bin_colors = None
-    if color_by_bin_average and sat is not None and val is not None:
-        sat = np.asarray(sat) / 100.0
-        val = np.asarray(val) / 100.0
-        # map each sample to a bin index
-        bin_idx = np.clip(np.digitize(hue_degrees, edges, right=False) - 1, 0, bins - 1)
-
-        # accumulate RGB sums & counts per bin (reconstruct RGB from HSV)
-        sum_rgb = np.zeros((bins, 3), dtype=np.float64)
-        counts  = np.zeros(bins, dtype=np.int64)
-
-        # hue in [0,1] for colorsys
-        h01 = (hue_degrees % 360.0) / 360.0
-        for i in range(h01.size):
-            r, g, b = colorsys.hsv_to_rgb(float(h01[i]), float(sat[i]), float(val[i]))
-            k = bin_idx[i]
-            sum_rgb[k, 0] += r; sum_rgb[k, 1] += g; sum_rgb[k, 2] += b
-            counts[k] += 1
-
-        # mean RGB per bin; fallback to pure bin hue color if bin empty
-        bin_colors = np.zeros((bins, 3), dtype=np.float32)
-        for k in range(bins):
-            if counts[k] > 0:
-                bin_colors[k] = (sum_rgb[k] / counts[k]).astype(np.float32)
-            else:
-                # fallback: color by the bin center hue (full sat/value)
-                r, g, b = colorsys.hsv_to_rgb(centers[k] / 360.0, 1.0, 1.0)
-                bin_colors[k] = (r, g, b)
-
-    # Build chart and vertical-segment “bars”
-    chartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
-    chartNode.SetTitle("Histogram: Hue (density)")
-    chartNode.SetXAxisTitle("Hue (degrees)")
-    chartNode.SetYAxisTitle("Density")
-    chartNode.SetLegendVisibility(False)
-    self.histChartNodes.append(chartNode)
-
-    for i, (c, d) in enumerate(zip(centers, density)):
-        x = vtk.vtkFloatArray(); x.SetName("Hue"); x.SetNumberOfTuples(2); x.SetValue(0, float(c)); x.SetValue(1, float(c))
-        y = vtk.vtkFloatArray(); y.SetName("Density"); y.SetNumberOfTuples(2); y.SetValue(0, 0.0); y.SetValue(1, float(d))
-
-        t = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
-        t.AddColumn(x); t.AddColumn(y)
-        self.histTableNodes.append(t)
-
-        s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode")
-        s.SetAndObserveTableNodeID(t.GetID())
-        s.SetXColumnName("Hue"); s.SetYColumnName("Density")
-        s.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
-        s.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleSolid)
-        s.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleNone)
-        s.SetLineWidth(line_width)  # thicker “bar”; tweak in UI if you want
-
-        if color_by_bin_average and bin_colors is not None:
-            r, g, b = bin_colors[i]
-        else:
-            r, g, b = colorsys.hsv_to_rgb(float(c) / 360.0, 1.0, 1.0)
-        try:
-            s.SetColor(float(r), float(g), float(b))
-        except Exception:
-            pass
-
-        chartNode.AddAndObservePlotSeriesNodeID(s.GetID())
-        self.histSeriesNodes.append(s)
-
-    return chartNode
-
-
-
-  def _plotHistogramInMainView(self, colorData, colorSpace, channelIndex):
-    """Render selected channel histogram in the same plotting viewer pane."""
-    if colorData is None or len(colorData) == 0:
-      raise ValueError("No color data available for histogram")
-
-    plotViewNode = self._ensureMainPlotViewNode()
-    if plotViewNode is None:
-      raise RuntimeError("No plot view available to show histogram")
-
-    # Branch: special handling for Hue to color bars
-    if colorSpace == "HSV" and channelIndex == 0:
-      hue_deg = np.mod(np.degrees(np.arctan2(colorData[:, 1], colorData[:, 0])), 360.0)
-      sat = colorData[:, 2]  # 0..100
-      val = colorData[:, 3]  # 0..100
-
-      # read UI
-      sat_thresh = float(self.satCutoffSpin.value) if hasattr(self, "satCutoffSpin") else 10.0
-      val_thresh = float(self.valueCutoffSpin.value) if hasattr(self, "valueCutoffSpin") else 10.0
-      by_bin_avg = bool(self.colorByBinAvgCheck.isChecked()) if hasattr(self, "colorByBinAvgCheck") else False
-
-      # mask low saturation before binning
-      mask = np.isfinite(hue_deg) & np.isfinite(sat) & np.isfinite(val) & (sat >= sat_thresh) & (val >= val_thresh)
-      hue_deg, sat, val = hue_deg[mask], sat[mask], val[mask]
-
-      chartNode = self._createHueHistogramDensityChart(
-          hue_degrees=hue_deg,
-          bins=72,
-          sat=sat,
-          val=val,
-          color_by_bin_average=by_bin_avg,
-          line_width=12
-      )
-      plotViewNode.SetPlotChartNodeID(chartNode.GetID())
-      return
-
-    # Default density histograms for other channels
-    if colorSpace == "HSV":
-      if channelIndex == 1:
-        data = colorData[:, 2]; rng = (0.0, 100.0); title = "Histogram: Saturation (density)"; xlabel = "Saturation (0-100)"
-      else:
-        data = colorData[:, 3]; rng = (0.0, 100.0); title = "Histogram: Value (density)"; xlabel = "Value (0-100)"
-    else:
-      data = colorData[:, channelIndex]
-      rng = (0.0, 255.0); names = ["R", "G", "B"]; xlabel = f"{names[channelIndex]} (0-255)"; title = f"Histogram: {names[channelIndex]} (density)"
-
-    chartNode = self._createDensityHistogramPlot(data, bins=50, value_range=rng, title=title, x_label=xlabel)
-    plotViewNode.SetPlotChartNodeID(chartNode.GetID())
-
-  ################################### Recolor Functions ###################################
-
-  def onRecolorParameterChanged(self):
-    """Enable/disable the apply button based on parameter selection"""
-    atlasSelected = bool(self.recolorAtlasModelSelect.currentNode())
-    textureSelected = bool(self.recolorTextureSelector.currentText and
-                          self.recolorTextureSelector.currentIndex >= 0)
-    self.applyRecolorButton.enabled = atlasSelected and textureSelected
-
-  def onAverageFaceColorToggled(self, checked):
-    """Handle toggling of the average face color checkbox"""
-    # Enable/disable quantization controls based on averaging checkbox
-    self.quantizeColorsCheckbox.setEnabled(checked)
-    quantizationEnabled = checked and self.quantizeColorsCheckbox.isChecked()
-    self.numColorClustersSpin.setEnabled(quantizationEnabled)
-    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
-
-    # If averaging is disabled, also disable quantization and high contrast palette
-    if not checked:
-      self.quantizeColorsCheckbox.setChecked(False)
-      self.useHighContrastPaletteCheckbox.setChecked(False)
-
-    # Update the apply button state
-    self.onRecolorParameterChanged()
-
-  def onQuantizeColorsToggled(self, checked):
-    """Handle toggling of the quantize colors checkbox"""
-    # Enable/disable the number of clusters spin box and high contrast palette checkbox
-    quantizationEnabled = checked and self.averageFaceColorCheckbox.isChecked()
-    self.numColorClustersSpin.setEnabled(quantizationEnabled)
-    self.useHighContrastPaletteCheckbox.setEnabled(quantizationEnabled)
-
-    # If quantization is disabled, also disable high contrast palette
-    if not checked:
-      self.useHighContrastPaletteCheckbox.setChecked(False)
-
-    # Update the apply button state
-    self.onRecolorParameterChanged()
-
-  def onRecolorTexturesDirectoryChanged(self, directory):
-    """Update texture selector when directory changes"""
-    self.recolorTextureSelector.clear()
-    self.recolorTextureSelector.enabled = False
-
-    if not os.path.isdir(directory):
-      self.onRecolorParameterChanged()
-      return
-
-    # Find texture files in the directory
-    textureExtensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']
-    textureFiles = []
-
-    try:
-      for filename in sorted(os.listdir(directory)):
-        if any(filename.lower().endswith(ext) for ext in textureExtensions):
-          textureFiles.append(filename)
-    except Exception as e:
-      self.recolorLogInfo.appendPlainText(f"Error reading directory: {e}")
-      return
-
-    if textureFiles:
-      self.recolorTextureSelector.addItems(textureFiles)
-      self.recolorTextureSelector.enabled = True
-      self.recolorLogInfo.appendPlainText(f"Found {len(textureFiles)} texture files")
-    
-    # Save the texture directory for persistence and sync with other tabs
-    if directory:
-      self.saveTextureDirectory("recolorTexturesDirectory", directory)
-    else:
-      self.recolorLogInfo.appendPlainText("No texture files found in directory")
-
-    self.onRecolorParameterChanged()
-
-  def onApplyRecolorButton(self):
-    """Apply the selected texture to the atlas model"""
-    try:
-      qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
-      self.recolorProgressBar.setVisible(True)
-      self.recolorProgressBar.setValue(0)
-
-      # Get parameters
-      atlasModel = self.recolorAtlasModelSelect.currentNode()
-      texturesDir = self.recolorTexturesDirectorySelector.currentPath
-      selectedTexture = self.recolorTextureSelector.currentText
-      useAverageFaceColors = self.averageFaceColorCheckbox.isChecked()
-      useQuantization = self.quantizeColorsCheckbox.isChecked()
-      numClusters = self.numColorClustersSpin.value
-      useHighContrastPalette = self.useHighContrastPaletteCheckbox.isChecked()
-
-      if not atlasModel:
-        self.recolorLogInfo.appendPlainText("Error: No atlas model selected")
-        return
-
-      if not selectedTexture:
-        self.recolorLogInfo.appendPlainText("Error: No texture selected")
-        return
-
-      texturePath = os.path.join(texturesDir, selectedTexture)
-      if not os.path.exists(texturePath):
-        self.recolorLogInfo.appendPlainText(f"Error: Texture file not found: {texturePath}")
-        return
-
-      self.recolorLogInfo.appendPlainText(f"Applying texture: {selectedTexture}")
-      self.recolorLogInfo.appendPlainText(f"Average face colors: {'Yes' if useAverageFaceColors else 'No'}")
-      if useAverageFaceColors and useQuantization:
-        paletteType = "High contrast palette" if useHighContrastPalette else "Quantized colors"
-        self.recolorLogInfo.appendPlainText(f"Color quantization: Yes ({numClusters} clusters, {paletteType})")
-      else:
-        self.recolorLogInfo.appendPlainText("Color quantization: No")
-
-      logic = InterDeCALogic()
-
-      if useAverageFaceColors:
-        if useQuantization:
-          # Apply quantized face colors
-          self.recolorLogInfo.appendPlainText("Applying quantized face colors...")
-          success = logic.applyQuantizedFaceColorsFromTexture(
-            atlasModel, texturePath, numClusters, useHighContrastPalette,
-            progressCallback=self.updateRecolorProgress,
-            logCallback=self.logRecolorMessage
-          )
-        else:
-          # Try the main face coloring method first
-          self.recolorLogInfo.appendPlainText("Trying face-based coloring method...")
-          success = logic.applyAverageFaceColorsFromTexture(
-            atlasModel, texturePath,
-            progressCallback=self.updateRecolorProgress,
-            logCallback=self.logRecolorMessage
-          )
-
-          # If that doesn't work, try the alternative point-based method
-          if not success:
-            self.recolorLogInfo.appendPlainText("Face-based method failed, trying point-based method...")
-            success = logic.applyAverageFaceColorsFromTextureAlternative(
-              atlasModel, texturePath,
-              progressCallback=self.updateRecolorProgress,
-              logCallback=self.logRecolorMessage
-            )
-      else:
-        # Apply texture directly
-        success = logic.applyTextureToModel(atlasModel, texturePath)
-        self.recolorLogInfo.appendPlainText("Texture applied successfully")
-        success = True
-
-      if success:
-        self.recolorLogInfo.appendPlainText("Recoloring completed successfully")
-      else:
-        self.recolorLogInfo.appendPlainText("Recoloring failed - check log for details")
-
-      self.recolorProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-
-      # Maximize the 3D view
-      self.maximize3DViewer(self.recolorLogInfo)
-
-    except Exception as e:
-      self.recolorProgressBar.setVisible(False)
-      qt.QApplication.restoreOverrideCursor()
-      self.recolorLogInfo.appendPlainText(f"Error: {str(e)}")
-      slicer.util.errorDisplay(f"Recolor failed: {str(e)}")
-      import traceback
-      traceback.print_exc()
-
-  def updateRecolorProgress(self, value):
-    """Update progress bar for recolor operations"""
-    self.recolorProgressBar.setValue(int(value))
-    slicer.app.processEvents()
-
-  def logRecolorMessage(self, message):
-    """Log message to the Recolor log"""
-    self.recolorLogInfo.appendPlainText(message)
-    slicer.app.processEvents()
 
   ################################### MultiRecolor Event Handlers ###################################
 
@@ -7111,8 +5969,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       x_coord = x_min + (self.morphospaceXSlider.value / 1000.0) * (x_max - x_min)
       y_coord = y_min + (self.morphospaceYSlider.value / 1000.0) * (y_max - y_min)
 
-      # Create the current point in full PCA space
-      # Start with the starting point and update only the X and Y axes
+
       self.morphospaceCurrentPoint = self.morphospaceStartingPoint.copy()
       self.morphospaceCurrentPoint[x_axis_idx] = x_coord
       self.morphospaceCurrentPoint[y_axis_idx] = y_coord
