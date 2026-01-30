@@ -53,4 +53,4 @@ The GIF below shows how to perform steps 1 and 2.
 
 ### Blender (Optional)
 
-We also use Blender for texture baking functionality. This can be downloaded and installed following the resources [here](https://www.blender.org/download/).
+InterDeCA also includes auto-detection and auto-install functionality for Blender, which we also use for texture baking functionality. If it doesn't work on your system, Blender can be downloaded and installed manually following the resources [here](https://www.blender.org/download/).
