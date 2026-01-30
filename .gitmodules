@@ -1,0 +1,3 @@
+[submodule "ATLAS"]
+	path = ATLAS
+	url = https://github.com/agporto/ATLAS.git
