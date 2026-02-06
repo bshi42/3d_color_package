@@ -749,6 +749,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Restores previously saved directory paths from persistent settings
     self.restoreSavedDirectories()  # Loads saved paths for user convenience
+    self.autoDetectBlender()  # Auto-detect Blender if not restored
+
 
     ################################### Visualize Tab ###################################
     if SHOW_VISUALIZE_RESULTS:
