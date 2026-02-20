@@ -19,7 +19,7 @@ git clone --branch demo --recurse-submodules https://github.com/bshi42/3d_color_
 <img src="./images/download_interdeca_atlas.gif" alt="Download Process" width="100%"/>
 
 ### 2. Install Dependencies in 3D Slicer
-Open 3D Slicer, open the Python Console (Ctrl+3 or View -> Python Console), and run:
+Open 3D Slicer, open the Python Console (Ctrl+3 or `View -> Python Console`), and run:
 ```python
 import slicer
 slicer.util.pip_install('imageio')
