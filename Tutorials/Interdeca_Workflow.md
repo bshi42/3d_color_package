@@ -5,7 +5,7 @@ This tutorial guides you through the complete workflow of the **3D Color Package
 ## Prerequisites
 
 - **3D Slicer**: Download and install from [download.slicer.org](https://download.slicer.org/).
-- **Dataset**: The 10-mussel dataset is included in this repository under `Tutorials/data`.
+- **Dataset**: Download the 10-mussel dataset and extract it to a local directory (e.g., `Tutorials/data`).
 
 ---
 
@@ -52,10 +52,10 @@ The **ATLAS** module aligns all your 3D models to a common template (atlas) and 
 Go to `SlicerMorph -> DeCA Toolbox -> InterDeCA` and select the **ATLAS** tab.
 
 ### 2. Set Input Directories
-Point the file selectors to the 10-mussel dataset included in the `Tutorials/data` directory:
-- **Model Directory**: `.../3d_color_package/Tutorials/data/models`
-- **Landmark Directory**: `.../3d_color_package/Tutorials/data/landmarks`
-- **Texture Directory**: `.../3d_color_package/Tutorials/data/textures`
+Point the file selectors to the location where you extracted the 10-mussel dataset:
+- **Model Directory**: Path to your `models` folder.
+- **Landmark Directory**: Path to your `landmarks` folder.
+- **Texture Directory**: Path to your `textures` folder.
 
 Ensure your files follow a consistent naming pattern (e.g., `UF_IZ_[ID]_object_reduced.*`).
 
