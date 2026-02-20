@@ -104,6 +104,9 @@ Choose one of three methods:
 3. Each point in the plot represents one texture/specimen.
 4. The plot is interactive - you can change the axes to view different component combinations.
 
+![Population Analysis](images/PCA.png)
+*Figure 1: Population Analysis showing PCA results.*
+
 ---
 
 ## Step 4: Morphospace
@@ -135,7 +138,13 @@ Once visualization starts:
 
 ### Interpretation
 
-- Moving along an axis shows how color patterns change along that dimension of variation
+- Moving along an axis shows how color patterns change along that dimension of variation.
+
+![PCA Y Axis Minimum](images/PCA_Y_min.png)
+*Y-axis Minimum Variation*
+
+![PCA Y Axis Maximum](images/PCA_Y_max.png)
+*Y-axis Maximum Variation*
 - Positions near existing specimens will look similar to those specimens
 - Positions between specimens show interpolated color patterns
 - Extreme positions (beyond the range of observed specimens) extrapolate color patterns
