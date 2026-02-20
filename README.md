@@ -1,654 +1,224 @@
-# 3D Fish Color Modeling - Demo Branch
+# 3D Color Package: End-to-End Workflow with InterDeCA
 
-## Project Overview
+This tutorial guides you through the complete workflow of the **3D Color Package** (InterDeCA), from installation to analyzing color variation and performing mesh segmentation. We will use a **10-mussel dataset** as our example.
 
-This demo branch contains the **InterDeCA (Interactive Dense Correspondence Analysis)** module for 3D Slicer, which extends the original DeCA module with advanced color analysis capabilities for biological specimens. This toolkit is specifically designed for morphometric analysis of fish specimens, combining shape and color pattern analysis in a unified framework.
+## Prerequisites
 
-## Table of Contents
-
-- [Key Features](#key-features)
-- [System Architecture](#system-architecture)
-- [Installation](#installation)
-- [Module Components](#module-components)
-- [Core Functionality](#core-functionality)
-- [Workflow Guide](#workflow-guide)
-- [API Documentation](#api-documentation)
-- [Results Reporting](#results-reporting)
-- [Technical Details](#technical-details)
-- [Dependencies](#dependencies)
-- [Contributing](#contributing)
-
-## Key Features
-
-### 1. **Enhanced Dense Correspondence Analysis**
-   - Automatic atlas generation from specimen sets
-   - Procrustes alignment with scale normalization
-   - Dense point correspondence mapping
-   - Texture-aware mesh processing
-
-### 2. **Color Pattern Analysis**
-   - RGB/HSV color space analysis
-   - Dimensionality reduction (PCA, t-SNE, UMAP)
-   - Color clustering with K-means
-   - Face-level color quantization
-   - Texture baking through Blender integration
-
-### 3. **Interactive Visualization**
-   - Real-time shape interpolation
-   - Multi-specimen comparison
-   - Color pattern overlays
-   - Statistical visualization plots
-
-### 4. **Comprehensive Reporting**
-   - Automated HTML report generation
-   - Statistical summaries and validation
-   - File organization tracking
-   - Analysis parameter documentation
-
-## System Architecture
-
-```
-3D Fish Color Modeling Package
-├── color_deca/
-│   ├── deca/                    # Original DeCA module
-│   │   ├── deca.py              # Core DeCA implementation
-│   │   ├── Resources/           # Module resources
-│   │   └── CMakeLists.txt       # Build configuration
-│   ├── deca3/                   # Enhanced InterDeCA module
-│   │   ├── InterDeCA.py         # Extended DeCA with color analysis
-│   │   ├── PCAMorphospace.py    # PCA color morphospace analysis (NEW)
-│   │   ├── PCAMorphospaceVisualization.py  # Interactive HTML generation (NEW)
-│   │   ├── Resources/           # Module resources
-│   │   └── CMakeLists.txt       # Build configuration
-│   └── reporting/               # Reporting utilities
-│       ├── __init__.py          # Package initialization
-│       ├── results_reporter.py  # HTML report generation
-│       └── example_usage.py     # Working example/tutorial
-└── ModelColors-main/            # Color analysis utilities
-```
-
-### Module Structure
-
-```
-InterDeCA System
-├── Core Analysis Engine
-│   ├── Dense Correspondence (DeCA)
-│   ├── Landmarking (DeCAL)
-│   └── Atlas Generation
-├── Color Analysis Pipeline
-│   ├── Texture Processing
-│   ├── UV Mapping (via Blender)
-│   ├── Color Space Transformation
-│   └── Pattern Clustering
-├── Visualization Components
-│   ├── 3D Model Rendering
-│   ├── Interpolation Controls
-│   └── Statistical Plots
-└── Reporting System
-    ├── Results Reporter
-    └── Plot Generation
-```
-
-## Installation
-
-### Prerequisites
-
-1. **3D Slicer** (version 5.0 or higher)
-2. **Python 3.9+** (included with Slicer)
-3. **Optional: Blender** (for texture baking functionality)
-
-### Setup Instructions
-
-1. **Clone the Repository**
-   ```bash
-   git clone git@github.com:bshi42/3d_color_package.git
-   cd 3d_color_package/color_deca
-   git checkout demo
-   ```
-
-2. **Install in 3D Slicer**
-   - Open 3D Slicer
-   - Go to Edit → Application Settings → Modules
-   - Add the path to `color_deca/deca3` directory
-   - Restart Slicer
-
-3. **Install Required Packages**
-   
-   The module will automatically detect missing packages and offer to install them.
-   Required packages include:
-   - `numpy` - Numerical computing (usually pre-installed)
-   - `imageio` - Image I/O operations
-   - `scikit-learn` - Machine learning algorithms
-   - `umap-learn` - UMAP dimensionality reduction
-   - `scikit-image` - Advanced image processing
-
-   Or install manually in Slicer's Python console:
-   ```python
-   import slicer
-   slicer.util.pip_install('imageio')
-   slicer.util.pip_install('scikit-learn')
-   slicer.util.pip_install('umap-learn')
-   slicer.util.pip_install('scikit-image')
-   ```
-
-## Module Components
-
-### deca.py (Original DeCA Module)
-
-The core DeCA module (`deca/deca.py`) contains approximately 1,700 lines implementing the original Dense Correspondence Analysis functionality:
-
-#### Main Classes
-
-1. **`deca`** - Module definition class
-   - Registers DeCA module with Slicer
-   - Defines metadata and dependencies
-   - Sets up help documentation
-
-2. **`decaWidget`** - GUI widget class
-   - Creates three-tab interface:
-     - DeCA: Main correspondence workflow
-     - DeCAL: Dense landmarking
-     - Visualize Results: Output visualization
-   - Manages user interactions
-   - Handles file I/O operations
-
-3. **`decaLogic`** - Core analysis logic
-   - Implements atlas generation algorithms
-   - Handles Procrustes alignment
-   - Manages landmark subsampling
-   - Performs mesh transformations
-
-#### Key Features
-- Atlas creation from specimen sets
-- Dense point correspondence mapping
-- Procrustes superimposition
-- Landmark-based registration
-- Scale normalization options
-- Error checking outputs
-
-### InterDeCA.py (Enhanced Module)
-
-The core module file (`deca3/InterDeCA.py`) contains approximately 9,000 lines of code implementing:
-
-#### Package Management System
-- **`checkAndOfferPackageInstallation()`** - Detects missing packages
-- **`installMissingPackages()`** - Automated package installation with progress tracking
-
-#### Main Classes
-
-1. **`InterDeCA`** - Module definition class
-   - Registers module with Slicer
-   - Defines metadata and dependencies
-   - Sets up help documentation
-
-2. **`InterDeCAWidget`** - GUI widget class
-   - Creates multi-tab interface
-   - Manages user interactions
-   - Coordinates analysis workflows
-
-3. **`InterDeCALogic`** - Analysis logic class
-   - Implements core algorithms
-   - Handles data processing
-   - Manages file I/O operations
-
-### User Interface Tabs
-
-#### 1. **DeCA Tab**
-- Model and landmark directory selection
-- Template mesh generation
-- Texture processing options
-- Point density tolerance settings
-- Color mode selection (RGB/HSV)
-- Advanced options for scale removal and error checking
-
-#### 2. **DeCAL Tab**
-- Dense landmarking functionality
-- Model selection and alignment
-- Landmark propagation
-- Quality control metrics
-
-#### 3. **Visualize Tab**
-- Results directory browser
-- Shape interpolation controls
-- Multi-model comparison
-- Statistical visualization
-
-#### 4. **Colors EDA Tab**
-- Exploratory Data Analysis for colors
-- Dimensionality reduction methods:
-  - PCA (Principal Component Analysis)
-  - t-SNE (t-distributed Stochastic Neighbor Embedding)
-  - UMAP (Uniform Manifold Approximation and Projection)
-  - ICA (Independent Component Analysis)
-- Clustering options (K-means)
-- Scatter plot visualization
-
-#### 5. **Recolor Tab**
-- Single texture application
-- Color quantization (16-1024 colors)
-- UV coordinate handling
-- Texture baking integration
-
-#### 6. **MultiRecolor Tab**
-- Multi-texture clustering analysis
-- Batch processing capabilities
-- Comparative color analysis
-- Pattern extraction
-
-#### 7. **PCA Morphospace Tab** (NEW)
-- Interactive PCA color morphospace visualization
-- Slider-based exploration of color variation along PC axes
-- Real-time color pattern interpolation from -2SD to +2SD
-- HTML export with interactive plots
-- Area-weighted PCA on vertex colors
-- Support for RGB/HSV/LAB color spaces
-
-## Core Functionality
-
-### Dense Correspondence Analysis
-
-```python
-# Key functions for correspondence analysis
-def generateAtlasButton():
-    """Creates atlas from multiple specimens"""
-    # Aligns all models
-    # Generates mean shape
-    # Creates dense correspondence
-
-def alignModels(models, landmarks):
-    """Procrustes alignment of specimen set"""
-    # Centers models
-    # Removes scale (optional)
-    # Minimizes rotation differences
-```
-
-### Texture Processing Pipeline
-
-```python
-def processTextures(model, texture, uv_coords):
-    """Handles texture mapping and color extraction"""
-    # Maps texture to 3D surface
-    # Extracts per-vertex colors
-    # Transforms color spaces
-```
-
-### Blender Integration
-
-```python
-def callBlenderTextureBaking(ply_file, texture_file, output_path):
-    """Executes Blender for UV mapping and texture baking"""
-    # Generates Blender script
-    # Calls Blender subprocess
-    # Processes output textures
-```
-
-### Color Analysis Methods
-
-```python
-def performColorEDA(colors, method='pca', n_components=3):
-    """Dimensionality reduction on color data"""
-    # Preprocesses color values
-    # Applies selected method
-    # Returns transformed coordinates
-
-def clusterColors(colors, n_clusters=5):
-    """K-means clustering of color patterns"""
-    # Normalizes color space
-    # Performs clustering
-    # Assigns cluster labels
-```
-
-## Workflow Guide
-
-### Basic Analysis Workflow
-
-1. **Data Preparation**
-   - Organize 3D models (.ply, .obj, .stl, .vtp)
-   - Prepare landmark files (.fcsv, .json)
-   - Collect texture images (.png, .jpg)
-
-2. **Atlas Generation**
-   - Select model directory
-   - Choose landmark directory
-   - Set texture directory (optional)
-   - Configure parameters:
-     - Point density tolerance (0.01-1.0)
-     - Color mode (RGB/HSV)
-     - Scale removal option
-   - Click "Generate Atlas"
-
-3. **Results Analysis**
-   - Navigate to output directory
-   - Review generated files:
-     - Atlas model
-     - Aligned specimens
-     - Correspondence maps
-     - Texture outputs
-
-4. **Visualization**
-   - Load results in Visualize tab
-   - Use interpolation slider
-   - Compare specimens
-   - Export visualizations
-
-5. **Report Generation**
-   - Automatic HTML reports created
-   - Statistical summaries included
-   - File organization documented
-
-### Advanced Color Analysis Workflow
-
-1. **Color Space Exploration**
-   - Load textured models
-   - Select Colors EDA tab
-   - Choose analysis method
-   - Configure parameters
-   - Generate scatter plots
-
-2. **Pattern Clustering**
-   - Apply K-means clustering
-   - Visualize cluster assignments
-   - Export cluster statistics
-
-3. **Multi-Texture Analysis**
-   - Load multiple textures
-   - Use MultiRecolor tab
-   - Perform comparative analysis
-   - Generate clustering results
-   - Visualize population structure
-   - - PCA finds linear relationships between colors
-   - - UMAP finds non-linear relationships between colors
-   - - ICA finds independent components of color variation
-
-
-### PCA Color Morphospace Workflow (NEW)
-
-The PCA Morphospace module provides interactive visualization of color variation across specimens along principal component axes, as described in morphospace analysis papers like the recolorize methodology.
-
-1. **Data Preparation**
-   - Run DeCA analysis first to generate resampled models with vertex correspondence
-   - Ensure texture baking has been completed (atlasTextures folder exists)
-   - All specimens must have consistent vertex topology (handled by DeCA)
-
-2. **PCA Analysis**
-   - Navigate to the PCA Morphospace tab
-   - Select DeCA results directory
-   - Click "Load Data for PCA Analysis"
-   - Configure settings:
-     - Number of principal components (2-10)
-     - Color space (RGB, HSV, or LAB)
-     - Area-weighted PCA option (recommended)
-   - Click "Run PCA Analysis"
-
-3. **Interactive Exploration**
-   - View PCA scatter plot showing specimen distribution
-   - Use PC slider to explore color variation:
-     - Range: -2 SD to +2 SD along selected PC
-     - Real-time color pattern updates
-     - Shows interpolated colors at current position
-   - Observe variance explained by each PC
-
-4. **Export Results**
-   - Generate interactive HTML visualization
-   - Export PCA scores and loadings
-   - Save color interpolation data
-   - Create shareable reports
-
-**Technical Implementation:**
-- Extracts vertex colors from UV-mapped textures
-- Performs PCA on flattened color vectors (n_vertices × 3 per specimen)
-- Interpolates along PC axes: `color = mean + (sd_position × sqrt(eigenvalue) × eigenvector)`
-- Generates color swatches showing variation patterns
-
-## Results Reporting
-
-The reporting module is located in `color_deca/reporting/` and provides comprehensive HTML report generation for analysis results.
-
-### Quick Start
-
-A complete working example is provided in `color_deca/reporting/example_usage.py`:
-
-```bash
-# Run the example to see how it works
-python color_deca/reporting/example_usage.py
-```
-
-This example script:
-- Creates sample DeCA output files
-- Generates a comprehensive HTML report
-- Shows proper usage of all parameters
-- Demonstrates best practices
-
-### Basic Usage
-
-```python
-# Import the reporting module
-# Note: The file is results_reporter.py but we import the ResultsReporter class
-from color_deca.reporting import ResultsReporter
-
-# Alternative import methods:
-# from color_deca.reporting.results_reporter import ResultsReporter
-# import color_deca.reporting.results_reporter as reporter
-
-# Create reporter instance
-reporter = ResultsReporter(output_directory)
-
-# Generate comprehensive report
-report_path = reporter.generate_comprehensive_report(
-    parameters=analysis_params,
-    analysis_stats=results_stats
-)
-```
-
-### results_reporter.py
-
-Located in `color_deca/reporting/results_reporter.py`, this module provides:
-
-#### Dependencies
-The results_reporter module uses only Python standard library modules:
-- `os` - File system operations
-- `json` - JSON data handling
-- `datetime` - Timestamp generation
-- `pathlib` - Path manipulation
-- `hashlib` - File hashing (if needed)
-
-No external packages required - works with base Python installation!
-
-#### Class Methods
-```python
-class ResultsReporter:
-    def generate_comprehensive_report(parameters=None, analysis_stats=None)
-    def _scan_output_files_detailed()  # File metrics
-    def _validate_outputs()             # Quality checks
-    def _calculate_statistics()         # Statistical summaries
-    def _create_comprehensive_html()    # Professional formatting
-```
-
-**Features:**
-- Professional gradient design
-- File size metrics and organization
-- Validation checks and warnings
-- Statistical distributions
-- Interactive hover effects
-- UTF-8 encoding support
-
-### Report Sections
-
-1. **Analysis Status**
-   - Validation results
-   - Warning messages
-   - Success indicators
-
-2. **Output Statistics**
-   - File counts by category
-   - Size distributions
-   - Processing metrics
-
-3. **Analysis Parameters**
-   - Input configurations
-   - Method selections
-   - Processing options
-
-4. **File Details**
-   - 3D Models inventory
-   - Texture listings
-   - Landmark files
-   - Generated plots
-
-## Technical Details
-
-### File Formats Supported
-
-**3D Models:**
-- PLY (Polygon File Format)
-- OBJ (Wavefront)
-- STL (Stereolithography)
-- VTP (VTK Polydata)
-
-**Landmarks:**
-- FCSV (Fiducial CSV)
-- JSON (JavaScript Object Notation)
-- MRK.JSON (Markups JSON)
-
-**Textures:**
-- PNG (Portable Network Graphics)
-- JPG/JPEG (Joint Photographic Experts Group)
-- BMP (Bitmap)
-
-**Reports:**
-- HTML (HyperText Markup Language)
-- JSON (Metadata)
-- CSV (Statistical exports)
-
-### Color Space Transformations
-
-```python
-# RGB to HSV conversion
-def rgb_to_hsv(r, g, b):
-    return colorsys.rgb_to_hsv(r/255, g/255, b/255)
-
-# Color quantization
-def quantize_colors(colors, n_colors=256):
-    kmeans = KMeans(n_clusters=n_colors)
-    labels = kmeans.fit_predict(colors)
-    return kmeans.cluster_centers_[labels]
-```
-
-### Performance Considerations
-
-- **Memory Management**: Large datasets handled through chunking
-- **Parallel Processing**: Multi-threaded operations where possible
-- **Caching**: Results cached to avoid recomputation
-- **Progress Tracking**: Visual feedback for long operations
-
-## Dependencies
-
-### Core Dependencies
-- **3D Slicer** - Main application framework
-- **VTK** - Visualization Toolkit (included with Slicer)
-- **Qt** - GUI framework (included with Slicer)
-- **NumPy** - Numerical computing
-
-### Optional Dependencies
-- **scikit-learn** - Machine learning algorithms
-- **scikit-image** - Image processing
-- **umap-learn** - UMAP algorithm
-- **imageio** - Image I/O
-- **Blender** - 3D modeling software (external)
-
-### Python Version
-- Requires Python 3.9+ (included with Slicer 5.0+)
-
-## Testing
-
-### Running Tests
-
-```python
-# In Slicer Python console
-exec(open("/path/to/test_reporter.py").read())
-```
-
-### Simulation Scripts
-
-```python
-# Generate simulated results
-exec(open("/path/to/simulate_results_clean.py").read())
-
-# Create analysis plots
-exec(open("/path/to/generate_analysis_plots.py").read())
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Module not appearing in Slicer**
-   - Ensure path is added to module settings
-   - Restart Slicer after adding path
-   - Check Python console for import errors
-
-2. **Package installation failures**
-   - Run Slicer as administrator (Windows)
-   - Check internet connection
-   - Install packages manually via pip
-
-3. **Blender integration issues**
-   - Verify Blender installation path
-   - Check Blender version compatibility
-   - Review generated Blender scripts
-
-4. **Memory errors with large datasets**
-   - Reduce point density tolerance
-   - Process smaller batches
-   - Increase system RAM allocation
-
-## Contributing
-
-### Development Setup
-
-1. Fork the repository
-2. Create feature branch
-3. Make changes with clear commits
-4. Add tests for new functionality
-5. Update documentation
-6. Submit pull request
-
-### Code Style
-
-- Follow PEP 8 guidelines
-- Use descriptive variable names
-- Add comprehensive docstrings
-- Include inline comments for complex logic
-- Maintain consistent indentation (4 spaces)
-
-### Documentation Style
-
-- Use detailed descriptions for inline comments
-- Write thorough docstrings for all functions
-- Include parameter and return type annotations
-- Provide usage examples where appropriate
-
-## License
-
-This project is developed with funding from:
-- Georgia Institute of Technology
-
-## Contact
-
-**Module Authors:** Breeana Shi, Alek Spiridonov, Le Yang Loh, Charlie Clark, Alan Nadelsticher
-
-**Repository:** https://github.com/bshi42/3d_color_package
-
-**Branch:** demo
-
-## Acknowledgments
-
-- SlicerMorph team for the original DeCA implementation
-- 3D Slicer community for the platform
-- Contributors to scientific Python ecosystem
-- Research participants and specimen providers
+- **3D Slicer**: Download and install from [download.slicer.org](https://download.slicer.org/).
+- **Dataset**: Download the 10-mussel dataset and extract it to a local directory (e.g., `Tutorials/data`).
 
 ---
 
-*Last Updated: October 2025*
-*Version: Demo Branch 1.0*
+## Part 1: Installation
+
+This installation covers how to download and install the **InterDeCA** tool. We assume you already have the 3D Slicer software downloaded and installed on your system (if you don't, find install options [here](https://download.slicer.org/)). 
+
+### Downloading
+
+#### InterDeCA Module and ATLAS Dependency
+
+Open your system's command-line terminal, and run the following command:
+```bash
+git clone --branch demo --recurse-submodules https://github.com/bshi42/3d_color_package.git
+```
+The GIF below depicts what this process should look like. Please note, you likely will not need to sign in to clone the repo after the software is published.
+
+![A GIF showing the InterDeCA + ATLAS download process.](./Tutorials/images/download_interdeca_atlas.gif)
+
+### Installing in 3D Slicer
+
+#### ATLAS 
+
+You've already downloaded ATLAS as a submodule of InterDeCA. However, you will still need to install it in 3D Slicer separately. Following the instructions provided in the [ATLAS github repository](https://github.com/agporto/ATLAS), perform the following steps:
+1. Add the cloned top-level `ATLAS` folder to Slicer using the dropdown menu: `Developer Tools -> Extension Wizard -> Select Extension -> Select ATLAS`
+2. Open one of the ATLAS modules (BUILDER, DATABASE, PREDICT, or SEGMENTATION) to confirm it loaded correctly.
+
+The GIF below demonstrates what this process should look like.
+
+![A GIF showing the ATLAS installation process.](./Tutorials/images/install_atlas.gif)
+
+#### InterDeCA
+
+First, open the Python console in 3D Slicer and perform the following commands:
+
+```python
+>>> import slicer
+>>> slicer.util.pip_install('imageio')
+>>> slicer.util.pip_install('scikit-learn')
+>>> slicer.util.pip_install('umap-learn')
+>>> slicer.util.pip_install('scikit-image')
+```
+
+![The 3D Slicer top menu, with the Python console button outlined in red.](./Tutorials/images/python_console_3dslicer.png)
+
+The image above shows where the Python console button is in the 3D Slicer UI (the console will open on the bottom right of the UI). Once this is done, restart the 3D Slicer app.
+
+Next, perform the following steps in order:
+1. Go to `Edit -> Application Settings -> Modules` in 3D Slicer.
+2. Add the path to `color_deca/deca3` directory within the downloaded `3d_color_package` repository by dragging and dropping the `deca3` folder from your file system.
+3. Restart 3D Slicer.
+
+The GIF below shows how to perform steps 1 and 2.
+
+![A GIF showing steps 1 and 2 of the above procedure for installing InterDeCA](./Tutorials/images/add_interdeca.gif)
+
+#### Blender (Optional)
+
+InterDeCA also includes auto-detection and auto-install functionality for Blender, which we use for texture baking functionality. If it doesn't work on your system, Blender can be downloaded and installed manually following the resources [here](https://www.blender.org/download/).
+
+
+---
+
+## Part 2: Generating an Atlas (ATLAS Tab)
+
+### Overview
+
+There are 3 main steps to run ATLAS and texture transfer:
+1. **Model Import:** Select any of the 3D models to be used in generating the atlas and import it into Slicer.
+2. **Hyperparameter Tuning:** Tune the UV mapping and texture baking parameters (if necessary).
+3. **Run:** Click the `Run ATLAS and Texture Transfer` button.
+
+### Model Import
+
+This can be done in the `Welcome to Slicer` menu by clicking the `Add Data` button. After clicking, there will be a prompt to find and select data files to import from your file system. For running ATLAS and texture transfer, selecting any of the 3D model (.obj) files in your desired dataset will suffice.
+
+### Hyperparameter Tuning
+
+After importing one of your 3D models, open the InterDeCA module at the path `SlicerMorph -> DeCA Toolbox -> InterDeCA`. You'll see a menu like the one in the image below.
+
+![The InterDeCA module's ATLAS tab menu.](./Tutorials/images/atlas_module_menu.png)
+
+First, you'll need to enter the paths to the directories in your file system containing the desired models, landmarks, and textures. You'll also need to provide an output directory where all the produced files will be stored; we recommend using an empty directory so that the results from different runs don't get mixed up.
+
+If you've already run ATLAS, you can enter in the paths to the generated atlas model and atlas landmarks. This is optional.
+
+Under `Blender (cleanup, UV, bake)`, you'll see different hyperparameters. The first is the filepath to the blender executable on your system. If running on Linux, for guaranteed stability, we recommend pre-installing Blender using the command
+```bash
+sudo snap install blender --classic
+```
+and entering in the resultant filepath. For Windows and macOS users, InterDeCA will attempt to auto-install Blender if it isn't detected in your file system. 
+
+The `Merge by distance` hyperparameter specifies the distance below which vertices are automatically merged; this cleans up duplicate/overlapping vertices before UV unwrapping.
+
+The `Smart UV angle (deg)` hyperparameter specifies the maximum angle between faces that can be included in the same UV island; this controls how the 3D surface is "cut" and flattened into 2D UV space. 
+
+The `Island margin (UV)` hyperparameter specifies the spacing between UV islands in the 0-1 UV space to prevent texture bleeding between different parts of the model. 
+
+The `Bake size (px)` hyperparameter specifies the resolution of the output texture map (px by px). The higher this value, the more detailed the texture map, but the larger the file size.
+
+The `Bake extrusion` hyperparameter specifies how far to "push out" the baked data from the surface in order to help capture details while preventing gaps in the texture.
+
+The `Bake margin (px)` hyperparameter specifies the pixel padding around UV islands in the baked texture. This prevents edge artifacts and seams.
+
+In some cases, resultant textures will have black speckles; we've found decreasing the `Merge by distance` value by a few orders of magnitude significantly helps. Otherwise, the default hyperparameter values (usually) work well.
+
+### Run
+
+Once all the necessary fields are filled-out and the hyperparameters are tuned, click the green `Run ATLAS and Texture Transfer` button at the bottom of the ATLAS tab menu. This will run atlas generation and texture transfer using the input sets of models, landmarks, and textures.
+
+---
+
+## Part 3: Analyzing Color (MultiRecolor Tab)
+
+The **MultiRecolor** tab allows you to analyze and visualize the color variation across your population using the aligned textures generated in Part 2. The workflow consists of 4 steps:
+
+### Step 1: Multi-texture Clustering
+This step processes all texture images to create a consistent, shared color palette for comparison.
+1. **Model**: Select the generated Atlas model (from your output folder).
+2. **Texture Directory**: Select the directory containing the *transferred* textures (usually in your output folder under `atlas_textures`).
+3. **Mode**: Choose **Clustering** to create a shared palette.
+4. **Parameters**:
+   - `Initial Clusters`: 24 (higher for more detail).
+   - `Consolidated Clusters`: 8 (number of final colors).
+5. Click **Cluster**.
+
+### Step 2: Individual Visualization
+After clustering, it is crucial to visualize how the shared palette represents each individual specimen. This confirms that the color simplification (quantization) accurately captures the main patterns of the original specimen.
+
+1. **Select Texture**: Choose a specific texture file from the dropdown list.
+2. **Apply Texture**: Click to apply the clustered texture to the 3D model.
+3. **Toggle Raw/Clustered**: You can compare the original (raw) texture vs. the clustered result to ensure the color details are preserved.
+   - If the result looks "patchy" or misses key details, consider increasing the number of `Consolidated Clusters` in Step 1.
+
+### Step 3: Population Analysis
+This step performs dimensionality reduction to compare color patterns across all textures in a scatter plot.
+1. **Method**: Select **PCA** (Principal Component Analysis).
+2. **Number of PCs**: 2.
+3. Click **Compare Textures**.
+4. A scatter plot will appear. Each point represents one mussel specimen.
+   - Points closer together have more similar color patterns.
+   - Points farther apart are more distinct.
+
+<img src="./Tutorials/images/PCA.png" alt="PCA Analysis of the 10-mussel dataset" width="800"/>
+
+### Step 4: Morphospace
+This step allows you to interactively explore the color variation by navigating through the simplified color space (PCA space).
+1. Expand the **Morphospace** section.
+2. Click **Visualize Morphospace**.
+3. Use the **X-axis** and **Y-axis** sliders to explore color variations.
+   - **Interactive Exploration**: As you move the sliders, the 3D model updates in real-time to show the *predicted* color pattern for that specific position in the PCA space.
+   - You can visualize hypothetical transitions between different color morphs (e.g., seeing how a striped pattern might fade into a solid color).
+
+<img src="./Tutorials/images/morphospace.gif" alt="Morphospace Dragging X-Axis" width="100%"/>
+
+
+
+
+---
+
+## Part 4: Segmentation (Mesh Region Selection)
+
+This tutorial covers the **Mesh Region Selection** tab in InterDeCA, which allows you to interactively segment a Region of Interest (ROI) on an atlas model using landmark points or closed curves. This is useful for isolating specific biological structures or regions for analysis.
+
+### Creating a Segmentation
+
+1.  **Navigate to the Mesh Region Selection Tab**
+    *   Click on the **Mesh Region Selection** tab in the InterDeCA module interface.
+
+    <img src="./Tutorials/images/DeCA_Segmentation_1.png" width="500">
+
+2.  **Select Target Mesh**
+    *   In the **Target Mesh** dropdown, select the model you wish to segment.
+
+3.  **Choose Selection Method**
+    *   In the **Selection Markup** dropdown, select **Create new Closed Curve** (recommended) or **Create new Point List**.
+        *   **Closed Curve**: Automatically connects the points with a line, making it easier to visualize the boundary of your region.
+        *   **Point List**: Places individual points (fiducials). The region will be defined by the area enclosed by these points, but the boundary line won't be explicitly drawn.
+
+4.  **Define the Region Boundary**
+    *   Click the **Draw Landmarks** button.
+    *   The cursor will change to a crosshair. Click on the surface of your atlas model to place points that define the boundary of your region.
+        *   If no markup node is selected, InterDeCA will automatically create a new "SelectionCurve" (Closed Curve) for you.
+        *   Continue placing points to trace the outline of the region you want to select.
+    *   **Press ESC** on your keyboard when you are finished placing points to exit the drawing mode. The curve will automatically close.
+
+    <img src="./Tutorials/images/DeCA_Segmentation_Draw.png" width="500">
+
+    > **Note:** You can adjust the position of any point after drawing by clicking and dragging it on the 3D view.
+
+5.  **Configure Selection Options**
+    *   **Select only one side**:
+        *   **Checked (Default)**: Restricts the selection to vertices that are on the "same side" as your landmarks. This is useful for selecting a patch on a closed surface without selecting vertices on the opposite side of the mesh (e.g., selecting the face of a skull without selecting the back of the head).
+        *   **Unchecked**: Selects all vertices inside the boundary curve, potentially projecting through the mesh if the geometry is complex.
+
+6.  **Apply Selection**
+    *   Click the **Apply Landmark Selection** button.
+    *   The selected region will be highlighted (typically in red) on the atlas model.
+    *   The info box will update to show how many vertices were selected and the percentage of the total mesh.
+
+    <img src="./Tutorials/images/DeCA_Segmentation_Apply.png" width="500">
+
+7.  **Refine (Optional)**
+    *   If the selection isn't quite right, you can move the landmark points and click **Apply Landmark Selection** again to update the result.
+    *   To start over, click the **Clear Selection** button.
+
+### Exporting the Segmented Region
+
+Once you are satisfied with the selection, you can export it as a new, separate model.
+
+8.  **Name the Region**
+    *   Enter a name for the new model in the **Export Name** field (default is "SelectedRegion").
+
+9.  **Export**
+    *   Click **Export Selected Region as Model**.
+    *   A new model node containing only the selected vertices and faces will be added to the scene. You can now save this model or use it for further analysis.
