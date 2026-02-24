@@ -1,0 +1,1311 @@
+{
+    "@schema": "https://raw.githubusercontent.com/slicer/slicer/master/Modules/Loadable/Markups/Resources/Schema/markups-schema-v1.0.3.json#",
+    "markups": [
+        {
+            "type": "Fiducial",
+            "coordinateSystem": "LPS",
+            "coordinateUnits": "mm",
+            "locked": false,
+            "fixedNumberOfControlPoints": false,
+            "labelFormat": "%N-%d",
+            "lastUsedControlPointNumber": 48,
+            "controlPoints": [
+                {
+                    "id": 1,
+                    "label": "beak",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.00978083349764347,
+                        0.0035516517236828804,
+                        -0.015477869659662247
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 2,
+                    "label": "hinge_anterior",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.018385030329227448,
+                        0.0021851705387234688,
+                        -0.014290903694927692
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 3,
+                    "label": "hinge_posterior",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.01128274854272604,
+                        0.00226805591955781,
+                        -0.009202861227095127
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 4,
+                    "label": "anterior_adductor_dorsal",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.018586531281471252,
+                        0.003680925350636244,
+                        -0.011135738343000412
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 5,
+                    "label": "posterior_adductor_dorsal",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.014186098240315914,
+                        0.0032144144643098116,
+                        -0.004189982544630766
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 6,
+                    "label": "commissure_001",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.019308114424347878,
+                        0.002419786062091589,
+                        -0.013980654999613762
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 7,
+                    "label": "commissure_002",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.022034721449017525,
+                        0.00241617439314723,
+                        -0.012617489323019981
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 8,
+                    "label": "commissure_003",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.02440939098596573,
+                        0.0018278652569279075,
+                        -0.010750682093203068
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 9,
+                    "label": "commissure_004",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.02607279270887375,
+                        0.001063868752680719,
+                        -0.008323346264660358
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 10,
+                    "label": "commissure_005",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.02677328884601593,
+                        0.0002764854289125651,
+                        -0.005580670665949583
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 11,
+                    "label": "commissure_006",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.026301860809326172,
+                        0.0001673452788963914,
+                        -0.002803598530590534
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 12,
+                    "label": "commissure_007",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.025086112320423126,
+                        -4.163819539826363e-05,
+                        1.3669954569195397e-05
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 13,
+                    "label": "commissure_008",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.023292196914553642,
+                        0.0005259577883407474,
+                        0.002404105616733432
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 14,
+                    "label": "commissure_009",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.021399876102805138,
+                        0.00042784036486409605,
+                        0.004770142957568169
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 15,
+                    "label": "commissure_010",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.019135238602757454,
+                        0.0011037009535357356,
+                        0.006457647308707237
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 16,
+                    "label": "commissure_011",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.016616635024547577,
+                        0.0013401297619566321,
+                        0.008215161971747875
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 17,
+                    "label": "commissure_012",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.01382108312100172,
+                        0.0017634272808209062,
+                        0.009449818171560764
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 18,
+                    "label": "commissure_013",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.010908558033406734,
+                        0.0021605074871331453,
+                        0.010409151203930378
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 19,
+                    "label": "commissure_014",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.008052640594542027,
+                        0.0025683369021862745,
+                        0.011502636596560478
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 20,
+                    "label": "commissure_015",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.005116838030517101,
+                        0.0026051339227706194,
+                        0.012392770498991013
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 21,
+                    "label": "commissure_016",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.002439062809571624,
+                        0.0025443562772125006,
+                        0.013911809772253036
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 22,
+                    "label": "commissure_017",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.0003708914155140519,
+                        0.002660048194229603,
+                        0.01518959365785122
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 23,
+                    "label": "commissure_018",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.0032229262869805098,
+                        0.0024001910351216793,
+                        0.016360227018594742
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 24,
+                    "label": "commissure_019",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.006106532644480467,
+                        0.0023624319583177567,
+                        0.017483022063970566
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 25,
+                    "label": "commissure_020",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.009118828922510147,
+                        0.0021737460047006607,
+                        0.018145842477679253
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 26,
+                    "label": "commissure_021",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.012097093276679516,
+                        0.0021218142937868834,
+                        0.018953774124383926
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 27,
+                    "label": "commissure_022",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.015148651786148548,
+                        0.0018739101942628622,
+                        0.019352100789546967
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 28,
+                    "label": "commissure_023",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.01820259541273117,
+                        0.0014445780543610454,
+                        0.019483141601085663
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 29,
+                    "label": "commissure_024",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.02100754715502262,
+                        0.001306600053794682,
+                        0.01835722103714943
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 30,
+                    "label": "commissure_025",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.022810205817222595,
+                        0.0013747921911999583,
+                        0.015851521864533424
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 31,
+                    "label": "commissure_026",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.024008970707654953,
+                        0.0013204201823100448,
+                        0.013013827614486217
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 32,
+                    "label": "commissure_027",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.02437535859644413,
+                        0.0014722396153956652,
+                        0.009954147040843964
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 33,
+                    "label": "commissure_028",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.023940254002809525,
+                        0.0015503230970352888,
+                        0.0068953377194702625
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 34,
+                    "label": "commissure_029",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.0230928473174572,
+                        0.0015408640028908849,
+                        0.003921177703887224
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 35,
+                    "label": "commissure_030",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.022356243804097176,
+                        0.0014634426916018128,
+                        0.0009265210246667266
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 36,
+                    "label": "commissure_031",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.020861763507127762,
+                        0.0017586430767551064,
+                        -0.0014468387234956026
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 37,
+                    "label": "commissure_032",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.01930900104343891,
+                        0.001571833505295217,
+                        -0.004024718888103962
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 38,
+                    "label": "commissure_033",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.017102770507335663,
+                        0.0018312103347852826,
+                        -0.006092656869441271
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 39,
+                    "label": "commissure_034",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.01447682362049818,
+                        0.002246173331514001,
+                        -0.0076540145091712475
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 40,
+                    "label": "commissure_035",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.011669198982417583,
+                        0.0023264065384864807,
+                        -0.008915611542761326
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 41,
+                    "label": "max_growth_axis_001",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.009556732140481472,
+                        0.0045758988708257675,
+                        -0.015087904408574104
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 42,
+                    "label": "max_growth_axis_002",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.006840499583631754,
+                        0.008002661168575287,
+                        -0.010965224355459213
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 43,
+                    "label": "max_growth_axis_003",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.0036344772670418024,
+                        0.009335511364042759,
+                        -0.005988948047161102
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 44,
+                    "label": "max_growth_axis_004",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        -0.00033470665221102536,
+                        0.009426528587937355,
+                        -0.0009107459336519241
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 45,
+                    "label": "max_growth_axis_005",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.0028837041463702917,
+                        0.008537959307432175,
+                        0.0041532269679009914
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 46,
+                    "label": "max_growth_axis_006",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.006079190410673618,
+                        0.0072136023081839085,
+                        0.009138872846961021
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 47,
+                    "label": "max_growth_axis_007",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.009188292548060417,
+                        0.005300858523696661,
+                        0.013968249782919884
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                },
+                {
+                    "id": 48,
+                    "label": "max_growth_axis_008",
+                    "description": "",
+                    "associatedNodeID": "",
+                    "position": [
+                        0.012203776277601719,
+                        0.002531552454456687,
+                        0.01845168136060238
+                    ],
+                    "orientation": [
+                        -1.0,
+                        -0.0,
+                        -0.0,
+                        -0.0,
+                        -1.0,
+                        -0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                    ],
+                    "selected": true,
+                    "locked": false,
+                    "visibility": true,
+                    "positionStatus": "defined"
+                }
+            ],
+            "measurements": [],
+            "display": {
+                "visibility": true,
+                "opacity": 1.0,
+                "color": [
+                    0.4,
+                    1.0,
+                    1.0
+                ],
+                "selectedColor": [
+                    1.0,
+                    0.5000076295109483,
+                    0.5000076295109483
+                ],
+                "activeColor": [
+                    0.4,
+                    1.0,
+                    0.0
+                ],
+                "propertiesLabelVisibility": false,
+                "pointLabelsVisibility": true,
+                "textScale": 3.0,
+                "glyphType": "Sphere3D",
+                "glyphScale": 3.0,
+                "glyphSize": 5.0,
+                "useGlyphScale": true,
+                "sliceProjection": false,
+                "sliceProjectionUseFiducialColor": true,
+                "sliceProjectionOutlinedBehindSlicePlane": false,
+                "sliceProjectionColor": [
+                    1.0,
+                    1.0,
+                    1.0
+                ],
+                "sliceProjectionOpacity": 0.6,
+                "lineThickness": 0.2,
+                "lineColorFadingStart": 1.0,
+                "lineColorFadingEnd": 10.0,
+                "lineColorFadingSaturation": 1.0,
+                "lineColorFadingHueOffset": 0.0,
+                "handlesInteractive": false,
+                "translationHandleVisibility": true,
+                "rotationHandleVisibility": true,
+                "scaleHandleVisibility": false,
+                "interactionHandleScale": 3.0,
+                "snapMode": "toVisibleSurface"
+            }
+        }
+    ]
+}
