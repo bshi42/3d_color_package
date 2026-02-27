@@ -5154,7 +5154,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     textureFiles = []
 
     for filename in os.listdir(textureDir):
-      if any(filename.lower().endswith(ext) for ext in imageExtensions) and not filename.startswith('average_texture'):
+      if any(filename.lower().endswith(ext) for ext in imageExtensions):
         textureFiles.append(filename)
 
     self.multiRecolorTextureFiles = sorted(textureFiles)
