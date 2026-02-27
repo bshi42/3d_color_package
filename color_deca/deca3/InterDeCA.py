@@ -1396,7 +1396,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
   
   def onTextureDirectoryChangedDC(self, directory):
     """Validate texture directory when changed"""
-    texture_extensions = ['.png']
+    texture_extensions = ['.png', '.tiff', '.tif']
     valid, count = self.validateDirectory(directory, texture_extensions, self.textureValidationLabelDC, "textures")
 
     # If we have textures and models/landmarks, check for matches
@@ -1447,7 +1447,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     # Get texture file basenames (without extension)
     texture_files = []
     for f in os.listdir(textureDir):
-      if f.lower().endswith('.png') and not f.startswith('.'):
+      if f.lower().endswith(('.png', '.tiff', '.tif')) and not f.startswith('.'):
         texture_files.append(os.path.splitext(f)[0])
     
     if not texture_files:
