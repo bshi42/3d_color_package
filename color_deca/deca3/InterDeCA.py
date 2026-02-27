@@ -4003,7 +4003,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.previewTextureCombo.clear()
     d = self.lastBakedTexturesPath
     if d and os.path.isdir(d):
-      items = [f for f in os.listdir(d) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+      items = [f for f in os.listdir(d) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.tif'))]
       items.sort()
       self.previewTextureCombo.addItems(items)
     self.previewTextureCombo.blockSignals(False)
@@ -4014,7 +4014,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       slicer.util.errorDisplay("Atlas model is not in the scene.")
       return
     sid = self.previewTextureCombo.currentText
-    png = os.path.join(self.lastBakedTexturesPath or "", sid + ".png")
+    png = os.path.join(self.lastBakedTexturesPath or "", sid)
     if not os.path.isfile(png): return
     InterDeCALogic().applyTextureToModel(self.atlasModel, png)
 
@@ -7464,7 +7464,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     targets = {norm_id(f): os.path.join(resampledUVDir, f)
                for f in os.listdir(resampledUVDir) if f.lower().endswith('.obj')}
     textures = {os.path.splitext(f)[0].lower(): os.path.join(texturesDir, f)
-                for f in os.listdir(texturesDir) if f.lower().endswith('.png')}
+                for f in os.listdir(texturesDir) if f.lower().endswith(('.png', '.tiff', '.tif'))}
 
     def find_tex(sid):
       # exact, case-insensitive, or startswith
@@ -8389,12 +8389,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       textureFiles = []
       if os.path.isdir(texturesDir):
         for f in os.listdir(texturesDir):
-          if f.lower().endswith('.png') and not f.lower().startswith('average_texture'):
+          if f.lower().endswith(('.png', '.tiff', '.tif')) and not f.lower().startswith('average_texture'):
             textureFiles.append(os.path.join(texturesDir, f))
 
       if not textureFiles:
         if logCallback:
-          logCallback(f"Error: No PNG files found in {texturesDir}")
+          logCallback(f"Error: No texture files found in {texturesDir}")
         return False
 
       if logCallback:
@@ -8573,12 +8573,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       textureFiles = []
       if os.path.isdir(texturesDir):
         for f in os.listdir(texturesDir):
-          if f.lower().endswith('.png') and not f.lower().startswith('average_texture'):
+          if f.lower().endswith(('.png', '.tiff', '.tif')) and not f.lower().startswith('average_texture'):
             textureFiles.append(os.path.join(texturesDir, f))
 
       if not textureFiles:
         if logCallback:
-          logCallback(f"Error: No PNG files found in {texturesDir}")
+          logCallback(f"Error: No texture files found in {texturesDir}")
         return {"success": False}
 
       if logCallback:
