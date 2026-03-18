@@ -5247,7 +5247,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         self.clusteringLogInfo.append("Error: Invalid texture directory")
         return
 
-      if not self.multiRecolorTextureFiles:
+      # Exclude average_texture from clustering input
+      clusteringTextureFiles = [f for f in self.multiRecolorTextureFiles if not f.lower().startswith('average_texture')]
+      excluded = len(self.multiRecolorTextureFiles) - len(clusteringTextureFiles)
+      if excluded > 0:
+        self.clusteringLogInfo.append(f"Found {len(self.multiRecolorTextureFiles)} texture files, {len(clusteringTextureFiles)} used for clustering (average_texture omitted)")
+
+      if not clusteringTextureFiles:
         self.clusteringLogInfo.append("Error: No texture files found")
         return
 
@@ -5256,10 +5262,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       if isClusteringMode:
         # Full clustering mode
-        self._performClusteringMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage)
+        self._performClusteringMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage, clusteringTextureFiles)
       else:
         # Subsample-only mode
-        self._performSubsampleOnlyMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage)
+        self._performSubsampleOnlyMode(atlasModel, textureDir, numSubsampledFaces, useNeighborAverage, clusteringTextureFiles)
 
       self.clusteringProgressBar.setVisible(False)
       qt.QApplication.restoreOverrideCursor()
@@ -5272,8 +5278,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       import traceback
       traceback.print_exc()
 
-  def _performClusteringMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage):
+  def _performClusteringMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage, textureFiles=None):
     """Perform full clustering mode with color quantization"""
+    if textureFiles is None:
+      textureFiles = self.multiRecolorTextureFiles
     initialClusters = self.multiRecolorInitialClustersSpin.value
     consolidatedClusters = self.multiRecolorConsolidatedClustersSpin.value
     normalizeLuminosity = self.multiRecolorNormalizeLuminosityCheckbox.isChecked()
@@ -5283,7 +5291,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
     self.clusteringLogInfo.append(f"Luminosity normalization: {'enabled' if normalizeLuminosity else 'disabled'}")
     self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
-    self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+    self.clusteringLogInfo.append(f"Processing {len(textureFiles)} textures...")
 
     logic = InterDeCALogic()
 
@@ -5295,7 +5303,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Run the multi-texture clustering pipeline
     result = logic.performMultiTextureClustering(
-      atlasModel, textureDir, self.multiRecolorTextureFiles,
+      atlasModel, textureDir, textureFiles,
       initialClusters, consolidatedClusters,
       numSubsampledFaces=numSubsampledFaces,
       normalizeLuminosity=normalizeLuminosity,
@@ -5338,12 +5346,14 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     else:
       self.clusteringLogInfo.append("Multi-texture clustering failed - check log for details")
 
-  def _performSubsampleOnlyMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage):
+  def _performSubsampleOnlyMode(self, atlasModel, textureDir, numSubsampledFaces, useNeighborAverage, textureFiles=None):
     """Perform subsample-only mode without clustering"""
+    if textureFiles is None:
+      textureFiles = self.multiRecolorTextureFiles
     self.clusteringLogInfo.append(f"Starting subsample and average mode...")
     self.clusteringLogInfo.append(f"Subsampled faces: {numSubsampledFaces}")
     self.clusteringLogInfo.append(f"Neighbor average: {'enabled' if useNeighborAverage else 'disabled'}")
-    self.clusteringLogInfo.append(f"Processing {len(self.multiRecolorTextureFiles)} textures...")
+    self.clusteringLogInfo.append(f"Processing {len(textureFiles)} textures...")
 
     logic = InterDeCALogic()
 
@@ -5355,7 +5365,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Run subsample-only pipeline
     result = logic.performSubsampleOnly(
-      atlasModel, self.multiRecolorTextureFiles,
+      atlasModel, textureFiles,
       numSubsampledFaces=numSubsampledFaces,
       useNeighborAverage=useNeighborAverage,
       faceAreas=cachedFaceAreas,
