@@ -951,6 +951,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorNumSubsampledFacesSpin.setToolTip("Number of faces to subsample for clustering (uniformly distributed by surface distance)")
     clusteringWidgetLayout.addRow("Number of Faces (Subsampling): ", self.multiRecolorNumSubsampledFacesSpin)
 
+    # Disable subsampling checkbox
+    self.multiRecolorDisableSubsamplingCheckbox = qt.QCheckBox()
+    self.multiRecolorDisableSubsamplingCheckbox.setChecked(False)
+    self.multiRecolorDisableSubsamplingCheckbox.setToolTip("If checked, use all faces for clustering instead of subsampling")
+    clusteringWidgetLayout.addRow("Disable Subsampling (Use All Faces): ", self.multiRecolorDisableSubsamplingCheckbox)
+
     # Neighbor Average checkbox
     self.multiRecolorNeighborAverageCheckbox = qt.QCheckBox()
     self.multiRecolorNeighborAverageCheckbox.setChecked(False)
@@ -1103,6 +1109,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     self.multiRecolorClusteringRadio.connect("toggled(bool)", self.onMultiRecolorModeChanged)
     self.multiRecolorSubsampleOnlyRadio.connect("toggled(bool)", self.onMultiRecolorModeChanged)
     self.multiRecolorNormalizeLuminosityCheckbox.connect("toggled(bool)", self.onMultiRecolorParameterChanged)
+    self.multiRecolorDisableSubsamplingCheckbox.connect("toggled(bool)", self.onMultiRecolorDisableSubsamplingChanged)
     self.multiRecolorInitialClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
     self.multiRecolorConsolidatedClustersSpin.connect("valueChanged(int)", self.onMultiRecolorClusterCountChanged)
     self.clusterButton.connect('clicked(bool)', self.onClusterButton)
@@ -2481,8 +2488,8 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     negativeSideCount = len(landmarkPositions) - positiveSideCount
     landmarkSideSign = 1 if positiveSideCount >= negativeSideCount else -1
 
-    # Calculate midline threshold (1% of range)
-    midlineThreshold = ranges[mirrorAxis] * 0.01
+    # Calculate midline threshold (5% of range to allow slight overlap)
+    midlineThreshold = ranges[mirrorAxis] * 0.05
 
     return mirrorAxis, landmarkSideSign, meshCenter, ranges, midlineThreshold
 
@@ -2526,13 +2533,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         vertexSide = vertex[mirrorAxis] - meshCenter[mirrorAxis]
         vertexSideSign = 1 if vertexSide >= 0 else -1
 
-        if vertexSideSign != landmarkSideSign:
+        if vertexSideSign != landmarkSideSign and abs(vertexSide) >= midlineThreshold:
           oppositeSideCount += 1
           continue
 
         if abs(vertexSide) < midlineThreshold:
           midlineCount += 1
-          continue
 
         validVertexIndices.append(i)
 
@@ -2565,15 +2571,68 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
     # Get polygon selection (only check valid vertices)
     polygonVertices = set()
-    for i in validVertexIndices:
-      vertex = np.array(points.GetPoint(i))
-      vertex_centered = vertex - center
-      vertex2D = vertex_centered @ eigenvectors[:, :2]
+    
+    # Pre-calculate convex hull edges for buffering
+    hull_edges = delaunay.convex_hull
+    p1 = landmarks2D[hull_edges[:, 0]]
+    p2 = landmarks2D[hull_edges[:, 1]]
+    v_segments = p2 - p1
+    c2 = np.sum(v_segments * v_segments, axis=1)
+    
+    # Calculate 5% buffer distance in 2D space
+    min_b = np.min(landmarks2D, axis=0)
+    max_b = np.max(landmarks2D, axis=0)
+    buffer_dist = np.max(max_b - min_b) * 0.05
+    
+    # Vectorized check of all vertices
+    v_indices = np.array(validVertexIndices)
+    if len(v_indices) > 0:
+      v_arr = np.array([points.GetPoint(i) for i in validVertexIndices])
+      v_cent = v_arr - center
+      v2_arr = v_cent @ eigenvectors[:, :2]
+      
+      in_simplex = delaunay.find_simplex(v2_arr) >= 0
+      
+      # Add vertices that are strictly inside
+      for idx, is_in in zip(validVertexIndices, in_simplex):
+        if is_in:
+          polygonVertices.add(idx)
+          
+      # For vertices outside, check if they are within buffer distance of the convex hull
+      outside_mask = ~in_simplex
+      if np.any(outside_mask) and len(hull_edges) > 0:
+        out_v2 = v2_arr[outside_mask]
+        out_idx = v_indices[outside_mask]
+        
+        # Calculate min distance to any segment for each outside point
+        w = out_v2[:, np.newaxis, :] - p1[np.newaxis, :, :]
+        c1 = np.sum(w * v_segments[np.newaxis, :, :], axis=2)
+        
+        dist_p1 = np.linalg.norm(w, axis=2)
+        w2 = out_v2[:, np.newaxis, :] - p2[np.newaxis, :, :]
+        dist_p2 = np.linalg.norm(w2, axis=2)
+        
+        c2_safe = np.where(c2 == 0, 1e-10, c2)
+        b = c1 / c2_safe[np.newaxis, :]
+        pb = p1[np.newaxis, :, :] + b[:, :, np.newaxis] * v_segments[np.newaxis, :, :]
+        dist_pb = np.linalg.norm(out_v2[:, np.newaxis, :] - pb, axis=2)
+        
+        mask1 = c1 <= 0
+        mask2 = c2[np.newaxis, :] <= c1
+        mask_mid = ~(mask1 | mask2)
+        
+        dist = np.zeros_like(c1)
+        dist[mask1] = dist_p1[mask1]
+        dist[mask2] = dist_p2[mask2]
+        dist[mask_mid] = dist_pb[mask_mid]
+        
+        min_dist = np.min(dist, axis=1)
+        close_enough = min_dist <= buffer_dist
+        
+        for idx in out_idx[close_enough]:
+          polygonVertices.add(int(idx))
 
-      if delaunay.find_simplex(vertex2D) >= 0:
-        polygonVertices.add(i)
-
-    print(f"[Selection] Polygon selection retained {len(polygonVertices)} vertices")
+    print(f"[Selection] Polygon selection retained {len(polygonVertices)} vertices (inc buffer)")
 
     # Texture similarity refinement on boundary vertices (optional)
     colorArray = polyData.GetPointData().GetScalars()
@@ -3288,13 +3347,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       vertexSide = point[mirrorAxis] - center[mirrorAxis]
       vertexSideSign = 1 if vertexSide >= 0 else -1
 
-      if vertexSideSign != landmarkSideSign:
+      if vertexSideSign != landmarkSideSign and abs(vertexSide) >= midlineThreshold:
         oppositeSideCount += 1
         continue
 
       if abs(vertexSide) < midlineThreshold:
         midlineCount += 1
-        continue
 
       filteredVertices.append(vertexId)
 
@@ -5057,6 +5115,10 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
     if textureDirectorySelected:
       self.updateMultiRecolorTextureList()
 
+  def onMultiRecolorDisableSubsamplingChanged(self, checked):
+    """Enable/disable subsampling spinbox based on checkbox"""
+    self.multiRecolorNumSubsampledFacesSpin.setEnabled(not checked)
+
   def onMultiRecolorModeChanged(self):
     """Handle mode change between clustering and subsample-only"""
     isClusteringMode = self.multiRecolorClusteringRadio.isChecked()
@@ -5174,7 +5236,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
 
       atlasModel = self.multiRecolorAtlasModelSelect.currentNode()
       textureDir = self.multiRecolorTextureDirectorySelector.currentPath
-      numSubsampledFaces = self.multiRecolorNumSubsampledFacesSpin.value
+      numSubsampledFaces = 0 if self.multiRecolorDisableSubsamplingCheckbox.isChecked() else self.multiRecolorNumSubsampledFacesSpin.value
       useNeighborAverage = self.multiRecolorNeighborAverageCheckbox.isChecked()
 
       if not atlasModel:
@@ -8672,24 +8734,32 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
             logCallback(f"  Error: Failed to build face adjacency graph")
           return None
 
-      # Apply neighbor averaging
-      smoothedColors = np.zeros_like(faceColors)
-
-      for faceId in range(numFaces):
-        # Get neighbors
-        neighbors = adjacency.get(faceId, set())
-
-        # Include the face itself in the average
-        colorSum = faceColors[faceId].copy()
-        count = 1
-
-        # Add neighbor colors
-        for neighborId in neighbors:
-          colorSum += faceColors[neighborId]
-          count += 1
-
-        # Compute average
-        smoothedColors[faceId] = colorSum / count
+      # Build sparse averaging matrix for vectorized smoothing
+      try:
+        from scipy import sparse
+        rows = []
+        cols = []
+        for faceId in range(numFaces):
+          neighbors = adjacency.get(faceId, set())
+          allIds = [faceId] + list(neighbors)
+          for nId in allIds:
+            rows.append(faceId)
+            cols.append(nId)
+        data = np.ones(len(rows), dtype=np.float64)
+        avgMatrix = sparse.csr_matrix((data, (rows, cols)), shape=(numFaces, numFaces))
+        # Normalize each row to compute the average
+        rowSums = np.array(avgMatrix.sum(axis=1)).ravel()
+        rowSums[rowSums == 0] = 1  # avoid division by zero
+        diagInv = sparse.diags(1.0 / rowSums)
+        avgMatrix = diagInv @ avgMatrix
+        smoothedColors = avgMatrix @ faceColors
+      except ImportError:
+        # Fallback without scipy sparse
+        smoothedColors = np.zeros_like(faceColors)
+        for faceId in range(numFaces):
+          neighbors = adjacency.get(faceId, set())
+          allIds = [faceId] + list(neighbors)
+          smoothedColors[faceId] = np.mean(faceColors[allIds], axis=0)
 
       if logCallback:
         logCallback(f"  Neighbor averaging complete: smoothed {numFaces} faces")
@@ -8702,6 +8772,29 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       import traceback
       traceback.print_exc()
       return None
+
+  def _extractFaceConnectivity(self, polyData):
+    """
+    Extract face connectivity as a numpy array from VTK polydata.
+
+    Returns:
+        faces: (N_faces, 3) int array of vertex indices (triangles only),
+               or None if non-triangular cells are present.
+    """
+    polys = polyData.GetPolys()
+    if polys is None or polys.GetNumberOfCells() == 0:
+      return None
+    rawArray = vtk_np.vtk_to_numpy(polys.GetData())
+    nFaces = polys.GetNumberOfCells()
+    # For triangle meshes: rawArray is [3, v0, v1, v2, 3, v0, v1, v2, ...]
+    # Check stride: total length should be nFaces * 4 for triangles
+    if len(rawArray) == nFaces * 4:
+      return rawArray.reshape(nFaces, 4)[:, 1:4]
+    # For quad meshes: rawArray is [4, v0, v1, v2, v3, ...]
+    if len(rawArray) == nFaces * 5:
+      return rawArray.reshape(nFaces, 5)[:, 1:5]
+    # Mixed cell types: fall back to None (caller should use per-cell iteration)
+    return None
 
   def _calculateFaceAverageColors(self, polyData, textureImage, colorSpace):
     """
@@ -8724,58 +8817,80 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
       tcoords_np = vtk_np.vtk_to_numpy(tcoords)
 
-      # Get face connectivity
-      polys = polyData.GetPolys()
-      nFaces = polys.GetNumberOfCells()
-
       # Get texture image dimensions
       height, width = textureImage.shape[:2]
 
-      faceColors = []
+      # Try vectorized path for triangle meshes
+      faces = self._extractFaceConnectivity(polyData)
+      if faces is not None and faces.shape[1] == 3:
+        # Vectorized: sample texture at all vertex UV positions at once
+        u = np.clip(tcoords_np[:, 0], 0, 1)
+        v = np.clip(1.0 - tcoords_np[:, 1], 0, 1)  # Flip V
+        px = np.clip((u * (width - 1)).astype(int), 0, width - 1)
+        py = np.clip((v * (height - 1)).astype(int), 0, height - 1)
+        vertexColors = textureImage[py, px, :3].astype(np.float64)
 
-      # Process each face individually using VTK's cell iterator
-      for faceIdx in range(nFaces):
-        # Get the cell (face) points
-        cell = polyData.GetCell(faceIdx)
-        nPoints = cell.GetNumberOfPoints()
+        # Average vertex colors per face: (nFaces, 3_vertices, 3_channels) -> (nFaces, 3_channels)
+        faceColors = np.mean(vertexColors[faces], axis=1)
 
-        # Get vertex indices for this face
-        vertexIndices = []
-        for ptIdx in range(nPoints):
-          vertexIndices.append(cell.GetPointId(ptIdx))
-
-        # Get texture coordinates for these vertices
-        faceTexCoords = tcoords_np[vertexIndices]
-
-        # Convert texture coordinates to pixel coordinates
-        # Flip V coordinate (1 - v) to handle texture inversion
-        faceTexCoords_flipped = faceTexCoords.copy()
-        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
-
-        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
-        pixelCoords = pixelCoords.astype(int)
-
-        # Sample colors at these pixel locations
-        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
-
-        # Calculate average color for this face
-        avgColor = np.mean(facePixelColors, axis=0)
-
-        # Convert color space if needed
         if colorSpace == "HSV":
-          # Convert RGB to HSV
-          rgb_normalized = avgColor / 255.0
-          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
-          # Convert hue to 2D vector (cos, sin) to handle circular nature
-          hue_radians = hsv[0] * 2 * np.pi  # Convert to radians
+          # Vectorized RGB to HSV conversion
+          rgb_norm = faceColors / 255.0
+          r, g, b = rgb_norm[:, 0], rgb_norm[:, 1], rgb_norm[:, 2]
+          maxc = np.maximum(np.maximum(r, g), b)
+          minc = np.minimum(np.minimum(r, g), b)
+          diff = maxc - minc
+
+          # Hue calculation
+          hue = np.zeros(len(faceColors))
+          mask_r = (maxc == r) & (diff > 0)
+          mask_g = (maxc == g) & (diff > 0)
+          mask_b = (maxc == b) & (diff > 0)
+          hue[mask_r] = ((g[mask_r] - b[mask_r]) / diff[mask_r]) % 6.0
+          hue[mask_g] = ((b[mask_g] - r[mask_g]) / diff[mask_g]) + 2.0
+          hue[mask_b] = ((r[mask_b] - g[mask_b]) / diff[mask_b]) + 4.0
+          hue = hue / 6.0  # Normalize to [0, 1]
+
+          # Saturation
+          sat = np.where(maxc > 0, diff / maxc, 0.0)
+
+          # Convert hue to cos/sin for circular representation
+          hue_radians = hue * 2 * np.pi
           hue_cos = np.cos(hue_radians)
           hue_sin = np.sin(hue_radians)
-          # Create 4D vector: [hue_cos, hue_sin, saturation, value]
+
+          faceColors = np.column_stack([hue_cos, hue_sin, sat * 100, maxc * 100])
+
+        return faceColors
+
+      # Fallback: per-face loop for non-triangle meshes
+      polys = polyData.GetPolys()
+      nFaces = polys.GetNumberOfCells()
+      faceColorsList = []
+
+      for faceIdx in range(nFaces):
+        cell = polyData.GetCell(faceIdx)
+        nPoints = cell.GetNumberOfPoints()
+        vertexIndices = [cell.GetPointId(ptIdx) for ptIdx in range(nPoints)]
+
+        faceTexCoords = tcoords_np[vertexIndices].copy()
+        faceTexCoords[:, 1] = 1.0 - faceTexCoords[:, 1]
+        pixelCoords = np.clip(faceTexCoords, 0, 1) * [width - 1, height - 1]
+        pixelCoords = pixelCoords.astype(int)
+        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
+        avgColor = np.mean(facePixelColors, axis=0)
+
+        if colorSpace == "HSV":
+          rgb_normalized = avgColor / 255.0
+          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
+          hue_radians = hsv[0] * 2 * np.pi
+          hue_cos = np.cos(hue_radians)
+          hue_sin = np.sin(hue_radians)
           avgColor = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
 
-        faceColors.append(avgColor)
+        faceColorsList.append(avgColor)
 
-      return np.array(faceColors)
+      return np.array(faceColorsList)
 
     except Exception as e:
       print(f"Error calculating face colors: {e}")
@@ -8805,51 +8920,71 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       # Get texture image dimensions
       height, width = textureImage.shape[:2]
 
-      faceColors = []
+      # Try vectorized path for triangle meshes
+      allFaces = self._extractFaceConnectivity(polyData)
+      if allFaces is not None and allFaces.shape[1] == 3:
+        # Get the subset of faces
+        sampledFaces = allFaces[faceIndices]  # (N_sampled, 3)
 
-      # Process only the specified face indices
-      for faceIdx in faceIndices:
-        # Get the cell (face) points
-        cell = polyData.GetCell(int(faceIdx))
-        nPoints = cell.GetNumberOfPoints()
+        # Sample texture at all vertex UV positions at once
+        u = np.clip(tcoords_np[:, 0], 0, 1)
+        v = np.clip(1.0 - tcoords_np[:, 1], 0, 1)  # Flip V
+        px = np.clip((u * (width - 1)).astype(int), 0, width - 1)
+        py = np.clip((v * (height - 1)).astype(int), 0, height - 1)
+        vertexColors = textureImage[py, px, :3].astype(np.float64)
 
-        # Get vertex indices for this face
-        vertexIndices = []
-        for ptIdx in range(nPoints):
-          vertexIndices.append(cell.GetPointId(ptIdx))
+        # Average vertex colors per sampled face
+        faceColors = np.mean(vertexColors[sampledFaces], axis=1)
 
-        # Get texture coordinates for these vertices
-        faceTexCoords = tcoords_np[vertexIndices]
-
-        # Convert texture coordinates to pixel coordinates
-        # Flip V coordinate (1 - v) to handle texture inversion
-        faceTexCoords_flipped = faceTexCoords.copy()
-        faceTexCoords_flipped[:, 1] = 1.0 - faceTexCoords_flipped[:, 1]
-
-        pixelCoords = np.clip(faceTexCoords_flipped, 0, 1) * [width - 1, height - 1]
-        pixelCoords = pixelCoords.astype(int)
-
-        # Sample colors at these pixel locations
-        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
-
-        # Calculate average color for this face
-        avgColor = np.mean(facePixelColors, axis=0)
-
-        # Convert color space if needed
         if colorSpace == "HSV":
-          # Convert RGB to HSV
-          rgb_normalized = avgColor / 255.0
-          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
-          # Convert hue to 2D vector (cos, sin) to handle circular nature
-          hue_radians = hsv[0] * 2 * np.pi  # Convert to radians
+          # Vectorized RGB to HSV conversion
+          rgb_norm = faceColors / 255.0
+          r, g, b = rgb_norm[:, 0], rgb_norm[:, 1], rgb_norm[:, 2]
+          maxc = np.maximum(np.maximum(r, g), b)
+          minc = np.minimum(np.minimum(r, g), b)
+          diff = maxc - minc
+
+          hue = np.zeros(len(faceColors))
+          mask_r = (maxc == r) & (diff > 0)
+          mask_g = (maxc == g) & (diff > 0)
+          mask_b = (maxc == b) & (diff > 0)
+          hue[mask_r] = ((g[mask_r] - b[mask_r]) / diff[mask_r]) % 6.0
+          hue[mask_g] = ((b[mask_g] - r[mask_g]) / diff[mask_g]) + 2.0
+          hue[mask_b] = ((r[mask_b] - g[mask_b]) / diff[mask_b]) + 4.0
+          hue = hue / 6.0
+
+          sat = np.where(maxc > 0, diff / maxc, 0.0)
+          hue_radians = hue * 2 * np.pi
           hue_cos = np.cos(hue_radians)
           hue_sin = np.sin(hue_radians)
-          # Create 4D vector: [hue_cos, hue_sin, saturation, value]
-          avgColor = np.array([hue_cos, hue_sin, hsv[1] * 100, hsv[2] * 100])
 
-        faceColors.append(avgColor)
+          faceColors = np.column_stack([hue_cos, hue_sin, sat * 100, maxc * 100])
 
-      return np.array(faceColors)
+        return faceColors
+
+      # Fallback: per-face loop for non-triangle meshes
+      faceColorsList = []
+      for faceIdx in faceIndices:
+        cell = polyData.GetCell(int(faceIdx))
+        nPoints = cell.GetNumberOfPoints()
+        vertexIndices = [cell.GetPointId(ptIdx) for ptIdx in range(nPoints)]
+
+        faceTexCoords = tcoords_np[vertexIndices].copy()
+        faceTexCoords[:, 1] = 1.0 - faceTexCoords[:, 1]
+        pixelCoords = np.clip(faceTexCoords, 0, 1) * [width - 1, height - 1]
+        pixelCoords = pixelCoords.astype(int)
+        facePixelColors = textureImage[pixelCoords[:, 1], pixelCoords[:, 0], :3]
+        avgColor = np.mean(facePixelColors, axis=0)
+
+        if colorSpace == "HSV":
+          rgb_normalized = avgColor / 255.0
+          hsv = colorsys.rgb_to_hsv(rgb_normalized[0], rgb_normalized[1], rgb_normalized[2])
+          hue_radians = hsv[0] * 2 * np.pi
+          avgColor = np.array([np.cos(hue_radians), np.sin(hue_radians), hsv[1] * 100, hsv[2] * 100])
+
+        faceColorsList.append(avgColor)
+
+      return np.array(faceColorsList)
 
     except Exception as e:
       print(f"Error calculating sampled face colors: {e}")
@@ -10316,34 +10451,43 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     """
     try:
       numFaces = polyData.GetNumberOfCells()
-      faceAreas = np.zeros(numFaces)
 
+      # Try vectorized path for triangle meshes
+      faces = self._extractFaceConnectivity(polyData)
+      points_np = vtk_np.vtk_to_numpy(polyData.GetPoints().GetData())
+
+      if faces is not None and faces.shape[1] == 3:
+        # Vectorized triangle area: 0.5 * ||(p1-p0) x (p2-p0)||
+        p0 = points_np[faces[:, 0]]
+        p1 = points_np[faces[:, 1]]
+        p2 = points_np[faces[:, 2]]
+        cross = np.cross(p1 - p0, p2 - p0)
+        faceAreas = 0.5 * np.linalg.norm(cross, axis=1)
+        return faceAreas
+
+      if faces is not None and faces.shape[1] == 4:
+        # Vectorized quad area: two triangles (p0,p1,p2) + (p0,p2,p3)
+        p0 = points_np[faces[:, 0]]
+        p1 = points_np[faces[:, 1]]
+        p2 = points_np[faces[:, 2]]
+        p3 = points_np[faces[:, 3]]
+        area1 = 0.5 * np.linalg.norm(np.cross(p1 - p0, p2 - p0), axis=1)
+        area2 = 0.5 * np.linalg.norm(np.cross(p2 - p0, p3 - p0), axis=1)
+        return area1 + area2
+
+      # Fallback: per-face loop for mixed cell types
+      faceAreas = np.zeros(numFaces)
       for faceId in range(numFaces):
         cell = polyData.GetCell(faceId)
         if cell.GetNumberOfPoints() >= 3:
-          # Get the points of the face
-          points = []
-          for i in range(cell.GetNumberOfPoints()):
-            pointId = cell.GetPointId(i)
-            point = polyData.GetPoint(pointId)
-            points.append(point)
-
-          # Calculate area using cross product for triangular faces
-          if len(points) >= 3:
-            # For triangular faces
-            p0, p1, p2 = np.array(points[0]), np.array(points[1]), np.array(points[2])
-            v1 = p1 - p0
-            v2 = p2 - p0
-            area = 0.5 * np.linalg.norm(np.cross(v1, v2))
-
-            # For quad faces, add the second triangle
-            if len(points) == 4:
-              p3 = np.array(points[3])
-              v3 = p3 - p0
-              area += 0.5 * np.linalg.norm(np.cross(v2, v3))
-
-            faceAreas[faceId] = area
-
+          pts = [np.array(polyData.GetPoint(cell.GetPointId(i))) for i in range(cell.GetNumberOfPoints())]
+          v1 = pts[1] - pts[0]
+          v2 = pts[2] - pts[0]
+          area = 0.5 * np.linalg.norm(np.cross(v1, v2))
+          if len(pts) == 4:
+            v3 = pts[3] - pts[0]
+            area += 0.5 * np.linalg.norm(np.cross(v2, v3))
+          faceAreas[faceId] = area
       return faceAreas
 
     except Exception as e:
@@ -10416,187 +10560,157 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       numFaces = polyData.GetNumberOfCells()
       adjacency = {i: set() for i in range(numFaces)}
 
-      # Step 1: Build edge-to-faces mapping (for connected mesh parts)
-      edgeToFaces = {}
+      # Try vectorized path for triangle meshes
+      faces = self._extractFaceConnectivity(polyData)
 
-      # Diagnostic: check mesh structure
+      if faces is not None and faces.shape[1] == 3:
+        if logCallback:
+          logCallback(f"  Mesh structure: {{'vtkTriangle': {numFaces}}}")
+
+        # Step 1: Build edge-based adjacency using vectorized numpy
+        # Generate all 3 edges per triangle: (v0,v1), (v1,v2), (v2,v0)
+        e0 = np.stack([faces[:, 0], faces[:, 1]], axis=1)  # edge 0
+        e1 = np.stack([faces[:, 1], faces[:, 2]], axis=1)  # edge 1
+        e2 = np.stack([faces[:, 2], faces[:, 0]], axis=1)  # edge 2
+        allEdges = np.vstack([e0, e1, e2])  # (numFaces*3, 2)
+
+        # Canonical form: smaller vertex id first
+        allEdges = np.sort(allEdges, axis=1)
+
+        # Face indices for each edge
+        faceIds = np.tile(np.arange(numFaces), 3)  # [0..N-1, 0..N-1, 0..N-1]
+
+        # Sort edges lexicographically to group identical edges together
+        sortIdx = np.lexsort((allEdges[:, 1], allEdges[:, 0]))
+        sortedEdges = allEdges[sortIdx]
+        sortedFaceIds = faceIds[sortIdx]
+
+        # Find where consecutive edges are equal (shared edges)
+        sameAsNext = np.all(sortedEdges[:-1] == sortedEdges[1:], axis=1)
+
+        # For shared edges, connect the two faces
+        edgeCount = 0
+        for idx in np.where(sameAsNext)[0]:
+          f1 = int(sortedFaceIds[idx])
+          f2 = int(sortedFaceIds[idx + 1])
+          if f1 != f2:
+            adjacency[f1].add(f2)
+            adjacency[f2].add(f1)
+            edgeCount += 1
+
+        if logCallback:
+          logCallback(f"  Edge analysis: {edgeCount} adjacencies from shared edges")
+
+        # Step 2: Vertex-based adjacency using numpy
+        # For each vertex, find all faces that use it, then connect them
+        flatVertices = faces.ravel()  # all vertex indices
+        flatFaceIds = np.repeat(np.arange(numFaces), 3)  # corresponding face for each vertex
+
+        # Sort by vertex id to group faces sharing the same vertex
+        sortIdx = np.argsort(flatVertices)
+        sortedVerts = flatVertices[sortIdx]
+        sortedFIds = flatFaceIds[sortIdx]
+
+        # Find boundaries between vertex groups
+        changes = np.where(np.diff(sortedVerts) != 0)[0] + 1
+        groups = np.split(sortedFIds, changes)
+
+        vertexCount = 0
+        for group in groups:
+          if len(group) > 1:
+            uniqueFaces = np.unique(group)
+            if len(uniqueFaces) > 1:
+              for i in range(len(uniqueFaces)):
+                for j in range(i + 1, len(uniqueFaces)):
+                  f1, f2 = int(uniqueFaces[i]), int(uniqueFaces[j])
+                  if f2 not in adjacency[f1]:
+                    adjacency[f1].add(f2)
+                    adjacency[f2].add(f1)
+                    vertexCount += 1
+
+        if logCallback:
+          logCallback(f"  Vertex analysis: {vertexCount} new adjacencies from shared vertices")
+
+        # Check for isolated faces
+        connectedFaces = sum(1 for s in adjacency.values() if len(s) > 0)
+        isolated = numFaces - connectedFaces
+
+        if logCallback:
+          logCallback(f"Face adjacency graph built:")
+          logCallback(f"  - {connectedFaces} connected faces")
+          logCallback(f"  - {isolated} isolated faces (no adjacencies)")
+
+        # Fallback for completely disconnected meshes
+        if isolated == numFaces:
+          if logCallback:
+            logCallback("  WARNING: Mesh is completely disconnected! Using spatial proximity fallback...")
+          points_np = vtk_np.vtk_to_numpy(polyData.GetPoints().GetData())
+          faceCenters = np.mean(points_np[faces], axis=1)
+
+          # Estimate average edge length from first 1000 faces
+          sampleN = min(1000, numFaces)
+          sampleFaces = faces[:sampleN]
+          p0 = points_np[sampleFaces[:, 0]]
+          p1 = points_np[sampleFaces[:, 1]]
+          p2 = points_np[sampleFaces[:, 2]]
+          edgeLens = np.concatenate([
+            np.linalg.norm(p1 - p0, axis=1),
+            np.linalg.norm(p2 - p1, axis=1),
+            np.linalg.norm(p0 - p2, axis=1),
+          ])
+          avgEdgeLength = np.mean(edgeLens)
+          proximityThreshold = avgEdgeLength * 1.5
+
+          if logCallback:
+            logCallback(f"  Average edge length: {avgEdgeLength:.6f}, proximity threshold: {proximityThreshold:.6f}")
+
+          try:
+            from scipy.spatial import cKDTree
+            tree = cKDTree(faceCenters)
+            pairs = tree.query_pairs(proximityThreshold)
+            for i, j in pairs:
+              adjacency[i].add(j)
+              adjacency[j].add(i)
+            if logCallback:
+              logCallback(f"  Added {len(pairs)} spatial proximity connections (KD-tree)")
+          except ImportError:
+            if logCallback:
+              logCallback(f"  WARNING: scipy not available, using slower O(n²) spatial proximity")
+            for i in range(numFaces):
+              for j in range(i + 1, numFaces):
+                if np.linalg.norm(faceCenters[i] - faceCenters[j]) < proximityThreshold:
+                  adjacency[i].add(j)
+                  adjacency[j].add(i)
+
+        return adjacency
+
+      # Fallback: per-face loop for non-triangle meshes
+      edgeToFaces = {}
       cellTypes = {}
-      totalEdges = 0
 
       for faceId in range(numFaces):
         cell = polyData.GetCell(faceId)
         numPoints = cell.GetNumberOfPoints()
         cellType = cell.GetClassName()
+        cellTypes[cellType] = cellTypes.get(cellType, 0) + 1
 
-        if cellType not in cellTypes:
-          cellTypes[cellType] = 0
-        cellTypes[cellType] += 1
-
-        # Iterate through edges of this face
         for i in range(numPoints):
           p1 = cell.GetPointId(i)
           p2 = cell.GetPointId((i + 1) % numPoints)
-
-          # Create a canonical edge representation (smaller id first)
-          edge = tuple(sorted([p1, p2]))
-
+          edge = (min(p1, p2), max(p1, p2))
           if edge not in edgeToFaces:
             edgeToFaces[edge] = []
           edgeToFaces[edge].append(faceId)
-          totalEdges += 1
 
       if logCallback:
         logCallback(f"  Mesh structure: {cellTypes}")
-        logCallback(f"  Total edges found: {totalEdges}")
-        logCallback(f"  Unique edges in map: {len(edgeToFaces)}")
 
-        # Check edge distribution
-        edgeDistribution = {}
-        for edge, faces in edgeToFaces.items():
-          count = len(faces)
-          if count not in edgeDistribution:
-            edgeDistribution[count] = 0
-          edgeDistribution[count] += 1
-        logCallback(f"  Edge distribution: {edgeDistribution}")
-
-      # Build adjacency from edge-to-faces mapping
-      edgeConnectedFaces = set()
-      edgeCount = 0
-      for edge, faces in edgeToFaces.items():
-        # Connect all faces that share this edge
-        # In a proper mesh, most edges are shared by 2 faces
-        # Boundary edges are used by 1 face (no adjacency)
-        # Degenerate cases might have >2 faces per edge
-        if len(faces) >= 2:
-          # Edge is shared by multiple faces - connect them all
-          for i in range(len(faces)):
-            for j in range(i + 1, len(faces)):
-              f1, f2 = faces[i], faces[j]
-              adjacency[f1].add(f2)
-              adjacency[f2].add(f1)
-              edgeConnectedFaces.add(f1)
-              edgeConnectedFaces.add(f2)
-              edgeCount += 1
-
-      if logCallback:
-        logCallback(f"  Edge analysis: {len(edgeToFaces)} unique edges, {edgeCount} adjacencies from edges")
-
-      # Step 2: Handle disconnected faces by connecting via shared vertices
-      # This handles meshes with duplicated vertices (disjoint triangle faces)
-      vertexToFaces = {}
-
-      for faceId in range(numFaces):
-        cell = polyData.GetCell(faceId)
-        numPoints = cell.GetNumberOfPoints()
-
-        # Map each vertex to faces that use it
-        for i in range(numPoints):
-          pointId = cell.GetPointId(i)
-          if pointId not in vertexToFaces:
-            vertexToFaces[pointId] = []
-          vertexToFaces[pointId].append(faceId)
-
-      # Connect faces that share vertices (for disconnected mesh parts)
-      vertexConnectedFaces = set()
-      vertexCount = 0
-      for pointId, faces in vertexToFaces.items():
-        if len(faces) > 1:
-          # Multiple faces share this vertex
-          for i in range(len(faces)):
-            for j in range(i + 1, len(faces)):
-              f1, f2 = faces[i], faces[j]
-              # Only add if not already connected by edge
-              if f2 not in adjacency[f1]:
-                adjacency[f1].add(f2)
-                adjacency[f2].add(f1)
-                vertexConnectedFaces.add(f1)
-                vertexConnectedFaces.add(f2)
-                vertexCount += 1
-
-      if logCallback:
-        logCallback(f"  Vertex analysis: {len(vertexToFaces)} unique vertices, {vertexCount} new adjacencies from vertices")
-
-      # Calculate connectivity statistics
-      edgeOnly = len(edgeConnectedFaces - vertexConnectedFaces)
-      vertexOnly = len(vertexConnectedFaces - edgeConnectedFaces)
-      both = len(edgeConnectedFaces & vertexConnectedFaces)
-      isolated = numFaces - len(edgeConnectedFaces | vertexConnectedFaces)
-
-      # Log connectivity statistics
-      if logCallback:
-        logCallback(f"Face adjacency graph built:")
-        logCallback(f"  - {edgeOnly} faces connected by edges only")
-        logCallback(f"  - {vertexOnly} faces connected by vertices only")
-        logCallback(f"  - {both} faces connected by both edges and vertices")
-        logCallback(f"  - {isolated} isolated faces (no adjacencies)")
-
-      # Step 3: Fallback - if mesh is completely disconnected, use spatial proximity
-      # This handles meshes where faces are geometrically close but don't share vertices
-      if isolated == numFaces:
-        if logCallback:
-          logCallback("  WARNING: Mesh is completely disconnected! Using spatial proximity fallback...")
-
-        # Calculate face centers
-        faceCenters = np.zeros((numFaces, 3))
-        for faceId in range(numFaces):
-          cell = polyData.GetCell(faceId)
-          center = np.zeros(3)
-          for i in range(cell.GetNumberOfPoints()):
-            pointId = cell.GetPointId(i)
-            point = polyData.GetPoint(pointId)
-            center += np.array(point)
-          faceCenters[faceId] = center / cell.GetNumberOfPoints()
-
-        # Connect faces that are spatially close (within 1.5x average edge length)
-        # First estimate average edge length
-        edgeLengths = []
-        for faceId in range(min(1000, numFaces)):  # Sample first 1000 faces
-          cell = polyData.GetCell(faceId)
-          for i in range(cell.GetNumberOfPoints()):
-            p1 = polyData.GetPoint(cell.GetPointId(i))
-            p2 = polyData.GetPoint(cell.GetPointId((i + 1) % cell.GetNumberOfPoints()))
-            dist = np.linalg.norm(np.array(p1) - np.array(p2))
-            edgeLengths.append(dist)
-
-        avgEdgeLength = np.mean(edgeLengths) if edgeLengths else 0.1
-        proximityThreshold = avgEdgeLength * 1.5
-
-        if logCallback:
-          logCallback(f"  Average edge length: {avgEdgeLength:.6f}, proximity threshold: {proximityThreshold:.6f}")
-
-        # Connect spatially close faces using KD-tree (much faster than O(n²))
-        try:
-          from scipy.spatial import cKDTree
-
-          tree = cKDTree(faceCenters)
-          spatialConnections = 0
-
-          # Find all pairs within proximity threshold
-          pairs = tree.query_pairs(proximityThreshold)
-          for i, j in pairs:
-            adjacency[i].add(j)
-            adjacency[j].add(i)
-            spatialConnections += 1
-
-          if logCallback:
-            logCallback(f"  Added {spatialConnections} spatial proximity connections (KD-tree)")
-
-        except ImportError:
-          # Fallback to simpler approach if scipy not available
-          if logCallback:
-            logCallback(f"  WARNING: scipy not available, using slower O(n²) spatial proximity")
-
-          spatialConnections = 0
-          for i in range(numFaces):
-            for j in range(i + 1, numFaces):
-              dist = np.linalg.norm(faceCenters[i] - faceCenters[j])
-              if dist < proximityThreshold:
-                adjacency[i].add(j)
-                adjacency[j].add(i)
-                spatialConnections += 1
-
-          if logCallback:
-            logCallback(f"  Added {spatialConnections} spatial proximity connections")
+      for edge, faceList in edgeToFaces.items():
+        if len(faceList) >= 2:
+          for i in range(len(faceList)):
+            for j in range(i + 1, len(faceList)):
+              adjacency[faceList[i]].add(faceList[j])
+              adjacency[faceList[j]].add(faceList[i])
 
       return adjacency
 
