@@ -17,6 +17,7 @@ import colorsys
 import copy
 import json
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,10 +67,10 @@ BACK_LANDMARKS: List[str] = ['TT', 'TV', 'TA']
 
 TPS_LAMBDA: float = 1e-6
 
-OUTPUT_DIR = "/tmp/ml_data/fishy_tps"
+OUTPUT_DIR = "/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/cichlid-synth"
 IMAGE_SIZE = 2048
 SEED = 49
-N_SAMPLES = 1
+N_SAMPLES = 25
 
 ADD_NOISE = True
 NOISE_AMOUNT = 0.10
@@ -109,7 +110,7 @@ TAIL_HUE_SHIFT_RANGE = (-0.1, 0.1)
 TAIL_HUE_SHIFT_STD = 0.015
 TAIL_STRENGTH_STD = 0.05
 
-ROSY_CHEEKS_PROB = 0.99
+ROSY_CHEEKS_PROB = 0.5
 ROSY_CHEEKS_HUE_STD = 0.015
 ROSY_CHEEKS_STRENGTH_STD = 0.05
 ROSY_CHEEKS_TRANSLATION_Y_STD = 0.05
@@ -880,6 +881,8 @@ def bake_to_image(obj, img, output_image_path: str) -> None:
 
 def main() -> None:
     os.makedirs(os.path.join(OUTPUT_DIR, "images"), exist_ok=True)
+    os.makedirs(os.path.join(OUTPUT_DIR, "meshes"), exist_ok=True)
+    os.makedirs(os.path.join(OUTPUT_DIR, "landmarks"), exist_ok=True)
 
     # ── 1. Preprocess all specimens (landmarks, canonical transforms, TPS) ──
     _ref_ct, _ref_lm_can, _ref_labels, specimens = preprocess_specimens()
@@ -933,9 +936,19 @@ def main() -> None:
         write_vertex_colors(cached_obj, rgb)
         img, tex = ensure_bake_material(cached_obj)
         mesh_stem = Path(spec.mesh_file).stem
-        output_path = os.path.join(OUTPUT_DIR, "images", f"{mesh_stem}_fishy_{j:06d}.png")
+        sample_tag = f"{mesh_stem}_fishy_{j:06d}"
+        output_path = os.path.join(OUTPUT_DIR, "images", f"{sample_tag}.png")
         bake_to_image(cached_obj, img, output_path)
         print(f"  -> {output_path}")
+
+        # ── 8b. Copy mesh and landmarks with matching name ──
+        mesh_ext = Path(spec.mesh_file).suffix          # e.g. ".obj"
+        lm_suffixes = Path(spec.landmark_file).suffixes  # e.g. [".mrk", ".json"]
+        lm_ext = "".join(lm_suffixes)                    # e.g. ".mrk.json"
+        shutil.copy2(spec.mesh_file,
+                     os.path.join(OUTPUT_DIR, "meshes", f"{sample_tag}{mesh_ext}"))
+        shutil.copy2(spec.landmark_file,
+                     os.path.join(OUTPUT_DIR, "landmarks", f"{sample_tag}{lm_ext}"))
 
         # ── 9. Collect CSV row ──
         row = dict(sample)
