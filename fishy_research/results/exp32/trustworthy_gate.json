@@ -1,0 +1,60 @@
+{
+  "250": {
+    "COLOR (area-hist)": {
+      "sigclust_p": 0.002,
+      "consensus_chosen_k": 2,
+      "gmm_bic_k": 4,
+      "ARI_vs_colorgroups": 0.989,
+      "ARI_vs_stripe": -0.004,
+      "cluster_jaccard": [
+        0.64,
+        0.64,
+        0.64,
+        0.62
+      ],
+      "n_stable_clusters(jac>=.75)": 0
+    },
+    "PATTERN (texton-BoW)": {
+      "sigclust_p": 0.002,
+      "consensus_chosen_k": 3,
+      "gmm_bic_k": 2,
+      "ARI_vs_colorgroups": 0.492,
+      "ARI_vs_stripe": -0.003,
+      "cluster_jaccard": [
+        0.6,
+        0.6
+      ],
+      "n_stable_clusters(jac>=.75)": 0
+    }
+  },
+  "40": {
+    "COLOR (area-hist)": {
+      "sigclust_p": 0.0439,
+      "consensus_chosen_k": 4,
+      "gmm_bic_k": 5,
+      "ARI_vs_colorgroups": 0.834,
+      "ARI_vs_stripe": 0.017,
+      "cluster_jaccard": [
+        0.55,
+        0.56,
+        0.41,
+        0.57,
+        0.57
+      ],
+      "n_stable_clusters(jac>=.75)": 0
+    },
+    "PATTERN (texton-BoW)": {
+      "sigclust_p": 0.1677,
+      "consensus_chosen_k": 4,
+      "gmm_bic_k": 3,
+      "ARI_vs_colorgroups": 0.383,
+      "ARI_vs_stripe": -0.034,
+      "cluster_jaccard": [
+        0.58,
+        0.58,
+        0.54
+      ],
+      "n_stable_clusters(jac>=.75)": 0
+    }
+  }
+}

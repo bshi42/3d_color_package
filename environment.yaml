@@ -1,0 +1,10 @@
+name: color_atlas
+channels: [conda-forge]
+dependencies:
+  - python=3.9
+  - numpy=1.26.4         # ABI that VTK 9.2 is built against
+  - vtk=9.2.6
+  - pyvista=0.36.1       # matches pyacvd 0.2.x API
+  - pip
+  - pip:
+      - pyacvd==0.2.8

@@ -1,4 +1,39 @@
-# Python cache files
+# ---- Python ----
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# ---- OS junk ----
+.DS_Store
+**/.DS_Store
+Thumbs.db
+# xdg-desktop-portal / GTK save-dialog temp droppings
+.xdp-*
+.goutputstream-*
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- AI / code-indexing tool caches ----
+.augment/
+*.scip
+
+# ---- Blender auto-backups (the .blend itself is kept) ----
+*.blend1
+*.blend2
+
+# ---- Scratch / debug ----
+debug.txt
+**/debug.txt
+
+# ---- Generated pipeline mesh outputs (large, regenerable) ----
+/intermediate*.ply
+/out_uniform.ply
+/out_uniform_nonormal.obj
+/out_uniform_nonormal.mtl

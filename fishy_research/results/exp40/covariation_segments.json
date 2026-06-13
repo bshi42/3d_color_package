@@ -1,0 +1,138 @@
+{
+  "M": 7,
+  "segments": {
+    "0": {
+      "n_faces": 10090,
+      "ari": {
+        "belly": 1.0,
+        "tail": 0.0,
+        "stripe": -0.0,
+        "cheeks": -0.0
+      },
+      "top_pcs": [
+        1,
+        15,
+        18
+      ],
+      "centroid_zy": [
+        0.12,
+        -0.1
+      ]
+    },
+    "1": {
+      "n_faces": 9239,
+      "ari": {
+        "belly": 0.97,
+        "tail": 0.0,
+        "stripe": -0.0,
+        "cheeks": -0.0
+      },
+      "top_pcs": [
+        3,
+        1,
+        10
+      ],
+      "centroid_zy": [
+        0.14,
+        -0.06
+      ]
+    },
+    "2": {
+      "n_faces": 17491,
+      "ari": {
+        "belly": -0.0,
+        "tail": 0.01,
+        "stripe": 0.04,
+        "cheeks": 0.14
+      },
+      "top_pcs": [
+        10,
+        8,
+        12
+      ],
+      "centroid_zy": [
+        0.14,
+        0.0
+      ]
+    },
+    "3": {
+      "n_faces": 18433,
+      "ari": {
+        "belly": 0.0,
+        "tail": 1.0,
+        "stripe": -0.0,
+        "cheeks": 0.0
+      },
+      "top_pcs": [
+        7,
+        17,
+        2
+      ],
+      "centroid_zy": [
+        -0.4,
+        0.0
+      ]
+    },
+    "4": {
+      "n_faces": 2365,
+      "ari": {
+        "belly": 0.01,
+        "tail": -0.0,
+        "stripe": -0.0,
+        "cheeks": 0.01
+      },
+      "top_pcs": [
+        13,
+        14,
+        11
+      ],
+      "centroid_zy": [
+        0.03,
+        0.09
+      ]
+    },
+    "5": {
+      "n_faces": 5139,
+      "ari": {
+        "belly": -0.0,
+        "tail": 0.0,
+        "stripe": 0.07,
+        "cheeks": -0.0
+      },
+      "top_pcs": [
+        11,
+        6,
+        15
+      ],
+      "centroid_zy": [
+        -0.1,
+        0.08
+      ]
+    },
+    "6": {
+      "n_faces": 10971,
+      "ari": {
+        "belly": 0.02,
+        "tail": -0.0,
+        "stripe": 0.02,
+        "cheeks": 0.04
+      },
+      "top_pcs": [
+        9,
+        16,
+        8
+      ],
+      "centroid_zy": [
+        0.25,
+        0.08
+      ]
+    }
+  },
+  "explained_var_top5": [
+    0.209,
+    0.126,
+    0.102,
+    0.094,
+    0.071
+  ]
+}

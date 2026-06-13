@@ -1,0 +1,20 @@
+{
+  "color_auto_clusters": 4,
+  "color_ARI_vs_bellytail": 0.989341156781567,
+  "pattern_stripe_balacc": 0.8897630147630148,
+  "novelty_cheeks_balacc": 0.7748184019370461,
+  "novelty_scalar_cheeks_balacc": 0.6328692493946732,
+  "baseline_stripe_balacc": 0.64005439005439,
+  "recommended_scorecard": {
+    "belly": 1.0,
+    "tail": 1.0,
+    "stripe": 0.8897630147630148,
+    "cheeks": 0.7748184019370461
+  },
+  "baseline_scorecard": {
+    "belly": 0.996,
+    "tail": 1.0,
+    "stripe": 0.64005439005439,
+    "cheeks": 0.4815375302663438
+  }
+}

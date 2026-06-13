@@ -1,0 +1,137 @@
+{
+  "spatial_rgb_full": {
+    "pca": {
+      "belly": {
+        "balanced_acc": 1.0,
+        "knn_acc": 0.992,
+        "prevalence": 0.5,
+        "best_axis_auc": 0.997248,
+        "best_axis": 3,
+        "silhouette": 0.12879674516853964
+      },
+      "tail": {
+        "balanced_acc": 1.0,
+        "knn_acc": 1.0,
+        "prevalence": 0.5,
+        "best_axis_auc": 1.0,
+        "best_axis": 0,
+        "silhouette": 0.26958854121094916
+      },
+      "stripe": {
+        "balanced_acc": 0.720959595959596,
+        "knn_acc": 0.6468531468531469,
+        "prevalence": 0.208,
+        "best_axis_auc": 0.7181429681429682,
+        "best_axis": 1,
+        "silhouette": 0.03244887815303574
+      },
+      "cheeks": {
+        "balanced_acc": 0.4773002421307506,
+        "knn_acc": 0.5,
+        "prevalence": 0.056,
+        "best_axis_auc": 0.639225181598063,
+        "best_axis": 0,
+        "silhouette": -0.014043653177255408
+      }
+    },
+    "pca_ev": [
+      0.22764371152596022,
+      0.15584470534338107,
+      0.1309400962695352,
+      0.0930586550896094,
+      0.08021297753988164,
+      0.06582026410022346
+    ],
+    "pca_ari_joint": 0.22332173326460597
+  },
+  "spatial_lab_sub4000": {
+    "pca": {
+      "belly": {
+        "balanced_acc": 0.996,
+        "knn_acc": 0.992,
+        "prevalence": 0.5,
+        "best_axis_auc": 0.99968,
+        "best_axis": 0,
+        "silhouette": 0.3232087371895547
+      },
+      "tail": {
+        "balanced_acc": 1.0,
+        "knn_acc": 1.0,
+        "prevalence": 0.5,
+        "best_axis_auc": 1.0,
+        "best_axis": 1,
+        "silhouette": 0.2769910257648539
+      },
+      "stripe": {
+        "balanced_acc": 0.7477661227661228,
+        "knn_acc": 0.6347125097125097,
+        "prevalence": 0.208,
+        "best_axis_auc": 0.6875485625485626,
+        "best_axis": 3,
+        "silhouette": 0.002473362031829322
+      },
+      "cheeks": {
+        "balanced_acc": 0.4794188861985472,
+        "knn_acc": 0.4978813559322034,
+        "prevalence": 0.056,
+        "best_axis_auc": 0.6004842615012107,
+        "best_axis": 1,
+        "silhouette": -0.022342845357497428
+      }
+    },
+    "pca_ev": [
+      0.3299562696962799,
+      0.2380288203943927,
+      0.10743165841872393,
+      0.06559172311734954,
+      0.06033006863654666,
+      0.039727129369582476
+    ],
+    "pca_ari_joint": 0.5053372594819229
+  },
+  "area_hist_lab_k24": {
+    "pca": {
+      "belly": {
+        "balanced_acc": 1.0,
+        "knn_acc": 1.0,
+        "prevalence": 0.5,
+        "best_axis_auc": 1.0,
+        "best_axis": 0,
+        "silhouette": 0.31236083173731843
+      },
+      "tail": {
+        "balanced_acc": 1.0,
+        "knn_acc": 1.0,
+        "prevalence": 0.5,
+        "best_axis_auc": 1.0,
+        "best_axis": 1,
+        "silhouette": 0.2605006358182859
+      },
+      "stripe": {
+        "balanced_acc": 0.5171911421911422,
+        "knn_acc": 0.5056332556332557,
+        "prevalence": 0.208,
+        "best_axis_auc": 0.5973193473193473,
+        "best_axis": 3,
+        "silhouette": -0.006616379957928771
+      },
+      "cheeks": {
+        "balanced_acc": 0.44158595641646486,
+        "knn_acc": 0.5,
+        "prevalence": 0.056,
+        "best_axis_auc": 0.6286319612590799,
+        "best_axis": 1,
+        "silhouette": 0.006455952697173039
+      }
+    },
+    "pca_ev": [
+      0.2754256374392333,
+      0.22543395883595455,
+      0.1255447485966464,
+      0.10054344303897411,
+      0.09503473527549862,
+      0.04418807794796532
+    ],
+    "pca_ari_joint": 0.5547649458350441
+  }
+}

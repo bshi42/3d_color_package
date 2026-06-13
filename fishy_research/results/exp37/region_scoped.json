@@ -1,0 +1,106 @@
+{
+  "PC_localization": {
+    "PC1": {
+      "corr": {
+        "belly": 0.33,
+        "tail": 0.13,
+        "stripe": 0.06,
+        "cheeks": 0.03
+      },
+      "roi_faces": 7373
+    },
+    "PC2": {
+      "corr": {
+        "belly": 0.92,
+        "tail": 0.11,
+        "stripe": 0.02,
+        "cheeks": 0.03
+      },
+      "roi_faces": 7289
+    },
+    "PC3": {
+      "corr": {
+        "belly": 0.08,
+        "tail": 0.95,
+        "stripe": 0.03,
+        "cheeks": 0.12
+      },
+      "roi_faces": 7281
+    },
+    "PC4": {
+      "corr": {
+        "belly": 0.11,
+        "tail": 0.18,
+        "stripe": 0.25,
+        "cheeks": 0.08
+      },
+      "roi_faces": 4292
+    },
+    "PC5": {
+      "corr": {
+        "belly": 0.11,
+        "tail": 0.07,
+        "stripe": 0.17,
+        "cheeks": 0.08
+      },
+      "roi_faces": 7356
+    },
+    "PC6": {
+      "corr": {
+        "belly": 0.01,
+        "tail": 0.01,
+        "stripe": 0.04,
+        "cheeks": 0.1
+      },
+      "roi_faces": 5840
+    },
+    "PC7": {
+      "corr": {
+        "belly": 0.07,
+        "tail": 0.01,
+        "stripe": 0.15,
+        "cheeks": 0.04
+      },
+      "roi_faces": 3243
+    },
+    "PC8": {
+      "corr": {
+        "belly": 0.0,
+        "tail": 0.09,
+        "stripe": 0.31,
+        "cheeks": 0.06
+      },
+      "roi_faces": 7119
+    }
+  },
+  "region_scoped": {
+    "cheeks|whole-fish combined": {
+      "sup_balacc": 0.613,
+      "unsup_knn": 0.5,
+      "gmm_ari": -0.001,
+      "dip_p": 0.0,
+      "sigclust_p": 0.003
+    },
+    "cheeks|SCOPED:cheek-novelty (457f)": {
+      "sup_balacc": 0.509,
+      "unsup_knn": 0.5,
+      "gmm_ari": 0.002,
+      "dip_p": 0.463,
+      "sigclust_p": 0.003
+    },
+    "stripe|whole-fish combined": {
+      "sup_balacc": 0.981,
+      "unsup_knn": 0.601,
+      "gmm_ari": -0.002,
+      "dip_p": 0.0,
+      "sigclust_p": 0.003
+    },
+    "stripe|SCOPED:stripe-Lvar (11060f)": {
+      "sup_balacc": 0.794,
+      "unsup_knn": 0.584,
+      "gmm_ari": 0.041,
+      "dip_p": 0.296,
+      "sigclust_p": 0.01
+    }
+  }
+}

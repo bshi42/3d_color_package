@@ -1,0 +1,92 @@
+{
+  "R": 128,
+  "modes": {
+    "color": {
+      "null95": 0.031,
+      "best": {
+        "belly": {
+          "ari": 1.0,
+          "region": 2,
+          "dip": 0.095,
+          "significant": true
+        },
+        "tail": {
+          "ari": 1.0,
+          "region": 3,
+          "dip": 0.052,
+          "significant": true
+        },
+        "stripe": {
+          "ari": 0.512,
+          "region": 60,
+          "dip": 0.023,
+          "significant": false
+        },
+        "cheeks": {
+          "ari": 0.209,
+          "region": 54,
+          "dip": 0.018,
+          "significant": false
+        }
+      }
+    },
+    "texture": {
+      "null95": 0.028,
+      "best": {
+        "belly": {
+          "ari": 0.952,
+          "region": 120,
+          "dip": 0.056,
+          "significant": true
+        },
+        "tail": {
+          "ari": 0.132,
+          "region": 67,
+          "dip": 0.024,
+          "significant": false
+        },
+        "stripe": {
+          "ari": 0.543,
+          "region": 88,
+          "dip": 0.024,
+          "significant": false
+        },
+        "cheeks": {
+          "ari": 0.462,
+          "region": 54,
+          "dip": 0.018,
+          "significant": false
+        }
+      }
+    },
+    "color+texture": {
+      "null95": 0.026,
+      "best": {
+        "belly": {
+          "ari": 1.0,
+          "region": 8,
+          "dip": 0.076,
+          "significant": true
+        },
+        "tail": {
+          "ari": 1.0,
+          "region": 18,
+          "dip": 0.022,
+          "significant": false
+        },
+        "stripe": {
+          "ari": 0.542,
+          "region": 60,
+          "dip": 0.023,
+          "significant": false
+        },
+        "cheeks": {
+          "ari": 0.412,
+          "region": 24,
+          "dip": 0.017,
+          "significant": false
+        }
+      }
+    }
+  }
+}

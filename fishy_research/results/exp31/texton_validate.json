@@ -1,0 +1,39 @@
+{
+  "seed_sweep_stripe_balacc": [
+    0.981,
+    0.962,
+    0.964,
+    0.964,
+    0.978
+  ],
+  "shuffled_null_stripe_balacc": [
+    0.514,
+    0.49,
+    0.496,
+    0.481,
+    0.466
+  ],
+  "stripe_dir_corr": {
+    "count": 0.988,
+    "spacing": -0.018,
+    "width": -0.011
+  },
+  "smalln40_stripe": {
+    "texton_bow": 0.641,
+    "gft": 0.664
+  },
+  "label_efficiency_stripe": {
+    "texton_bow": {
+      "10": 0.563,
+      "20": 0.6,
+      "40": 0.746,
+      "80": 0.875
+    },
+    "gft": {
+      "10": 0.636,
+      "20": 0.671,
+      "40": 0.762,
+      "80": 0.834
+    }
+  }
+}
