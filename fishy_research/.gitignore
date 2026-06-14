@@ -6,3 +6,7 @@ results/**/*.npy
 .uv/
 uv.lock
 *.egg-info/
+
+# interactive demo: rendered thumbnails, region-label caches, server logs, scratch
+interactive_demo/_cache/
+interactive_demo/_probe_out/

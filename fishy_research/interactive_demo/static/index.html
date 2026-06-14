@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Color+Pattern Morphospace — live force graph</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Color + Pattern Morphospace <span style="color:var(--muted);font-weight:400">· live force graph</span></h1>
+  <div class="controls">
+    <label class="lbl">Dataset
+      <select id="dataset"></select>
+    </label>
+    <button id="newSession" class="primary">Load</button>
+    <span id="status">no session</span>
+    <button id="resetFeedback" class="warn">Reset feedback</button>
+    <button id="resetLayout">Reset layout</button>
+  </div>
+</header>
+
+<main>
+  <section id="left">
+    <div id="morphoWrap">
+      <canvas id="morpho"></canvas>
+      <div id="hoverTip" class="tip"></div>
+      <div id="simBadge" class="simbadge"></div>
+    </div>
+    <div id="morphoControls">
+      <span><span class="lbl">panel size</span>
+        <select id="panelSize"><option value="s">S</option><option value="m" selected>M</option><option value="l">L</option></select></span>
+      <span><span class="lbl">graph size</span>
+        <select id="graphSize"><option value="s">S</option><option value="m" selected>M</option><option value="l">L</option></select></span>
+      <span id="colorByWrap"><span class="lbl">color by</span> <select id="colorBy"></select></span>
+      <label class="lbl"><input type="checkbox" id="showEdges" checked> springs</label>
+      <label class="lbl"><input type="checkbox" id="freeze"> freeze</label>
+      <span id="legend" class="legend"></span>
+    </div>
+  </section>
+
+  <section id="right">
+    <div id="feedback">
+      <div class="section-title">Mark similar / dissimilar vs the anchor</div>
+      <div class="anchor-row">
+        <div id="anchorBox"></div>
+        <div id="anchorHint">
+          Click a specimen to mark it <b style="color:var(--green)">similar</b> (pull closer); click again to
+          flip to <b style="color:#e0607a">dissimilar</b> (push apart); again to clear. On a marked card,
+          <b style="color:var(--fg)">scroll</b> or drag its <b style="color:var(--fg)">slider</b> to set how
+          strongly (0–1). Marking similar only pulls — nothing is pushed unless you say so.
+          <b style="color:var(--cyan)">Ctrl-click</b> a node in the graph to add/remove it from this set.
+        </div>
+      </div>
+      <div id="neighbors"></div>
+      <div id="fbButtons">
+        <button id="submitRank" class="primary" disabled>Apply → reshape</button>
+        <button id="tiedBtn">None are more/less similar</button>
+        <button id="clearRank">Clear ranks</button>
+        <button id="newAnchor">New anchor</button>
+      </div>
+    </div>
+
+    <div id="howto">
+      <div class="section-title">How it works</div>
+      <div style="color:var(--muted);font-size:12px">
+        Every specimen is a node; springs link each to its nearest neighbours in the combined
+        <b style="color:var(--fg)">color + pattern</b> space, so the layout is a live similarity graph.
+        <b style="color:var(--fg)">Drag any node</b> and the rest react. Marking an anchor's neighbours
+        <span style="color:var(--green)">similar → pulled closer</span> or
+        <span style="color:#e0607a">dissimilar → pushed apart</span> adjusts the springs and the graph
+        re-settles globally.
+        The dendrogram clusters the current on-screen layout.
+      </div>
+    </div>
+  </section>
+</main>
+
+<section id="dendroWrap"><svg id="dendroSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div id="dlDendro"><button id="dlSvg" title="download as vector SVG">⬇ SVG</button><button id="dlPng" title="download as PNG image">⬇ PNG</button></div>
+</section>
+
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
