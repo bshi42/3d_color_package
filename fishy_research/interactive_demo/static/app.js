@@ -124,18 +124,89 @@ function refreshDendro(delay=900){ clearTimeout(_dendroTimer);
     try{ const d=await api("POST",`/api/session/${S.sid}/dendrogram`,{positions}); buildDendro(d); }
     catch(e){/* ignore transient */} }, delay); }
 
+// ----------------------------------------------------------------------------- save / load feedback
+function saveFeedback(){
+  if(!S.sid){ toast("load a dataset first"); return; }
+  if(!S.fbSprings.length){ toast("no feedback to save"); return; }
+  const data={dataset:S.dataset, round:S.round, saved:_explainTick,
+    springs:S.fbSprings.map(e=>({a:e.a,b:e.b,kind:e.kind,amp:e.amp,rest:e.rest,k:e.k}))};
+  _download(new Blob([JSON.stringify(data)],{type:"application/json"}), `feedback_${S.dataset}_round${S.round}.json`);
+  toast(`saved ${S.fbSprings.length} feedback springs`);
+}
+async function loadFeedbackFile(file){
+  if(!S.sid){ toast("load a dataset first"); return; }
+  try{
+    const data=JSON.parse(await file.text());
+    if(data.dataset && data.dataset!==S.dataset){ toast(`feedback is for '${data.dataset}', current dataset is '${S.dataset}'`); return; }
+    S.fbSprings=(data.springs||[]).filter(s=>s.a<S.nodes.length&&s.b<S.nodes.length).map(s=>{
+      const amp=(s.amp==null?1:s.amp);
+      const rest=(s.rest!=null)?s.rest:(s.kind==="near"?(SIM_FAR+(SIM_NEAR-SIM_FAR)*amp):(DIS_NEAR+(DIS_FAR-DIS_NEAR)*amp))*S.spacing;
+      return {a:s.a,b:s.b,kind:s.kind,amp,rest,k:(s.k!=null?s.k:FB_K*(0.3+0.7*amp))};
+    });
+    S.round=data.round||S.fbSprings.length;
+    recomputeReleases(); reheat(REHEAT); refreshDendro(1100);
+    toast(`loaded ${S.fbSprings.length} feedback springs — reshaping`);
+  }catch(e){ toast("load failed: "+e.message); }
+}
+
+// ----------------------------------------------------------------------------- explain my grouping
+let _explainTick=0;
+async function runExplain(){
+  if(!S.sid) return;
+  const pairs=S.fbSprings.map(e=>({a:e.a,b:e.b,kind:e.kind,amp:(e.amp==null?1:e.amp)}));
+  if(!pairs.length){ toast("Give some similar/dissimilar feedback first"); return; }
+  toast("analysing your feedback…");
+  const positions=S.nodes.map(n=>[n.x,n.y]);
+  let d; try{ d=await api("POST",`/api/session/${S.sid}/explain`,{pairs,positions}); }
+  catch(e){ toast("explain failed: "+e.message); return; }
+  renderExplain(d);
+}
+function renderExplain(d){
+  const panel=$("explainPanel"), body=$("explainBody"); panel.classList.remove("hidden");
+  if(!d.ok){ body.innerHTML=`<div style="color:var(--muted);font-size:12px">${d.reason||"not enough feedback"}</div>`; return; }
+  _explainTick++;
+  const covTxt={good:"Color + pattern explains your grouping",
+                weak:"Color + pattern only weakly explains your grouping",
+                none:"Color + pattern does NOT explain your grouping — it's likely shape/size or something not measured"}[d.coverage];
+  const covCls={good:"cov-good",weak:"cov-weak",none:"cov-none"}[d.coverage];
+  const cs=Math.round(d.color_share*100), ps=100-cs;
+  const pcs=d.pcs.slice().sort((a,b)=>b.dw-a.dw).filter(p=>p.dw>0.01).slice(0,6);
+  const maxdw=pcs.length?pcs[0].dw:1, sumdw=d.pcs.reduce((s,p)=>s+Math.max(0,p.dw),0)||1;
+  const bars=pcs.map(p=>{ const share=Math.round(100*Math.max(0,p.dw)/sumdw);
+    const sig=p.p<0.05?' <span style="color:var(--green)" title="significant (permutation p&lt;0.05)">★</span>':'';
+    return `<div class="pcbar-row"><span class="pcbar-lab">PC${p.pc+1} · ${share}%${sig}</span>
+      <span class="pcbar-track"><span class="pcbar-fill" style="width:${Math.round(100*p.dw/maxdw)}%"></span></span></div>`; }).join("");
+  const ex=d.exemplars, imgs=a=>a.map(e=>`<img src="/thumb/${S.dataset}/${encodeURIComponent(e.name)}.png" title="${e.name}">`).join("");
+  body.innerHTML=
+    `<div class="cov-badge ${covCls}">${covTxt}</div>
+     <div style="font-size:11px;color:var(--muted);margin:7px 0 4px">predicts held-out judgments
+       <b style="color:var(--fg)">${Math.round(d.heldout_acc*100)}%</b> (baseline ${Math.round(d.baseline_acc*100)}%)`+
+       (d.place_err!=null?` · places held-out samples within <b style="color:var(--fg)">${Math.round(d.place_err*100)}%</b> of the spread`:``)+
+     `</div>
+     <div style="font-size:11px;color:var(--muted)">color vs pattern</div>
+     <div class="bar"><div class="cseg" style="width:${cs}%"></div><div class="pseg" style="width:${ps}%"></div></div>
+     <div style="font-size:11px"><span style="color:#5aa9e6">color ${cs}%</span> / <span style="color:#e6a15a">pattern ${ps}%</span></div>
+     <div style="font-size:11px;color:var(--muted);margin-top:9px">PCs that explain your grouping (★ = significant)</div>${bars}
+     <div style="font-size:11px;color:var(--muted);margin-top:9px">where it lives on the body</div>
+     <img id="explainHeat" src="/api/session/${S.sid}/explain_heatmap.png?t=${_explainTick}" alt="grouping heatmap">
+     <div style="font-size:11px;color:var(--muted)">PC${ex.pc+1} extremes — you're separating these…</div>
+     <div class="exrow">${imgs(ex.low)}</div>
+     <div style="font-size:11px;color:var(--muted);margin-top:3px">…from these:</div>
+     <div class="exrow">${imgs(ex.high)}</div>`;
+}
+
 // ----------------------------------------------------------------------------- feedback
 async function newAnchor(anchorIdx){
   const q=(anchorIdx==null)?"":`?anchor=${anchorIdx}`;
   const p=await api("GET",`/api/session/${S.sid}/panel${q}`);
   S.panel=p; S.anchor=p.anchor; S.remote=p.remote; S.marks={};
   S.cands=[...p.neighbors]; if(p.remote!=null) S.cands.push(p.remote);
-  renderPanel(); draw(); }
+  renderPanel(); draw(); updateDendroSelection(); }
 // Ctrl/Cmd-click a graph node toggles it in/out of the ranking set (auto picks stay as a start).
 function toggleCand(idx){ const i=S.cands.indexOf(idx);
   if(i>=0){ S.cands.splice(i,1); delete S.marks[idx]; if(idx===S.remote) S.remote=null; }
   else S.cands.push(idx);
-  renderPanel(); draw(); }
+  renderPanel(); draw(); updateDendroSelection(); }
 function renderPanel(){
   $("anchorBox").innerHTML=`<img src="/thumb/${S.dataset}/${encodeURIComponent(S.names[S.anchor])}.png" title="${S.names[S.anchor]}">`;
   const nb=$("neighbors"); nb.innerHTML="";
@@ -348,12 +419,15 @@ cv.addEventListener("wheel",e=>{ e.preventDefault(); S.autoFit=false; const mx=e
 // sharply on zoom). Zoom/pan via a <g> transform; non-scaling strokes keep line widths constant.
 const SVGNS="http://www.w3.org/2000/svg", XLINK="http://www.w3.org/1999/xlink";
 let ddG=null, ddTx=0, ddTy=0, ddS=1, ddVBW=1, ddVBH=1;
+let ddLeaves=[], ddPosI=[];   // ddLeaves: {rect, i, color}; ddPosI[pos] = specimen index — for in-dendrogram selection
+let ddMoved=false;            // set while a dendrogram press becomes a pan — mirrors the graph's !dragMoved click guard
 function applyDdTransform(){ if(ddG) ddG.setAttribute("transform",`translate(${ddTx} ${ddTy}) scale(${ddS})`); }
 function ddMeet(){ const svg=$("dendroSvg"), r=svg.getBoundingClientRect();
   const sc=Math.min(r.width/ddVBW, r.height/ddVBH);
   return {sc, offX:(r.width-ddVBW*sc)/2, offY:(r.height-ddVBH*sc)/2, r}; }
 function buildDendro(d){
   const svg=$("dendroSvg"); while(svg.firstChild) svg.removeChild(svg.firstChild);
+  ddLeaves=[]; ddPosI=[];
   const W=d.step*d.n, TREE_H=W*0.22, gap=TREE_H*0.06;   // compact tree (less vertical space)
   const leafW=d.step*0.86, leafH=leafW/(d.leaf_aspect||2);
   const VBH=TREE_H+gap+leafH+leafW*0.3;
@@ -369,29 +443,74 @@ function buildDendro(d){
     pl.setAttribute("vector-effect","non-scaling-stroke");
     pl.setAttribute("stroke-linejoin","round"); pl.setAttribute("stroke-linecap","round");
     ddG.appendChild(pl);
+    if(L.span){   // wide transparent overlay: click a branch -> toggle its whole clade
+      const hit=document.createElementNS(SVGNS,"polyline");
+      hit.setAttribute("points", pl.getAttribute("points"));
+      hit.setAttribute("fill","none"); hit.setAttribute("stroke","transparent");
+      hit.setAttribute("stroke-width","10"); hit.setAttribute("vector-effect","non-scaling-stroke");
+      hit.style.cursor="pointer";
+      const span=L.span;
+      // A clade isn't a single specimen, so it can't be an anchor: ctrl/cmd-click toggles it as samples.
+      hit.addEventListener("click",e=>{ e.stopPropagation(); if(ddMoved) return;
+        if(e.ctrlKey||e.metaKey) toggleCluster(span);
+        else toast("ctrl-click a branch to select its whole clade"); });
+      ddG.appendChild(hit);
+    }
   }
   const lyrow=TREE_H+gap;
   for(const lf of d.leaves){
+    ddPosI[lf.pos]=lf.i;
     const cx=5+lf.pos*d.step, x=cx-leafW/2;
+    // Mirror the 2-D graph: plain click = set anchor, ctrl/cmd-click = add/remove sample.
+    // A press that turned into a pan (ddMoved) is not a click — match the graph's !dragMoved guard.
+    const onLeaf=e=>{ e.stopPropagation(); if(ddMoved) return;
+      if((e.ctrlKey||e.metaKey) && lf.i!==S.anchor) toggleCand(lf.i);
+      else newAnchor(lf.i); };
     const im=document.createElementNS(SVGNS,"image");
     const href=`/thumb_hi/${d.dataset}/${encodeURIComponent(lf.name)}.png`;
     im.setAttributeNS(XLINK,"href",href); im.setAttribute("href",href);
     im.setAttribute("x",x.toFixed(2)); im.setAttribute("y",lyrow.toFixed(2));
     im.setAttribute("width",leafW.toFixed(2)); im.setAttribute("height",leafH.toFixed(2));
     im.setAttribute("preserveAspectRatio","xMidYMid meet");
+    im.style.cursor="pointer";
+    im.addEventListener("click",onLeaf);
     ddG.appendChild(im);
     const rc=document.createElementNS(SVGNS,"rect");
     rc.setAttribute("x",x.toFixed(2)); rc.setAttribute("y",lyrow.toFixed(2));
     rc.setAttribute("width",leafW.toFixed(2)); rc.setAttribute("height",leafH.toFixed(2));
     rc.setAttribute("fill","none"); rc.setAttribute("stroke",lf.color);
     rc.setAttribute("stroke-width","2"); rc.setAttribute("vector-effect","non-scaling-stroke");
+    rc.style.cursor="pointer";
+    rc.addEventListener("click",onLeaf);
     ddG.appendChild(rc);
+    ddLeaves.push({rect:rc, i:lf.i, color:lf.color});
   }
+  updateDendroSelection();
   const t=document.createElementNS(SVGNS,"text");
   t.setAttribute("x",(W/2).toFixed(1)); t.setAttribute("y",(TREE_H*0.07).toFixed(1));
   t.setAttribute("text-anchor","middle"); t.setAttribute("font-size",(W*0.016).toFixed(2)); t.setAttribute("fill","#444");
-  t.textContent=`${d.n} specimens · merges aligned by depth, thickness = merge distance · round ${d.round}`;
+  t.textContent=`${d.n} specimens · merges aligned by depth, thickness = merge distance · round ${d.round} · click a leaf = anchor · ctrl-click a leaf or branch = sample`;
   ddG.appendChild(t);
+}
+// Highlight dendrogram leaves that are in the candidate set (gold ring), restore cluster color otherwise.
+function updateDendroSelection(){
+  const sel=new Set(S.cands);
+  for(const L of ddLeaves){
+    const on=sel.has(L.i);
+    L.rect.setAttribute("stroke", on?"#ffce3a":L.color);
+    L.rect.setAttribute("stroke-width", on?"3.4":"2");
+  }
+}
+// Click a branch -> toggle its whole clade. If every leaf under it is already selected, deselect them; else add the missing ones.
+function toggleCluster(span){
+  // Exclude the anchor (it is never a sample) — mirror the leaf/graph `!==S.anchor` guard.
+  const ids=[]; for(let p=span[0]; p<=span[1]; p++){ const i=ddPosI[p]; if(i!=null && i!==S.anchor) ids.push(i); }
+  if(!ids.length) return;
+  const sel=new Set(S.cands);
+  const allIn=ids.every(i=>sel.has(i));
+  if(allIn){ for(const i of ids){ const k=S.cands.indexOf(i); if(k>=0) S.cands.splice(k,1); delete S.marks[i]; if(i===S.remote) S.remote=null; } }
+  else { for(const i of ids) if(!sel.has(i)) S.cands.push(i); }
+  renderPanel(); draw(); updateDendroSelection();
 }
 (function(){ const svg=$("dendroSvg");
   svg.addEventListener("wheel",e=>{ e.preventDefault(); if(!ddG)return; const m=ddMeet();
@@ -400,9 +519,11 @@ function buildDendro(d){
     ddTx=vx-(vx-ddTx)*f; ddTy=vy-(vy-ddTy)*f; ddS*=f;
     if(ddS<=1){ ddS=1; ddTx=0; ddTy=0; } applyDdTransform(); },{passive:false});
   let drag=false,lx=0,ly=0;
-  svg.addEventListener("mousedown",e=>{ drag=true; lx=e.clientX; ly=e.clientY; svg.classList.add("grabbing"); e.preventDefault(); });
+  svg.addEventListener("mousedown",e=>{ drag=true; lx=e.clientX; ly=e.clientY; ddMoved=false; svg.classList.add("grabbing"); e.preventDefault(); });
   window.addEventListener("mouseup",()=>{ if(drag){drag=false; svg.classList.remove("grabbing");} });
-  window.addEventListener("mousemove",e=>{ if(!drag||!ddG)return; const m=ddMeet();
+  window.addEventListener("mousemove",e=>{ if(!drag||!ddG)return;
+    if(!ddMoved && Math.hypot(e.clientX-lx,e.clientY-ly)<=3) return;   // under threshold: not yet a pan, keep the click alive
+    ddMoved=true; const m=ddMeet();
     ddTx+=(e.clientX-lx)/m.sc; ddTy+=(e.clientY-ly)/m.sc; lx=e.clientX; ly=e.clientY; applyDdTransform(); });
   svg.addEventListener("dblclick",()=>{ ddTx=0; ddTy=0; ddS=1; applyDdTransform(); });
 })();
@@ -453,7 +574,12 @@ $("resetLayout").onclick=()=>S.sid&&resetLayout();
 $("submitRank").onclick=()=>submitRanking(false);
 $("tiedBtn").onclick=()=>submitRanking(true);
 $("clearRank").onclick=()=>{S.marks={};updateMarks();};
+$("deselectAll").onclick=()=>{ S.cands=[]; S.marks={}; S.remote=null; renderPanel(); draw(); updateDendroSelection(); };
 $("newAnchor").onclick=()=>newAnchor();
+$("explainBtn").onclick=runExplain;
+$("saveFb").onclick=saveFeedback;
+$("loadFb").onclick=()=>$("loadFbFile").click();
+$("loadFbFile").onchange=e=>{ const f=e.target.files[0]; if(f) loadFeedbackFile(f); e.target.value=""; };
 $("showEdges").onchange=e=>{S.showEdges=e.target.checked;draw();};
 $("freeze").onchange=e=>{S.frozen=e.target.checked; if(!S.frozen){reheat(0.2);} updateBadge();};
 $("dlSvg").onclick=downloadDendroSvg; $("dlPng").onclick=downloadDendroPng;

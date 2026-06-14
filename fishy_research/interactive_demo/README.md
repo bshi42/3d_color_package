@@ -33,14 +33,23 @@ Open the URL, pick a dataset, click **Load**.
 - **Drag any node**: it pins to the cursor and its spring neighbours follow; release and the graph
   relaxes. This is the "grab a node, the rest react" behaviour.
 - **Pan** with a background drag, **zoom** with the wheel, **hover** to enlarge a thumbnail.
-- **Give feedback**: an anchor (gold) and a diverse panel appear on the right. Click the panel
-  specimens **most → least similar** to the anchor, then **Submit ranking → reshape**. This adds
-  *preference springs* (drawn green for "similar/closer", red for "dissimilar/farther") and the
-  whole graph re-settles. Or **"None are more/less similar"** to add nothing.
-- **Click a node** in the graph to make it the anchor; **New anchor** sweeps to a fresh diverse one.
+- **Give feedback**: an anchor (gold) and a diverse panel appear on the right. **Click** a panel
+  specimen to mark it **similar** (green, pulled closer); **click again** → **dissimilar** (red,
+  pushed apart); again → clear. On a marked card, **scroll** or drag the **vertical slider** to set
+  the amplitude 0–1 (how strongly). **Apply → reshape** adds the *preference springs* and the graph
+  re-settles. At amplitude 1 the involved nodes "let go" of their other links so the pair snaps adjacent.
+- **Click a node** to make it the anchor; **Ctrl-click** a node to add/remove it from the ranking set
+  (on top of the auto-sample); **New anchor** sweeps to a fresh diverse one.
+- **Explain grouping** fits which PCA components account for your feedback (metric learning), with a
+  body heatmap, color/pattern split, significance, held-out coverage, and leave-one-out placement.
+- **Save / Load feedback** writes/reads the preference set as JSON (validates the dataset on load).
 - **color by** recolours nodes by a ground-truth factor (fishy only; mussel nodes are uniform).
 - **Reset feedback** clears the preference springs; **Reset layout** reseeds from the PCA layout.
-- **springs** toggles the edge overlay; **freeze** pauses the simulation.
+- The **dendrogram** (inline SVG, depth-aligned, line thickness = merge distance) zooms/pans and
+  exports as **SVG/PNG**; **springs** toggles the edge overlay; **freeze** pauses the simulation.
+- **Select in the dendrogram** (same as the graph): **click** a leaf to make it the anchor;
+  **Ctrl-click** a leaf to add/remove it from the ranking set, or **Ctrl-click** a branch to toggle its
+  whole clade. Selected leaves get a gold ring and stay in sync with the graph (cyan ring) and the panel.
 
 ## What's under the hood
 

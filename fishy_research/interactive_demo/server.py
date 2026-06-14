@@ -128,17 +128,27 @@ def dendrogram_data(sess: engine.Session, positions=None) -> dict:
 
     def lvl_of(uh):                                         # uniform child height -> its depth level
         return 0.0 if uh < 0.5 else float(level[int(round(uh)) - 1])
+    # descendant leaf-position span per merge (for clicking a branch to select its clade)
+    Nl = len(idx)
+    desc = [None] * len(Z)
+
+    def _leaves(cid):
+        return [cid] if cid < Nl else desc[cid - Nl]
+    for k in range(len(Z)):
+        desc[k] = _leaves(int(Z[k, 0])) + _leaves(int(Z[k, 1]))
+    pos_of = {leaf: p for p, leaf in enumerate(dd["leaves"])}
     links = []
     for xs, ys, col in zip(dd["icoord"], dd["dcoord"], dd["color_list"]):
         mi = max(0, min(len(true_d) - 1, int(round(ys[1])) - 1))
         w = float(np.clip((true_d[mi] - dmin) / (dhi - dmin + 1e-9), 0.0, 1.0))
         ly = [lvl_of(ys[0]), level[mi], level[mi], lvl_of(ys[3])]   # remap to depth levels
+        ps = [pos_of[l] for l in desc[mi]]
         links.append({"x": [round(float(v), 2) for v in xs], "y": [round(float(v), 2) for v in ly],
-                      "color": to_hex(col), "w": round(w, 3)})
+                      "color": to_hex(col), "w": round(w, 3), "span": [int(min(ps)), int(max(ps))]})
     leaf_colors = dd.get("leaves_color_list", ["#444444"] * len(idx))
     ds = sess.dataset
     sample = _hires_arr(ds, idx[dd["leaves"][0]])          # for leaf aspect ratio
-    leaves = [{"pos": pos, "name": str(sess.ld.names[idx[leaf]]),
+    leaves = [{"pos": pos, "i": int(idx[leaf]), "name": str(sess.ld.names[idx[leaf]]),
                "color": to_hex(leaf_colors[pos]) if pos < len(leaf_colors) else "#444444"}
               for pos, leaf in enumerate(dd["leaves"])]
     return {"n": len(idx), "ymax": float(level.max()), "step": 10.0,
@@ -368,6 +378,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, render_heatmap(sess, pc), "image/png")
         if verb == "dendrogram.png":
             return self._send(200, render_dendrogram(sess), "image/svg+xml")
+        if verb == "explain_heatmap.png":
+            w = getattr(sess, "_explain_w", None)
+            if w is None:
+                return self._err(404, "no explanation computed yet")
+            return self._send(200, _png_bytes(_render_specimen(sess.ld, sess.region_face_rgb_weighted(w))), "image/png")
         return self._err(404, f"unknown verb: {verb}")
 
     # ---- POST
@@ -422,6 +437,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(dendrogram_data(sess, positions=body.get("positions")))
             except ValueError as e:
                 return self._err(400, str(e))
+        if verb == "explain":                            # which PCs explain the expert's grouping
+            return self._json(sess.explain(body.get("pairs", []), positions=body.get("positions")))
         n = sess.N
 
         def _inrange(v):

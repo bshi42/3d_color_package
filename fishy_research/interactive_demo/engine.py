@@ -184,6 +184,35 @@ def _fps(coords, k, seed=0, start=None):
     return idx
 
 
+# --------------------------------------------------------------------------- learned expert metric
+def _delta2(Z, pairs):
+    """pairs = [(i,j,amp)] -> (per-PC squared differences (n,K), amplitudes (n,))."""
+    if not pairs:
+        return np.zeros((0, Z.shape[1])), np.zeros(0)
+    I = np.array([p[0] for p in pairs]); J = np.array([p[1] for p in pairs])
+    return (Z[I] - Z[J]) ** 2, np.array([p[2] for p in pairs], dtype=float)
+
+
+def _fit_diag_metric(DS, aS, DD, aD, w0, lam, mu, iters=500, lr=0.4):
+    """Diagonal per-PC metric w>=0 for d^2_w(i,j)=sum_k w_k (z_ik-z_jk)^2 that pulls SIMILAR pairs
+    close and pushes DISSIMILAR pairs past margin mu, shrunk toward w0, with sum(w)=K fixed.
+    Convex; projected sub-gradient. Each w_k is "how much PC k drives the expert's distinctions"."""
+    K = len(w0); w = w0.astype(float).copy()
+    nc = max(1, len(DS) + len(DD))
+    pull = (aS[:, None] * DS).sum(0) / nc if len(DS) else np.zeros(K)   # constant (linear term)
+    for _ in range(iters):
+        if len(DD):
+            viol = (DD @ w) < mu
+            push = (aD[viol, None] * DD[viol]).sum(0) / nc if viol.any() else np.zeros(K)
+        else:
+            push = np.zeros(K)
+        w = w - lr * (pull - push + 2.0 * lam * (w - w0))
+        np.maximum(w, 0.0, out=w)
+        s = w.sum()
+        w = (w * K / s) if s > 1e-9 else w0.copy()
+    return w
+
+
 # --------------------------------------------------------------------------- session
 class Session:
     """One interactive session over one dataset. Holds live morph state."""
@@ -433,3 +462,122 @@ class Session:
         """A diverse FPS subset (legible leaves) + their current full-Z coords for linkage."""
         idx = sorted(_fps(self.Z, k, seed=self.seed))
         return idx, self.Z[idx]
+
+    # ---- explain the expert's grouping in the PCA basis -------------------
+    def region_face_rgb_weighted(self, weights):
+        """(Nf,3) inferno heatmap of region importance = sum_k weights_k * C[r,k] (where the
+        expert's learned metric lives on the body)."""
+        import matplotlib.cm as cm
+        w = np.asarray(weights, dtype=float)
+        ireg = (self.C * w[None, :]).sum(1)                 # (len(rids),)
+        score_r = np.zeros(int(self.ld.reg.max()) + 1)
+        for i, r in enumerate(self.ld.rids):
+            score_r[r] = ireg[i]
+        fs = score_r[self.ld.reg]
+        s = (fs - fs.min()) / (np.ptp(fs) + 1e-9)
+        return (cm.inferno(s)[:, :3] * 255).astype(np.uint8)
+
+    def explain(self, pairs, positions=None, perm=300, boot=200, seed=0):
+        """Learn which PCs explain the expert's similar/dissimilar feedback, attribute to
+        color/pattern + body regions, and validate. `pairs` = [{a,b,kind('near'/'far'),amp}].
+        Stores the region weights on self._explain_w for the heatmap endpoint."""
+        Z, K = self.Z0, self.K
+        S = [(int(p["a"]), int(p["b"]), float(p.get("amp", 1.0))) for p in pairs if p.get("kind") == "near"]
+        D = [(int(p["a"]), int(p["b"]), float(p.get("amp", 1.0))) for p in pairs if p.get("kind") == "far"]
+        if not (S or D):
+            return {"ok": False, "reason": "no similar/dissimilar feedback yet"}
+        DS, aS = _delta2(Z, S); DD, aD = _delta2(Z, D)
+        alld2 = np.vstack([x for x in (DS, DD) if len(x)])
+        mu = float(np.median(alld2.sum(1)))                 # scale-matched margin
+        w0 = np.ones(K)
+        lam = 1.0
+        w = _fit_diag_metric(DS, aS, DD, aD, w0, lam, mu)
+        dw = w - w0                                         # deviation from uniform = expert contribution
+        dwp = np.maximum(dw, 0.0)
+        self._explain_w = dwp
+        swp = float(dwp.sum()) + 1e-9
+
+        # attribution
+        color_share = float((dwp * self.color_share).sum() / swp)
+        ireg = (self.C * dwp[None, :]).sum(1)
+        rorder = np.argsort(ireg)[::-1]
+        top_regions = [{"region": int(self.ld.rids[i]), "imp": round(float(ireg[i]), 4)} for i in rorder[:6]]
+        feat_imp = (dwp[:, None] * (self.W ** 2)).sum(0)    # (F,)
+        forder = np.argsort(feat_imp)[::-1]
+        top_features = [{"region": int(self.ld.rids[int(c) // PDIM]), "channel": CHANNELS[int(c) % PDIM],
+                         "imp": round(float(feat_imp[c]), 4)} for c in forder[:6]]
+        pcs = [{"pc": k, "dw": round(float(dw[k]), 4), "w": round(float(w[k]), 4),
+                "evr": round(float(self.evr[k]), 4), "color_share": round(float(self.color_share[k]), 3)}
+               for k in range(K)]
+        kstar = int(np.argmax(dw))
+        zk = Z[:, kstar]; o = np.argsort(zk)
+        ne = min(3, self.N)
+        exemplars = {"pc": kstar,
+                     "low": [{"i": int(o[i]), "name": self.ld.names[int(o[i])]} for i in range(ne)],
+                     "high": [{"i": int(o[-1 - i]), "name": self.ld.names[int(o[-1 - i])]} for i in range(ne)]}
+
+        # ---- validation ----
+        def _acc(wv, teS, teD):
+            ok = sum(1 for (i, j, _) in teS if (Z[i] - Z[j]) ** 2 @ wv < mu)
+            ok += sum(1 for (i, j, _) in teD if (Z[i] - Z[j]) ** 2 @ wv >= mu)
+            return ok / max(1, len(teS) + len(teD))
+
+        allc = [("S", i) for i in range(len(S))] + [("D", i) for i in range(len(D))]
+        ho = base = 0.0
+        for kind, hi in allc:                               # leave-one-constraint-out
+            trS = [S[i] for i in range(len(S)) if not (kind == "S" and i == hi)]
+            trD = [D[i] for i in range(len(D)) if not (kind == "D" and i == hi)]
+            ds, as_ = _delta2(Z, trS); dd, ad = _delta2(Z, trD)
+            wt = _fit_diag_metric(ds, as_, dd, ad, w0, lam, mu)
+            teS, teD = ([S[hi]], []) if kind == "S" else ([], [D[hi]])
+            ho += _acc(wt, teS, teD); base += _acc(w0, teS, teD)
+        heldout = ho / len(allc); baseline = base / len(allc)
+
+        rng = np.random.default_rng(seed)
+        allp = [(i, j, a, 1) for (i, j, a) in S] + [(i, j, a, 0) for (i, j, a) in D]
+        nS = len(S)
+        permw = np.empty((perm, K))
+        for b in range(perm):                               # permute similar/dissimilar labels
+            idx = rng.permutation(len(allp))
+            ps = [allp[t][:3] for t in idx[:nS]]; pd = [allp[t][:3] for t in idx[nS:]]
+            ds, as_ = _delta2(Z, ps); dd, ad = _delta2(Z, pd)
+            permw[b] = _fit_diag_metric(ds, as_, dd, ad, w0, lam, mu)
+        pval = [round(float((permw[:, k] >= w[k]).mean()), 3) for k in range(K)]
+
+        bw = np.empty((boot, K))
+        for b in range(boot):                               # bootstrap stability
+            sb = [S[t] for t in rng.integers(0, len(S), len(S))] if S else []
+            db = [D[t] for t in rng.integers(0, len(D), len(D))] if D else []
+            ds, as_ = _delta2(Z, sb); dd, ad = _delta2(Z, db)
+            bw[b] = _fit_diag_metric(ds, as_, dd, ad, w0, lam, mu)
+        ci = [[round(float(np.percentile(bw[:, k], 5)), 3), round(float(np.percentile(bw[:, k], 95)), 3)] for k in range(K)]
+        for p, c in zip(pcs, range(K)):
+            p["p"] = pval[c]; p["ci"] = ci[c]
+
+        # leave-one-out PLACEMENT: predict each held-out specimen's 2-D position from the others
+        # under the learned metric (kNN-barycentric) -> how well the metric predicts location.
+        place_err = None
+        if positions is not None:
+            P = np.asarray(positions, float)
+            if P.shape == (self.N, 2):
+                errs = []
+                for j in range(self.N):
+                    d2 = ((Z - Z[j]) ** 2 * w[None, :]).sum(1); d2[j] = np.inf
+                    nn = np.argsort(d2)[:min(8, self.N - 1)]
+                    al = np.exp(-d2[nn] / (np.median(d2[np.isfinite(d2)]) + 1e-9)); al /= al.sum()
+                    errs.append(float(np.linalg.norm((al[:, None] * P[nn]).sum(0) - P[j])))
+                scale = float(np.median(pdist(P))) if self.N > 1 else 1.0
+                place_err = round(float(np.median(errs)) / (scale + 1e-9), 3)
+
+        if heldout >= baseline + 0.08 and heldout > 0.6:
+            coverage = "good"
+        elif heldout > baseline + 0.02:
+            coverage = "weak"
+        else:
+            coverage = "none"
+
+        return {"ok": True, "K": K, "n_similar": len(S), "n_dissimilar": len(D),
+                "pcs": pcs, "color_share": round(color_share, 3), "pattern_share": round(1 - color_share, 3),
+                "top_regions": top_regions, "top_features": top_features, "exemplars": exemplars,
+                "heldout_acc": round(heldout, 3), "baseline_acc": round(baseline, 3),
+                "place_err": place_err, "coverage": coverage}

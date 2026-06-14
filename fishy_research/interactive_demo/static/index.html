@@ -49,7 +49,8 @@
           flip to <b style="color:#e0607a">dissimilar</b> (push apart); again to clear. On a marked card,
           <b style="color:var(--fg)">scroll</b> or drag its <b style="color:var(--fg)">slider</b> to set how
           strongly (0–1). Marking similar only pulls — nothing is pushed unless you say so.
-          <b style="color:var(--cyan)">Ctrl-click</b> a node in the graph to add/remove it from this set.
+          <b style="color:var(--cyan)">Ctrl-click</b> a node in the graph — or a leaf/branch in the
+          dendrogram — to add/remove it from this set; a plain <b style="color:var(--fg)">click</b> sets the anchor.
         </div>
       </div>
       <div id="neighbors"></div>
@@ -57,8 +58,18 @@
         <button id="submitRank" class="primary" disabled>Apply → reshape</button>
         <button id="tiedBtn">None are more/less similar</button>
         <button id="clearRank">Clear ranks</button>
+        <button id="deselectAll">Deselect all</button>
         <button id="newAnchor">New anchor</button>
+        <button id="explainBtn">Explain grouping ▾</button>
+        <button id="saveFb">⬇ Save feedback</button>
+        <button id="loadFb">⬆ Load feedback</button>
+        <input id="loadFbFile" type="file" accept=".json,application/json" class="hidden">
       </div>
+    </div>
+
+    <div id="explainPanel" class="hidden">
+      <div class="section-title">What explains your grouping</div>
+      <div id="explainBody"></div>
     </div>
 
     <div id="howto">
