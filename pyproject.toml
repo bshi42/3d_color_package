@@ -1,0 +1,20 @@
+[project]
+name = "3d-color-package"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.4.1",
+    "imagecodecs>=2026.5.10",
+    "imageio>=2.37.3",
+    "pyqt5>=5.15.11",
+    "qt-py>=2.0.5",
+    "vtk>=9.6.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+]

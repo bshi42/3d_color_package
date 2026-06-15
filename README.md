@@ -84,7 +84,9 @@ This can be done in the `Welcome to Slicer` menu by clicking the `Add Data` butt
 
 ### Hyperparameter Tuning
 
-After importing one of your 3D models, open the InterDeCA module at the path `SlicerMorph -> DeCA Toolbox -> InterDeCA`. You'll see a menu like the one in the image below.
+After importing one of your 3D models, open InterDeCA from Slicer's module selector. The module selector is the drop-down near the top of the Slicer window that may currently say `Welcome to Slicer`; type `InterDeCA` in that selector's search box, or browse to the category `SlicerMorph -> DeCA Toolbox -> InterDeCA`.
+
+This is not a top-level application menu. If the module selector shows `ATLAS` but does not show `SlicerMorph` or `InterDeCA`, ATLAS is loaded but InterDeCA is not. Confirm that the `color_deca/deca3` folder was added in `Edit -> Application Settings -> Modules`, restart Slicer, and check the Python console or application log for module-loading errors.
 
 ![The InterDeCA module's ATLAS tab menu.](./Tutorials/images/atlas_module_menu.png)
 
@@ -222,3 +224,12 @@ Once you are satisfied with the selection, you can export it as a new, separate 
 9.  **Export**
     *   Click **Export Selected Region as Model**.
     *   A new model node containing only the selected vertices and faces will be added to the scene. You can now save this model or use it for further analysis.
+
+
+
+Run slicer headless
+
+/Applications/Slicer.app/Contents/MacOS/Slicer  --no-splash --no-main-window --python-script "/Users/eric/code/3d_color_package/tests/slicer/main.py
+
+
+https://www.slicer.org/wiki/Documentation/Nightly/Developers/Python_scripting#How_to_run_Python_script_using_a_non-Slicer_Python_environment

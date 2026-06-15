@@ -18,17 +18,13 @@ Dependencies:
 """
 
 import os
-import unittest
 import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
 import logging
 import fnmatch
 import  numpy as np
-import random
-import math
 from datetime import datetime
 import re
-import csv
 import vtk.util.numpy_support as vtk_np
 from pathlib import Path
 import shutil
@@ -38,18 +34,24 @@ import colorsys
 
 
 
-# Attempts to import optional machine learning libraries
+# Attempts to import optional machine learning libraries.
+# Keep sklearn and UMAP independent so PCA/ICA/clustering still work when only
+# umap-learn is missing in Slicer's Python environment.
 try:
     from sklearn.decomposition import PCA, FastICA  # Imports dimensionality reduction algorithms
     from sklearn.manifold import TSNE  # Imports t-SNE for non-linear dimensionality reduction
     from sklearn.cluster import KMeans, MiniBatchKMeans  # Imports clustering algorithms for color analysis
-    import umap  # Imports UMAP for advanced manifold learning
     SKLEARN_AVAILABLE = True  # Sets flag indicating scikit-learn is available
-    UMAP_AVAILABLE = True  # Sets flag indicating UMAP is available
 except ImportError:
     SKLEARN_AVAILABLE = False  # Disables scikit-learn dependent features
+    print("Warning: sklearn not available. PCA/ICA, clustering, and Colors EDA functionality will be limited.")
+
+try:
+    import umap  # Imports UMAP for advanced manifold learning
+    UMAP_AVAILABLE = True  # Sets flag indicating UMAP is available
+except ImportError:
     UMAP_AVAILABLE = False  # Disables UMAP dependent features
-    print("Warning: sklearn and/or umap not available. Colors EDA functionality will be limited.")
+    print("Warning: umap-learn not available. UMAP functionality will be limited.")
 
 # Attempts to import scipy for hierarchical clustering
 try:
@@ -119,7 +121,8 @@ def checkAndOfferPackageInstallation():
         'sklearn': {'import_test': lambda: __import__('sklearn'), 'pip_name': 'scikit-learn'},
         'umap': {'import_test': lambda: __import__('umap'), 'pip_name': 'umap-learn'},
         'skimage': {'import_test': lambda: __import__('skimage'), 'pip_name': 'scikit-image'},
-        'imageio': {'import_test': lambda: __import__('imageio'), 'pip_name': 'imageio'}
+        'imageio': {'import_test': lambda: __import__('imageio'), 'pip_name': 'imageio'},
+        'imagecodecs': {'import_test': lambda: __import__('imagecodecs'), 'pip_name': 'imagecodecs'}
     }
 
     # Checks which packages are missing by attempting imports
@@ -138,7 +141,8 @@ def checkAndOfferPackageInstallation():
                     'sklearn': 'Required for PCA, t-SNE, and clustering in Colors EDA',
                     'umap': 'Required for UMAP dimensionality reduction in Colors EDA',
                     'skimage': 'Required for advanced color quantization and analysis',
-                    'imageio': 'Required for texture and image processing'
+                    'imageio': 'Required for texture and image processing',
+                    'imagecodecs': 'Required for reading compressed TIFF textures'
                 }.get(package_name, 'Optional package for enhanced functionality')
             })
             print(f"✗ {info['pip_name']} - Missing")  # Indicates missing package
@@ -159,7 +163,6 @@ def installMissingPackages(missing_packages):
     Args:
         missing_packages: List of package dictionaries with 'pip_name' keys
     """
-    import subprocess
     import datetime
 
     success_count = 0
@@ -212,6 +215,10 @@ def installMissingPackages(missing_packages):
                     elif package_name == 'imageio':
                         import imageio  # Attempts imageio import
                         print(f"  → Verified imageio version: {imageio.__version__}")
+                    elif package_name == 'imagecodecs':
+                        import imagecodecs  # Attempts imagecodecs import
+                        version = getattr(imagecodecs, '__version__', 'unknown')
+                        print(f"  → Verified imagecodecs version: {version}")
                 except ImportError as verify_error:
                     print(f"  ⚠ Warning: Could not verify {package_name} import: {verify_error}")  # Warns if verification fails
 
@@ -1638,7 +1645,7 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       import sys
       
       # List of all recommended packages
-      all_packages = ['numpy', 'scikit-learn', 'umap-learn', 'scikit-image', 'imageio']
+      all_packages = ['numpy', 'scikit-learn', 'umap-learn', 'scikit-image', 'imageio', 'imagecodecs']
       
       message = f"Install all recommended packages for full InterDeCA functionality?\n\n{', '.join(all_packages)}\n\nThis may take several minutes."
       
@@ -7425,7 +7432,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     ang      = float(argv[3])
     island_m = float(argv[4])
 
-    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
 
     # Import
     try:
@@ -7462,7 +7469,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     )
     """)
     with open(script, "w", encoding="utf-8") as f: f.write(py)
-    args = [blender_exe, "--background", "--python", script, "--",
+    args = [blender_exe, "--background", "--factory-startup", "--python", script, "--",
             in_obj, out_obj, str(merge_dist), str(smart_angle), str(island_margin)]
     subprocess.run(args, check=True)
 
@@ -7557,7 +7564,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     src_path, tgt_path, png_in, png_out, sz, extru, margin, merge_d = argv
     sz = int(sz); extru = float(extru); margin = int(margin); merge_d = float(merge_d)
 
-    bpy.ops.wm.read_homefile(use_empty=True)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
     # Import target (resampled with UV)
     try: bpy.ops.wm.obj_import(filepath=tgt_path, forward_axis='Y', up_axis='Z')
     except AttributeError: bpy.ops.import_scene.obj(filepath=tgt_path, use_split_objects=False, use_split_groups=False, axis_forward='Y', axis_up='Z')
@@ -7633,7 +7640,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if not (tgt_path and tex_in):  # skip without texture or target
         continue
       out_png = os.path.join(outDir, f"{sid}.png")
-      args = [blender_exe, "--background", "--python", tmp_script.name, "--",
+      args = [blender_exe, "--background", "--factory-startup", "--python", tmp_script.name, "--",
               src_path, tgt_path, tex_in, out_png,
               str(bake_size), str(bake_extrusion), str(bake_margin_px), str(merge_dist)]
       subprocess.run(args, check=True)
