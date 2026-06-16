@@ -38,7 +38,7 @@ const S = {
   active_pc:0, colorBy:"joint", gtJoint:[], gtFactors:{},
   view:{scale:1,ox:0,oy:0,fitted:false}, hover:null, round:0,
   anchor:null, panel:null, marks:{}, remote:null, cands:[],  // marks: idx->{kind,amp}; cands: ranking set
-  alpha:0, raf:null, frozen:false, showEdges:true, graphMul:2.5, fitScale:null, autoFit:true,
+  alpha:0, raf:null, frozen:false, showEdges:true, hideUnlabeled:false, hideLabeled:false, graphMul:2.5, fitScale:null, autoFit:true,
   pendingNode:null, dragNode:null, dragMoved:false, panning:false, lastX:0, lastY:0,
 };
 
@@ -144,7 +144,7 @@ async function loadFeedbackFile(file){
       return {a:s.a,b:s.b,kind:s.kind,amp,rest,k:(s.k!=null?s.k:FB_K*(0.3+0.7*amp))};
     });
     S.round=data.round||S.fbSprings.length;
-    recomputeReleases(); reheat(REHEAT); refreshDendro(1100);
+    recomputeReleases(); reheat(REHEAT); draw(); refreshDendro(1100);
     toast(`loaded ${S.fbSprings.length} feedback springs — reshaping`);
   }catch(e){ toast("load failed: "+e.message); }
 }
@@ -260,6 +260,7 @@ function recomputeReleases(){
     if(e.kind==="near"){ (S.simPair[e.a]||(S.simPair[e.a]={}))[e.b]=amp;
                          (S.simPair[e.b]||(S.simPair[e.b]={}))[e.a]=amp; }
   }
+  recomputeLabeled();   // keep the labeled set fresh on every feedback-spring mutation (independent of draw cadence)
 }
 
 async function submitRanking(tied){
@@ -274,7 +275,7 @@ async function submitRanking(tied){
   api("POST",`/api/session/${S.sid}/feedback`,{anchor:S.anchor,ranked:tied?[]:ks.map(Number),tied:!!tied,remote:null}).catch(()=>{});
   await newAnchor();
 }
-function resetFeedback(){ S.fbSprings=[]; recomputeReleases(); S.round=0; reheat(REHEAT); refreshDendro(1100); toast("feedback springs cleared"); }
+function resetFeedback(){ S.fbSprings=[]; recomputeReleases(); S.round=0; reheat(REHEAT); draw(); refreshDendro(1100); toast("feedback springs cleared"); }
 async function resetLayout(){ await loadGraph(); preloadThumbs(); reheat(1.0); startSim(); refreshDendro(1100); toast("layout reseeded from PCA"); }
 
 // ----------------------------------------------------------------------------- physics
@@ -341,8 +342,18 @@ function s2w(sx,sy){ return [(sx-S.view.ox)/S.view.scale, (S.view.oy-sy)/S.view.
 function colorOf(i){ if(!S.hasGt || S.colorBy==="uniform") return "#7fa8c9";
   const labs=S.colorBy==="joint"?S.gtJoint:(S.gtFactors[S.colorBy]||[]); return CAT[(labs[i]??0)%CAT.length]; }
 
+// A node is "labeled" if it is an endpoint of any feedback spring (committed similar/dissimilar
+// feedback). The two graph toggles hide labeled or unlabeled specimens from the canvas — purely
+// visual: the physics layout is unaffected and hidden nodes are skipped by the hit-test.
+let _labeled=new Set();
+function recomputeLabeled(){ _labeled=new Set(); for(const e of S.fbSprings){ _labeled.add(e.a); _labeled.add(e.b); } }
+function isHidden(i){ if(!S.hideUnlabeled && !S.hideLabeled) return false;
+  // the active working set is always visible/interactive: current anchor, dragged node, ranking candidates
+  if(i===S.anchor || (S.dragNode&&i===S.dragNode.i) || S.cands.includes(i)) return false;
+  const lab=_labeled.has(i); return (S.hideLabeled&&lab)||(S.hideUnlabeled&&!lab); }
 function draw(){ if(!cv.width)return; ctx.clearRect(0,0,cv.width,cv.height); if(!S.nodes.length)return;
   if(!S.view.fitted) fitView();
+  recomputeLabeled();
   // image size grows SUB-linearly with zoom (zf^EXP) while node spacing grows linearly with zoom,
   // so zooming into a region REVEALS more of its specimens instead of just enlarging the same few.
   const zf=Math.max(0.45,Math.min(9,S.view.scale/(S.fitScale||S.view.scale)));
@@ -350,19 +361,19 @@ function draw(){ if(!cv.width)return; ctx.clearRect(0,0,cv.width,cv.height); if(
   // edges
   if(S.showEdges){ ctx.lineWidth=1*DPR;
     ctx.strokeStyle="rgba(150,170,200,0.05)"; ctx.beginPath();
-    for(const e of S.edges){ const A=S.nodes[e.a],B=S.nodes[e.b]; const [ax,ay]=w2s(A.x,A.y),[bx,by]=w2s(B.x,B.y);
+    for(const e of S.edges){ if(isHidden(e.a)||isHidden(e.b))continue; const A=S.nodes[e.a],B=S.nodes[e.b]; const [ax,ay]=w2s(A.x,A.y),[bx,by]=w2s(B.x,B.y);
       ctx.moveTo(ax,ay); ctx.lineTo(bx,by); } ctx.stroke();
     // feedback springs, colored
     ctx.lineWidth=1.6*DPR;
-    for(const e of S.fbSprings){ const A=S.nodes[e.a],B=S.nodes[e.b]; const [ax,ay]=w2s(A.x,A.y),[bx,by]=w2s(B.x,B.y);
+    for(const e of S.fbSprings){ if(isHidden(e.a)||isHidden(e.b))continue; const A=S.nodes[e.a],B=S.nodes[e.b]; const [ax,ay]=w2s(A.x,A.y),[bx,by]=w2s(B.x,B.y);
       ctx.strokeStyle=e.kind==="near"?"rgba(90,209,122,0.55)":"rgba(224,96,122,0.5)";
       ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke(); } }
   // highlight dragged node's structural edges
   if(S.dragNode!=null){ ctx.strokeStyle="rgba(67,198,216,0.5)"; ctx.lineWidth=1.5*DPR; ctx.beginPath();
-    for(const k of S.adj[S.dragNode.i]){ const e=S.edges[k]; const A=S.nodes[e.a],B=S.nodes[e.b];
+    for(const k of S.adj[S.dragNode.i]){ const e=S.edges[k]; if(isHidden(e.a)||isHidden(e.b))continue; const A=S.nodes[e.a],B=S.nodes[e.b];
       const [ax,ay]=w2s(A.x,A.y),[bx,by]=w2s(B.x,B.y); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); } ctx.stroke(); }
   // dots
-  for(const n of S.nodes){ const [sx,sy]=w2s(n.x,n.y); ctx.fillStyle=colorOf(n.i);
+  for(const n of S.nodes){ if(isHidden(n.i))continue; const [sx,sy]=w2s(n.x,n.y); ctx.fillStyle=colorOf(n.i);
     ctx.beginPath(); ctx.arc(sx,sy,2.4*DPR,0,7); ctx.fill(); }
   // adaptive thumbnails: forced (anchor/panel/hover/drag) + greedy-spaced
   const forced=new Set(); if(S.anchor!=null)forced.add(S.anchor);
@@ -370,15 +381,15 @@ function draw(){ if(!cv.width)return; ctx.clearRect(0,0,cv.width,cv.height); if(
   if(S.hover!=null)forced.add(S.hover); if(S.dragNode!=null)forced.add(S.dragNode.i);
   const placed=[], mind=tw;
   const fits=(sx,sy)=>{ for(const c of placed) if(Math.hypot(c[0]-sx,c[1]-sy)<mind) return false; return true; };
-  const place=(i,big)=>{ const n=S.nodes[i]; if(!n)return; const [sx,sy]=w2s(n.x,n.y);
+  const place=(i,big)=>{ const n=S.nodes[i]; if(!n||isHidden(i))return; const [sx,sy]=w2s(n.x,n.y);
     if(!big&&!fits(sx,sy))return; placed.push([sx,sy]); drawThumb(i,big?tw*1.9:tw,big); };
   forced.forEach(i=>{ if(i!==S.hover&&!(S.dragNode&&i===S.dragNode.i)) place(i,false); });
   for(const n of S.nodes) if(!forced.has(n.i)) place(n.i,false);
   // highlights
-  for(const idx of S.cands) ring(idx,tw,"#43c6d8",2.5);
-  if(S.anchor!=null){ drawThumb(S.anchor,tw*1.15,false); ring(S.anchor,tw*1.15,"#ffd24a",4); }
-  if(S.dragNode!=null) drawThumb(S.dragNode.i,tw*1.6,true);
-  if(S.hover!=null) drawThumb(S.hover,tw*1.9,true);
+  for(const idx of S.cands){ if(isHidden(idx))continue; ring(idx,tw,"#43c6d8",2.5); }
+  if(S.anchor!=null && !isHidden(S.anchor)){ drawThumb(S.anchor,tw*1.15,false); ring(S.anchor,tw*1.15,"#ffd24a",4); }
+  if(S.dragNode!=null && !isHidden(S.dragNode.i)) drawThumb(S.dragNode.i,tw*1.6,true);
+  if(S.hover!=null && !isHidden(S.hover)) drawThumb(S.hover,tw*1.9,true);
 }
 function drawThumb(i,tw,big){ const n=S.nodes[i]; if(!n)return; const [sx,sy]=w2s(n.x,n.y);
   const img=S.thumbs[i], col=colorOf(i); const asp=(img&&img.width)?img.width/img.height:2.6;
@@ -389,7 +400,7 @@ function drawThumb(i,tw,big){ const n=S.nodes[i]; if(!n)return; const [sx,sy]=w2
 function ring(i,tw,color,lw){ const n=S.nodes[i]; if(!n)return; const [sx,sy]=w2s(n.x,n.y);
   const img=S.thumbs[i], asp=(img&&img.width)?img.width/img.height:2.6; const w=tw*Math.sqrt(asp),h=tw/Math.sqrt(asp);
   ctx.strokeStyle=color; ctx.lineWidth=lw*DPR; ctx.strokeRect(sx-w/2-2,sy-h/2-2,w+4,h+4); }
-function nodeAt(mx,my){ let best=null,bd=24*DPR; for(const n of S.nodes){ const [sx,sy]=w2s(n.x,n.y);
+function nodeAt(mx,my){ let best=null,bd=24*DPR; for(const n of S.nodes){ if(isHidden(n.i))continue; const [sx,sy]=w2s(n.x,n.y);
   const d=Math.hypot(sx-mx,sy-my); if(d<bd){bd=d;best=n.i;} } return best; }
 
 // ----------------------------------------------------------------------------- interaction
@@ -421,20 +432,22 @@ const SVGNS="http://www.w3.org/2000/svg", XLINK="http://www.w3.org/1999/xlink";
 let ddG=null, ddTx=0, ddTy=0, ddS=1, ddVBW=1, ddVBH=1;
 let ddLeaves=[], ddPosI=[];   // ddLeaves: {rect, i, color}; ddPosI[pos] = specimen index — for in-dendrogram selection
 let ddMoved=false;            // set while a dendrogram press becomes a pan — mirrors the graph's !dragMoved click guard
+let ddData=null;             // last dendrogram payload from the server — reused to build the rotated export
 function applyDdTransform(){ if(ddG) ddG.setAttribute("transform",`translate(${ddTx} ${ddTy}) scale(${ddS})`); }
 function ddMeet(){ const svg=$("dendroSvg"), r=svg.getBoundingClientRect();
   const sc=Math.min(r.width/ddVBW, r.height/ddVBH);
   return {sc, offX:(r.width-ddVBW*sc)/2, offY:(r.height-ddVBH*sc)/2, r}; }
 function buildDendro(d){
   const svg=$("dendroSvg"); while(svg.firstChild) svg.removeChild(svg.firstChild);
-  ddLeaves=[]; ddPosI=[];
+  ddLeaves=[]; ddPosI=[]; ddData=d;
   const W=d.step*d.n, TREE_H=W*0.22, gap=TREE_H*0.06;   // compact tree (less vertical space)
   const leafW=d.step*0.86, leafH=leafW/(d.leaf_aspect||2);
-  const VBH=TREE_H+gap+leafH+leafW*0.3;
+  const rootPad=TREE_H*0.12;                            // whitespace above the root (+ room for the title)
+  const VBH=rootPad+TREE_H+gap+leafH+leafW*0.3;
   ddVBW=W; ddVBH=VBH; ddTx=0; ddTy=0; ddS=1;
   svg.setAttribute("viewBox",`0 0 ${W} ${VBH}`); svg.setAttribute("preserveAspectRatio","xMidYMid meet");
   ddG=document.createElementNS(SVGNS,"g"); svg.appendChild(ddG); applyDdTransform();
-  const yT=v=>(1 - v/d.ymax)*TREE_H;
+  const yT=v=>rootPad+(1 - v/d.ymax)*TREE_H;
   for(const L of d.links){
     const pl=document.createElementNS(SVGNS,"polyline");
     pl.setAttribute("points", L.x.map((x,k)=>`${x},${yT(L.y[k]).toFixed(2)}`).join(" "));
@@ -457,7 +470,7 @@ function buildDendro(d){
       ddG.appendChild(hit);
     }
   }
-  const lyrow=TREE_H+gap;
+  const lyrow=rootPad+TREE_H+gap;
   for(const lf of d.leaves){
     ddPosI[lf.pos]=lf.i;
     const cx=5+lf.pos*d.step, x=cx-leafW/2;
@@ -487,7 +500,7 @@ function buildDendro(d){
   }
   updateDendroSelection();
   const t=document.createElementNS(SVGNS,"text");
-  t.setAttribute("x",(W/2).toFixed(1)); t.setAttribute("y",(TREE_H*0.07).toFixed(1));
+  t.setAttribute("x",(W/2).toFixed(1)); t.setAttribute("y",(rootPad*0.55).toFixed(1));
   t.setAttribute("text-anchor","middle"); t.setAttribute("font-size",(W*0.016).toFixed(2)); t.setAttribute("fill","#444");
   t.textContent=`${d.n} specimens · merges aligned by depth, thickness = merge distance · round ${d.round} · click a leaf = anchor · ctrl-click a leaf or branch = sample`;
   ddG.appendChild(t);
@@ -553,17 +566,82 @@ async function buildStandaloneSvg(){
   }));
   return {svg:'<?xml version="1.0" encoding="UTF-8"?>\n'+new XMLSerializer().serializeToString(clone), w:outW, h:outH};
 }
+// Rotated-90° export: a HORIZONTAL dendrogram — root at the LEFT, branches growing rightward, the
+// specimen images stacked UPRIGHT down the RIGHT edge. Built fresh from the last payload (ddData) by
+// transposing the two axes (leaf-position -> vertical, merge depth -> horizontal).
+function _rotatedDendroSvg(d){
+  const aspect=d.leaf_aspect||2;
+  const H=d.step*d.n, TREE_W=H*0.22, gap=TREE_W*0.06;   // tree depth is now horizontal
+  const leafH=d.step*0.86, leafW=leafH*aspect;          // each image upright: slot height leafH, width leafW
+  const topPad=leafH*0.9;                               // title room + keeps the first leaf from clipping
+  const leftPad=TREE_W*0.12;                            // whitespace to the left of the root
+  const VBW=leftPad+TREE_W+gap+leafW+leafH*0.3;
+  const VBH=topPad+5+(d.n-1)*d.step+leafH*0.5+leafH*0.3;
+  const xT=v=>leftPad+(1 - v/d.ymax)*TREE_W;            // depth -> x (root v=ymax at left margin)
+  const svg=document.createElementNS(SVGNS,"svg");
+  svg.setAttribute("xmlns",SVGNS); svg.setAttribute("xmlns:xlink",XLINK);
+  svg.setAttribute("viewBox",`0 0 ${VBW.toFixed(2)} ${VBH.toFixed(2)}`);
+  const bg=document.createElementNS(SVGNS,"rect");
+  bg.setAttribute("x","0"); bg.setAttribute("y","0"); bg.setAttribute("width",VBW.toFixed(2)); bg.setAttribute("height",VBH.toFixed(2)); bg.setAttribute("fill","#fff");
+  svg.appendChild(bg);
+  for(const L of d.links){
+    const pl=document.createElementNS(SVGNS,"polyline");
+    pl.setAttribute("points", L.x.map((xx,k)=>`${xT(L.y[k]).toFixed(2)},${(xx+topPad).toFixed(2)}`).join(" "));
+    pl.setAttribute("fill","none"); pl.setAttribute("stroke",L.color);
+    pl.setAttribute("stroke-width",(1.2+L.w*5).toFixed(2)); pl.setAttribute("vector-effect","non-scaling-stroke");
+    pl.setAttribute("stroke-linejoin","round"); pl.setAttribute("stroke-linecap","round");
+    svg.appendChild(pl);
+  }
+  const lx=leftPad+TREE_W+gap;
+  for(const lf of d.leaves){
+    const cy=5+lf.pos*d.step+topPad, y=cy-leafH/2;
+    const href=`/thumb_hi/${d.dataset}/${encodeURIComponent(lf.name)}.png`;
+    const im=document.createElementNS(SVGNS,"image");
+    im.setAttributeNS(XLINK,"href",href); im.setAttribute("href",href);
+    im.setAttribute("x",lx.toFixed(2)); im.setAttribute("y",y.toFixed(2));
+    im.setAttribute("width",leafW.toFixed(2)); im.setAttribute("height",leafH.toFixed(2));
+    im.setAttribute("preserveAspectRatio","xMidYMid meet");
+    svg.appendChild(im);
+    const rc=document.createElementNS(SVGNS,"rect");
+    rc.setAttribute("x",lx.toFixed(2)); rc.setAttribute("y",y.toFixed(2));
+    rc.setAttribute("width",leafW.toFixed(2)); rc.setAttribute("height",leafH.toFixed(2));
+    rc.setAttribute("fill","none"); rc.setAttribute("stroke",lf.color);
+    rc.setAttribute("stroke-width","2"); rc.setAttribute("vector-effect","non-scaling-stroke");
+    svg.appendChild(rc);
+  }
+  const t=document.createElementNS(SVGNS,"text");
+  const title=`${d.n} specimens · round ${d.round} · thickness = merge distance`;
+  const font=Math.min(leafH*0.5, VBW/(title.length*0.6));   // size to the title length so the centered caption fits the narrow viewBox
+  t.setAttribute("x",(VBW/2).toFixed(1)); t.setAttribute("y",(topPad*0.6).toFixed(1));
+  t.setAttribute("text-anchor","middle"); t.setAttribute("font-size",font.toFixed(2)); t.setAttribute("fill","#444");
+  t.textContent=title;
+  svg.appendChild(t);
+  return {el:svg, VBW, VBH};
+}
+async function buildStandaloneSvgRotated(){
+  if(!ddData) return null;
+  const {el,VBW,VBH}=_rotatedDendroSvg(ddData);
+  const outH=2200, outW=Math.max(1,Math.round(outH*VBW/VBH));   // transpose of the vertical export's outW=2200
+  el.setAttribute("width",outW); el.setAttribute("height",outH);
+  await Promise.all([...el.querySelectorAll("image")].map(async im=>{
+    const href=im.getAttribute("href")||im.getAttributeNS(XLINK,"href");
+    const data=await _embedUrl(href); im.setAttribute("href",data); im.setAttributeNS(XLINK,"href",data);
+  }));
+  return {svg:'<?xml version="1.0" encoding="UTF-8"?>\n'+new XMLSerializer().serializeToString(el), w:outW, h:outH};
+}
 function _download(blob,name){ const u=URL.createObjectURL(blob); const a=document.createElement("a");
   a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),3000); }
-async function downloadDendroSvg(){ if(!ddG) return; toast("building SVG…");
-  const {svg}=await buildStandaloneSvg();
-  _download(new Blob([svg],{type:"image/svg+xml"}), `dendrogram_${S.dataset}_round${S.round}.svg`); }
-async function downloadDendroPng(){ if(!ddG) return; toast("building PNG…");
-  const {svg,w,h}=await buildStandaloneSvg();
+async function downloadDendroSvg(){ if(!ddG) return; const rot=$("dlRotate")&&$("dlRotate").checked; toast("building SVG…");
+  const r=rot?await buildStandaloneSvgRotated():await buildStandaloneSvg(); if(!r){ toast("no dendrogram yet"); return; }
+  const dd=ddData||{dataset:S.dataset,round:S.round};   // name from the rendered payload, not live (debounced) state
+  _download(new Blob([r.svg],{type:"image/svg+xml"}), `dendrogram_${dd.dataset}_round${dd.round}${rot?'_rot':''}.svg`); }
+async function downloadDendroPng(){ if(!ddG) return; const rot=$("dlRotate")&&$("dlRotate").checked; toast("building PNG…");
+  const r=rot?await buildStandaloneSvgRotated():await buildStandaloneSvg(); if(!r){ toast("no dendrogram yet"); return; }
+  const {svg,w,h}=r; const dd=ddData||{dataset:S.dataset,round:S.round};
   const url=URL.createObjectURL(new Blob([svg],{type:"image/svg+xml"})), img=new Image();
   img.onload=()=>{ const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
     const ctx=cv.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
-    cv.toBlob(b=>{ _download(b, `dendrogram_${S.dataset}_round${S.round}.png`); URL.revokeObjectURL(url); },"image/png"); };
+    cv.toBlob(b=>{ _download(b, `dendrogram_${dd.dataset}_round${dd.round}${rot?'_rot':''}.png`); URL.revokeObjectURL(url); },"image/png"); };
   img.onerror=()=>{ toast("PNG export failed"); URL.revokeObjectURL(url); };
   img.src=url; }
 
@@ -581,6 +659,14 @@ $("saveFb").onclick=saveFeedback;
 $("loadFb").onclick=()=>$("loadFbFile").click();
 $("loadFbFile").onchange=e=>{ const f=e.target.files[0]; if(f) loadFeedbackFile(f); e.target.value=""; };
 $("showEdges").onchange=e=>{S.showEdges=e.target.checked;draw();};
+// The two filters are mutually exclusive — a clean 3-state (show all / only labeled / only unlabeled);
+// checking both would hide everything.
+$("hideUnlabeled").onchange=e=>{ S.hideUnlabeled=e.target.checked;
+  if(S.hideUnlabeled){ S.hideLabeled=false; $("hideLabeled").checked=false; }
+  if(isHidden(S.hover))S.hover=null; draw(); };
+$("hideLabeled").onchange=e=>{ S.hideLabeled=e.target.checked;
+  if(S.hideLabeled){ S.hideUnlabeled=false; $("hideUnlabeled").checked=false; }
+  if(isHidden(S.hover))S.hover=null; draw(); };
 $("freeze").onchange=e=>{S.frozen=e.target.checked; if(!S.frozen){reheat(0.2);} updateBadge();};
 $("dlSvg").onclick=downloadDendroSvg; $("dlPng").onclick=downloadDendroPng;
 $("panelSize").onchange=e=>setPanelSize(e.target.value);

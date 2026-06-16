@@ -35,6 +35,8 @@
       <span id="colorByWrap"><span class="lbl">color by</span> <select id="colorBy"></select></span>
       <label class="lbl"><input type="checkbox" id="showEdges" checked> springs</label>
       <label class="lbl"><input type="checkbox" id="freeze"> freeze</label>
+      <label class="lbl" title="hide specimens with no similar/dissimilar feedback"><input type="checkbox" id="hideUnlabeled"> hide unlabeled</label>
+      <label class="lbl" title="hide specimens that have feedback"><input type="checkbox" id="hideLabeled"> hide labeled</label>
       <span id="legend" class="legend"></span>
     </div>
   </section>
@@ -88,7 +90,7 @@
 </main>
 
 <section id="dendroWrap"><svg id="dendroSvg" xmlns="http://www.w3.org/2000/svg"></svg>
-  <div id="dlDendro"><button id="dlSvg" title="download as vector SVG">⬇ SVG</button><button id="dlPng" title="download as PNG image">⬇ PNG</button></div>
+  <div id="dlDendro"><label id="dlRotateLbl" title="rotate the tree 90° so the specimen images sit on the right"><input type="checkbox" id="dlRotate"> rotate 90°</label><button id="dlSvg" title="download as vector SVG">⬇ SVG</button><button id="dlPng" title="download as PNG image">⬇ PNG</button></div>
 </section>
 
 <div id="toast" class="toast"></div>

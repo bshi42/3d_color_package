@@ -11,6 +11,11 @@ Runs on two datasets:
 - **fishy** — synthetic, n=250, has ground truth (belly / tail / stripe / cheeks).
 - **mussel** — real, n=31, no ground truth (human-in-the-loop only).
 
+> **Static (server-free) build:** `export_static.py` bakes the mussel dataset into a fully
+> frontend-only demo under `static_demo/` (precomputed graph + PCA coords + exemplar PNGs; Ward
+> dendrogram and panel sampling ported to JS). It needs only a dumb static host. See
+> [`static_demo/README.md`](static_demo/README.md).
+
 ## Run
 
 No new dependencies — uses the existing `fishy_research` env (numpy / scipy / sklearn /
@@ -46,7 +51,15 @@ Open the URL, pick a dataset, click **Load**.
 - **color by** recolours nodes by a ground-truth factor (fishy only; mussel nodes are uniform).
 - **Reset feedback** clears the preference springs; **Reset layout** reseeds from the PCA layout.
 - The **dendrogram** (inline SVG, depth-aligned, line thickness = merge distance) zooms/pans and
-  exports as **SVG/PNG**; **springs** toggles the edge overlay; **freeze** pauses the simulation.
+  exports as **SVG/PNG**; tick **rotate 90°** to export a horizontal tree instead (root at the left,
+  branches growing rightward, specimen images upright down the right edge). **springs** toggles the edge
+  overlay; **freeze** pauses the simulation.
+- **hide unlabeled** / **hide labeled** filter the 2-D graph by feedback status — a specimen is
+  *labeled* once it is an endpoint of a feedback spring (committed similar/dissimilar). The two are
+  mutually exclusive (show all / only labeled / only unlabeled). The filter is purely visual (the
+  physics layout is untouched) and hidden nodes are non-interactive, but the **active working set**
+  (current anchor, its ranking candidates, a node being dragged) always stays visible so the graph
+  never disagrees with the panel; the dendrogram is unaffected.
 - **Select in the dendrogram** (same as the graph): **click** a leaf to make it the anchor;
   **Ctrl-click** a leaf to add/remove it from the ranking set, or **Ctrl-click** a branch to toggle its
   whole clade. Selected leaves get a gold ring and stay in sync with the graph (cyan ring) and the panel.
