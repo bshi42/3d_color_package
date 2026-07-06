@@ -674,6 +674,64 @@ are implemented in `main`
 ([code: TPS main loop](../../color_fishy_tps.py#L882-L920),
 [code: output rows](../../color_fishy_tps.py#L921-L963)).
 
+## Other generated mesh and texture products
+
+The repository contains several additional scripts that generate derived meshes or
+textures. These should be distinguished from the paper-relevant synthetic cichlid texture
+dataset above.
+
+Only one additional file is a true synthetic texture generator: `color_fishy_old.py`.
+It is an early single-output prototype that paints one selected fish mesh with hard-coded
+volumetric brushes, a dorsal-ventral countershading gradient, optional sinusoidal mottling,
+and five nominal stripes, then bakes the result to `/tmp/synthetic_texture.png`
+([code: old prototype constants](../../color_fishy_old.py#L13-L109),
+[code: old prototype brush compositing](../../color_fishy_old.py#L156-L233),
+[code: old prototype bake](../../color_fishy_old.py#L282-L308)). It is useful historical
+context, but it does not produce the 250-specimen benchmark or the TPS-warped cichlid
+dataset.
+
+`preview_fishy_dist.py` reproduces the shared-mesh `fishy` parameter sampler and brush
+definitions, but its `main` function only plots belly- and tail-hue histograms; the
+CSV-writing line is commented out and no bake path is invoked, so no mesh or PNG dataset
+is produced
+([code: preview sampler](../../preview_fishy_dist.py#L49-L146),
+[code: preview-only main](../../preview_fishy_dist.py#L227-L235)).
+
+The ATLAS and InterDeCA pipelines also generate derived mesh products, but these are
+registration outputs rather than synthetic biological specimens. The atlas builder aligns
+input meshes and landmarks, selects a reference closest to the Procrustes mean, warps
+surfaces with TPS or biharmonic interpolation, and averages dense correspondences into an
+atlas surface
+([code: ATLAS dense correspondence](../../ATLAS/BUILDER/BUILDER.py#L550-L620),
+[doc: ATLAS outputs](../../ATLAS/README.md#L68-L75)). The InterDeCA workflow similarly
+creates resampled models that reuse atlas UV coordinates before texture baking
+([code: InterDeCA resampling and bake call](../../color_deca/deca3/InterDeCA.py#L4256-L4296),
+[code: atlas UV transfer](../../color_deca/deca3/InterDeCA.py#L7469-L7520)).
+
+Several utility scripts generate technical texture or mesh derivatives from existing data.
+`utils/retexture_on_resampled.py` and `utils/bake_textures.py` reproject existing source
+textures onto resampled or newly unwrapped targets using Blender selected-to-active
+baking; they do not invent new pattern factors
+([code: direct retexture workflow](../../utils/retexture_on_resampled.py#L174-L265),
+[code: batch bake workflow](../../utils/bake_textures.py#L60-L184)). `utils/blender_unwrap.py`
+and `utils/atlas_uv.py` generate UV-unwrapped OBJ derivatives
+([code: generic unwrap](../../utils/blender_unwrap.py#L27-L57),
+[code: atlas UV unwrap](../../utils/atlas_uv.py#L26-L61)), while
+`utils/remesh_isotropic.py` creates a uniform remeshed surface from an existing mesh using
+PyACVD clustering and normal-orientation cleanup
+([code: isotropic remesh](../../utils/remesh_isotropic.py#L81-L96)).
+
+Finally, the color-translation utilities create normalized variants of existing atlas
+textures. `utils/color_translate_shift.py` matches each texture's non-black Lab mean and
+standard deviation to pooled atlas-texture statistics
+([code: Lab affine transform](../../utils/color_translate_shift.py#L91-L160)), while
+`utils/color_translate_scale_LC_only.py` performs the same kind of affine normalization
+only on lightness and chroma, preserving hue
+([code: L*/C* transform](../../utils/color_translate_scale_LC_only.py#L83-L170)). These
+are post-processing transformations and should be described, if used, as normalization or
+augmentation of existing textures rather than synthetic mesh or texture generation with
+known biological ground truth.
+
 ## Reproducibility notes
 
 - The cichlid synthetic dataset is deterministic given the Python, NumPy, scikit-learn,
@@ -707,6 +765,12 @@ natural fish coloration.
 |---|---|
 | Paper-relevant synthetic cichlid texture generation | `color_fishy_tps.py` |
 | Precursor shared-mesh texture generation | `color_fishy.py` |
+| Early single-texture prototype | `color_fishy_old.py` |
+| Parameter-distribution preview | `preview_fishy_dist.py` |
+| Atlas and derived correspondence mesh generation | `ATLAS/BUILDER/BUILDER.py`, `color_deca/deca3/InterDeCA.py` |
+| Texture reprojection and baking utilities | `utils/retexture_on_resampled.py`, `utils/bake_textures.py` |
+| UV and remeshing utilities | `utils/blender_unwrap.py`, `utils/atlas_uv.py`, `utils/remesh_isotropic.py` |
+| Texture color-normalization utilities | `utils/color_translate_shift.py`, `utils/color_translate_scale_LC_only.py` |
 | Shared-mesh data paths and constants | `fishy_research/src/fishpipe/config.py` |
 | Texture-to-face sampling | `fishy_research/src/fishpipe/mesh.py` |
 | Ground-truth label derivation | `fishy_research/src/fishpipe/data.py` |
