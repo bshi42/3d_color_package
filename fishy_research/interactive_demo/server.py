@@ -439,6 +439,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err(400, str(e))
         if verb == "explain":                            # which PCs explain the expert's grouping
             return self._json(sess.explain(body.get("pairs", []), positions=body.get("positions")))
+        if verb == "recover":                            # recover the latent cluster structure (EXP-42..45)
+            return self._json(sess.recover(body.get("pairs", []),
+                                           n_clusters=int(body.get("n_clusters", 8))))
         n = sess.N
 
         def _inrange(v):

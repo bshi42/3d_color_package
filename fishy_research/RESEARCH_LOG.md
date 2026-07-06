@@ -1117,6 +1117,258 @@ unsupervised reducer — it is:
   product: a covariation-module atlas → segment-summary morphospace → per-module exemplar views,
   each foregrounding its factor as clusters (belly/tail) or a gradient (dorsal striping).
 
+### EXP-42..45 — Recovering the 2³=8 factor structure from graded expert feedback  ·  ✅ DONE
+Motivation (interactive demo): fishy has 3 ~binary factors (belly, tail, stripe) → 8 true clusters.
+Two worries: (i) most pairs share 1–2 of 3 factors → graded "similar"; clean all-3-different "D 1.0"
+pairs are rare → not enough repulsion; (ii) a 2-D spring layout cannot settle into 8. All labels
+SIMULATED from GT, using the demo's own descriptor (`interactive_demo.engine`).
+- **EXP-42** (`exp42_8cluster_feedback.py`): structure + budget. Color (belly/tail) is trivially
+  separable (0.99/1.00), **stripe is the bottleneck** (0.84 in the demo's PCA-10, and the 21%
+  minority → imbalanced cells `[50,18,48,9,48,9,52,16]`). Pair-Hamming budget: H=0 17%, H=1 42%,
+  H=2 33%, **H=3 only 8.4%** → worry (i) confirmed. Cube-MDS stress 2-D 8.3 vs 3-D 3.2 → worry (ii)
+  confirmed. Baseline KMeans-k8 ARI 0.23.
+- **Fix = graded TARGET DISTANCES** (target d² = Hamming): every non-identical pair separates
+  proportionally, so partial-overlap pairs do the pushing — no need for the rare clean-D.
+- **EXP-43** (`exp43_repr_metric_ceiling.py`): the demo's **K=10 PCA is the real bottleneck** — the
+  FULL color+jet descriptor separates stripe at **0.988**; PCA-10 crushes it to 0.84. **Textons are
+  NOT the lever here** (0.88 < 0.988 on fishy stripe). Keeping more PCs lifts the supervised ceiling:
+  K=10→0.57, K=20→0.88, K=30→0.96, K=50→1.0. Method: diagonal metric too weak (~0.40); full
+  Mahalanobis overfits at high K.
+- **EXP-44** (`exp44_recover_grid.py`): **low-rank metric (rank≈4) is the method win** — finds the ~3
+  discriminative directions from few labels. Recipe **K≈24 + graded targets + rank-4 metric + GMM(8)**
+  → ARI ≈0.84 @200 labels, ≈0.92 @400. **Active** sampling (query within/across the *current* clusters,
+  no GT) beats random in the practical range (0.75→0.84 @200). Visualization = **FACTOR GRID** (4 color
+  quadrants × split by the recovered weak factor) since 2-D springs can't show 8.
+- **EXP-45** (`exp45_harden.py`): noise robustness — per-feature judgment error q: holds well to q≈0.05
+  (ARI 0.70/0.83 @200/400), usable to q≈0.1, **more labels buy back noise**, collapses past q≈0.2.
+  Clean balanced-bisection 2×2×2 factor grid + diagonal-ordered confusion matrix.
+- **Recipe to port into the demo:** raise PCA K 10→~24; reframe feedback as a graded target distance
+  (one "how similar 0–1" → rest length); swap the explain/metric diagonal→low-rank; do recovery by
+  clustering in the K-space (GMM-8) and SHOW it via a factor grid / color-by-recovered-8, not by hoping
+  the 2-D springs separate 8. Caveats: simulated exact-count labels (real experts noisier — see q sweep);
+  no GT on mussels to validate recovery there.
+
+### EXP-46 — Multi-label TAG feedback vs pairwise: which classifier best PLACES unlabeled?  ·  ✅ DONE
+Idea: instead of "more/less similar", the expert creates tags ("green tail", "4 stripes", …) and drags
+them onto specimens (multi-label); train a classifier and watch it PLACE the unlabeled (its latent space).
+Shared harness `experiments/_tag_harness.py` (cached PCA-24 coords; 6 factor-ordered tags; eval = per-factor
+acc + 8-way ARI on UNLABELED vs # tagged specimens). 5 model families (4 fanned out + verified, + linear
+baseline), all leak-free & reproduced:
+| model | ari8@40 | ari8@80 | ari8@160 | acc@160 | 2-D latent silhouette@80 |
+| linear logistic (per-tag) | **0.68** | **0.86** | **0.89** | **0.98** | 0.28 |
+| prototype / NCM | 0.49 | 0.74 | 0.86 | 0.98 | 0.16 |
+| MLP 2-D bottleneck | 0.37 | 0.49 | 0.55 | 0.90 | **0.31** |
+| label-prop (semi-sup kNN) | 0.19 | 0.23 | 0.42 | 0.87 | 0.01 |
+| NCA 2-D embed | 0.23 | 0.20 | 0.40 | 0.83 | 0.04 |
+Findings: (1) **TAG feedback is far more label-efficient than pairwise** — linear hits ari8 0.86 at 80
+tagged specimens (~240 drags) and per-factor acc 0.93 at 40, vs ~200–400 *pairs* for similar ARI in
+EXP-44; and it yields direct per-specimen class predictions, not just a clustering. (2) **Best PLACER =
+simple per-tag linear logistic** in the full 24-PC space (factors are ~linearly separable there);
+prototype/NCM a close, tiny-budget-robust 2nd. (3) **Semi-supervised label-prop and NCA-2D UNDERperform** —
+the descriptor-kNN graph is dominated by color, so propagating smears the subtle stripe factor; a 2-D
+bottleneck loses stripe (same dimensionality limit as EXP-43). (4) **Classifier ≠ visualization:** the MLP
+2-D bottleneck gives the cleanest 2-D latent (silhouette 0.31) but caps placement; the full-D linear places
+best AND its PCA-2-of-tag-scores latent is nearly as clean (0.28). RECOMMENDATION for a demo "tag mode":
+full-D linear (or NCM) for placement + recolour/predict, visualise via PCA-2 of the decision scores (or an
+MLP bottleneck for a smoother map). Caveats: simulated tagger gives correct, complete (3/specimen) tags;
+synthetic fishy is ~linearly separable so linear wins (real data may need the nonlinear model); noise &
+partial-tagging not yet swept.
+
+### EXP-47 — Displaying the tag-classifier latent in 2-D: UMAP vs PCA vs t-SNE  ·  ✅ DONE
+`experiments/exp47_umap_latent.py`. The per-tag linear classifier's 6-D tag-score space is the latent;
+project to 2-D for display. 8-way silhouette / trustworthiness on UNLABELED, by tag budget:
+| 2-D method | sil@40 | sil@80 | sil@160 | trustworthiness |
+| PCA-2  | 0.19 | 0.28 | 0.37 | ~0.93 |
+| **UMAP-2** | **0.38** | **0.57** | **0.56** | **~0.99** |
+| t-SNE-2 | 0.38 | 0.52 | 0.55 | ~0.99 |
+**UMAP ~doubles the display quality of PCA** (and t-SNE ties it) — the 8 groups resolve into clean
+separated islands at ~80 tags, vs a muddy blob under PCA. Unsupervised UMAP on the RAW descriptor (no
+feedback) = silhouette **−0.07** (no visible structure) → the tags→classifier-latent is what creates the
+structure; UMAP merely lays it out. So the recommended demo "tag mode" display = **UMAP of the classifier's
+tag-score latent**, re-projected as tags accumulate. (Caveat: UMAP is stochastic — naive re-projection each
+update will jump; use parametric UMAP or embedding alignment / re-run only on Apply.)
+
+### EXP-48 — Non-stochastic, smoothly-evolving UMAP as tags are added  ·  ✅ DONE
+`experiments/exp48_aligned_umap.py`. Tag MONOTONICALLY (fixed order, budget = prefix) and embed the SEQUENCE
+of tag-score latents with `umap.AlignedUMAP` (identity relations, deterministic random_state=0) so the map
+evolves smoothly instead of teleporting. Smoothness (mean per-point frame-to-frame motion, scale-normalized):
+naive independent UMAP **1.17** → independent + Procrustes **0.49** → **AlignedUMAP 0.31** (~4x steadier).
+8-way silhouette of the aligned frame climbs and STABILISES: 5t −0.23 · 20t 0.14 · 40t 0.34 · 60t 0.45 ·
+80t 0.54 · 160t 0.52 — structure emerges from noise and locks in by ~80 tags while clusters stay spatially
+anchored (sharpen in place). Outputs `aligned_umap_grid.png` + `aligned_umap.gif`. → demo tag-mode display:
+AlignedUMAP over the tag-budget sequence (or parametric UMAP for live single-point `transform`).
+
+### EXP-49 — Parametric UMAP for a LIVE single-update tag morphospace  ·  ✅ DONE
+`experiments/exp49_parametric_umap.py` (real `ParametricUMAP`, run in an ISOLATED tf env at /tmp/pumap_env —
+NOT the research venv, which is numpy-2.4 / uv-locked and would break under TF; install: `uv venv` +
+`tensorflow-cpu tf-keras umap-learn`, run with `TF_USE_LEGACY_KERAS=1`). Fit the encoder ONCE at a tag
+budget, then `.transform()` every later latent (true live update, no re-fit). RESULT — *contradicts* the
+"won't be as nice as aligned" prior:
+| method | motion (smooth) | sil@40 | sil@80 | sil@160 |
+| parametric frozen@80 | **0.207** | 0.33 | 0.60 | **0.64** |
+| AlignedUMAP | 0.261 | 0.37 | 0.52 | 0.50 |
+| independent UMAP | 1.161 | 0.34 | 0.58 | 0.58 |
+Parametric is the SMOOTHEST (fixed encoder; only the input latent drifts) AND highest final quality (its map
+fit on the mature 80-tag latent generalises cleanly to 120/160 since structure plateaus by ~80 — EXP-48),
+AND it's the only one that supports a genuine live single-point update. Only cost: a map frozen@80 is a bit
+worse than AlignedUMAP at VERY early budgets (10–20 tags, sil −0.31 vs −0.12) — the under-tagged regime with
+no real structure anyway. PRACTICAL recipe: fit the parametric encoder once ~40 tags exist, then all future
+updates are instant + stable + sharp; re-fit occasionally if structure shifts. DEMO caveat: real PUMAP needs
+TF (conflicts with the numpy-2.4 venv) — a TF-free stand-in (sklearn MLPRegressor: latent→reference-UMAP-2D,
+fit once + `.predict` updated points) gives the same deterministic reusable-transform behaviour without TF.
+
+### EXP-50 — Build/perf for the live tag morphospace (CPU, small-n)  ·  ✅ DONE
+`experiments/exp50_update_bench.py`. Two-tier design: FREQUENT per-tag update (retrain 6 linear tag
+classifiers + project the changed latent through a FROZEN encoder) vs OCCASIONAL re-layout (re-fit the
+encoder). Measured (this CPU; project times on a *changed* latent, the realistic case):
+| n | clf retrain | UMAP.transform (changed) | MLP.predict (cache) | UMAP refit (re-layout) |
+| 250 | 3 ms | 140 ms (sil 0.51) | **0.04 ms** (sil 0.46) | ~0.2 s |
+| 1000 | 4 ms | 750 ms (sil 0.74) | **0.11 ms** (sil 0.68) | ~0.9 s |
+RECOMMENDATION: server-side Python (sklearn + umap-learn, **no TF/GPU**). Per Apply = logistic retrain (ms)
++ a frozen-encoder projection → send 2-D coords + tag predictions → client tweens nodes. For the expected
+scale (hundreds), **UMAP fit-once + `.transform()` per update (~140 ms) is simplest and good enough**; add a
+sklearn **MLPRegressor cache** (latent→reference-UMAP-2D, `.predict` ~0.1 ms, ~same quality) only if you want
+sub-ms updates or n→thousands — that's the TF-free "parametric UMAP" (matches EXP-49 behaviour, no TF dep).
+Re-layout (re-fit UMAP + MLP, ~0.2–1 s) on a button or auto on drift, in a background thread. Pre-warm UMAP's
+numba JIT at server start (~10–20 s one-time) so the first interaction isn't slow.
+
+### EXP-51 — React after EVERY batch (from the 1st) AND stay smooth  ·  ✅ DONE
+`experiments/exp51_incremental.py`. UX fix to the "fit @80" idea: do NOT freeze — re-fit UMAP each tagging
+batch but WARM-START with `init=previous_embedding` + few epochs (n_epochs=60) so points carry over.
+Motion (frame-to-frame, lower=steadier) / final silhouette over batches [8,16,24,32,48,64,96,128,160]:
+warm-start **0.41 / 0.58** · naive re-fit **1.02** / 0.56 · AlignedUMAP-ref 0.26 / 0.56. So warm-start is
+~2.5x steadier than naive at full quality, reacts from batch 1 (8 tags already renders a layout), and clusters
+sharpen IN PLACE. AlignedUMAP `.update()` (incremental) is smoothest (0.28) but **7.8 s/update** → unusable
+live (offline replay only). RECOMMENDED BUILD for tag mode: per batch = retrain logistic (C=0.5 regularised
+for tiny budgets) + warm-started UMAP fit (init=prev, ~60 epochs, ~0.2 s @ n=250) → client TWEENS nodes to
+the new coords for smooth perceived motion. No freeze, no TF, no GPU; reactive from the first batch.
+
+### EXP-52 — Active batch selection for the tag loop  ·  ✅ DONE
+`experiments/exp52_active_tags.py`. After applying a batch, auto-roll the NEXT batch picked to most help the
+classifier. Held-out 8-way ARI vs # labeled (mean of 6 seeds): UNCERTAINTY sampling (pick unlabeled with
+highest mean per-tag uncertainty, prob nearest 0.5) ≫ random — 24:0.57/0.39, 40:0.83/0.58, 56:0.92/0.73,
+80:0.96/0.81, plateau 0.94 vs 0.85. Uncertainty+diversity HURTS at tiny budgets (24:0.31) though it edges
+ahead late (160:0.98) → pure uncertainty is the robust default. IMPLEMENTED in `expert-tagging-demo`:
+`TagSession.roll_batch(active=True)` ranks unlabeled by `mean_t(1-|2p-1|)`; the `/apply` endpoint auto-rolls
+an active batch (so the next, most-informative batch appears on Apply); falls back to random with no
+classifier or when the "informative" toggle is off. API-verified: returned batch == top-k uncertain unlabeled.
+
+### EXP-53 — PCA dims (color vs pattern/spectral) vs accuracy, and does explained variance predict it?
+`experiments/exp53_dims_vs_accuracy.py`. Sweep #PCA dims separately for COLOR (per-region Lab blocks) and
+PATTERN/SPECTRAL (GFT coeffs k=40, L/a/b); per #dims: per-factor 5-fold logistic acc, GMM cluster ARI,
+cumulative EV. Findings:
+- COLOR: belly/tail classifier hit 1.0 by **d≈3–4**; belly×tail clustering ARI 0.95 by d≈8. Cumulative EV-95%
+  only at **d=15** → accuracy saturates LONG before EV (EV over-counts).
+- PATTERN/STRIPE: stripe classifier climbs 0.79→0.96 and only saturates at **d≈30**, while EV-95% is at
+  **d=12** → the discriminative signal lives in the LOW-variance PCA tail; **EV UNDER-counts the needed dims
+  ~2.5×**. Stripe **never** clusters unsupervised (ARI ≈0 at every dim, up to 60).
+- Spearman(EV, acc) is high (+0.86..+0.99) but MISLEADING — both are monotone; the SATURATION dim diverges
+  (EV over-counts color, under-counts stripe). So **explained variance does NOT predict the dims you need**,
+  and no purely unsupervised metric (EV or clusterability) can flag the low-variance stripe factor — it's
+  invisible to variance and to unsupervised clustering (HDLSS / spiked-covariance). Practical: size PCA by the
+  SUPERVISED factor of interest (or just keep ~30 dims to preserve the subtle one — matches the demo's K≈24),
+  NOT an EV threshold (which would silently discard stripe at ~12–15 dims).
+
+### EXP-54 — GFT mode count `k` vs accuracy (the spectral_coeffs truncation)
+`experiments/exp54_k_vs_accuracy.py`. EXP-53 swept PCA dims on a fixed k=40 descriptor; this varies `k` (# low-
+freq Laplacian modes/channel) and classifies directly on the k*3 coefficients. Findings:
+- COLOR (belly/tail) saturates at **k=1–3** (belly 0.91 / tail 0.96 from a SINGLE mode → ~1.0 by k=3) — color
+  is concentrated in the lowest modes (broad gradients).
+- STRIPE climbs **0.79(k=1) → 0.96(k=40)**, marginal to 0.976(k=150). Default k=40 is a sensible knee.
+- WHERE stripe lives: a per-mode 1-feature probe shows stripe info is THINLY DISTRIBUTED across MID-frequency
+  L modes (best single modes ≈ idx 17/28/46/59 at only ~0.84–0.85 vs majority 0.79); no low mode carries it.
+  So you need many modes to accumulate the signal, and small-k truncation silently drops stripe — same theme
+  as EXP-53 (stripe sits in the spectral tail / mid-band). Keep k≳40 to preserve it.
+
+### EXP-55 — Discovering GFT k without ground truth (3 methods) + ICA vs PCA on the spectral data
+`experiments/exp55_*.py`, shared cache `results/exp55/cache.npz` (GFT coeffs CL/Ca/Cb 250x300, eigvals, GT).
+HOW TO PICK k:
+- CV-on-your-own-LABELS (`label_budget_k`): track the SLOWEST-saturating factor, NOT the mean (mean knee ~4-6
+  saturates when belly/tail max → undercounts). Recovering stripe's k≥40 knee needs ~80 labels (M=20 useless,
+  M=40 a weak hint); binding constraint = rare-class COUNT (stripe 21% → ~4 positives at M=20). Tends to
+  recover "k≥40, take the largest labels still support".
+- EV-threshold & clustering-STABILITY (`unsup_k`): BOTH FAIL — pick k≈12-18, lock onto belly (ARI~1.0), MISS
+  stripe (ARI~0), leaving 6-8 pts. 99% EV (k=39) only incidentally OK. Don't use variance/clusterability for a
+  low-variance factor.
+- Unsupervised SPECTRAL structure-floor / eigenvalue elbow (`unsup_floor`): points to keeping MANY modes (~145)
+  which safely captures stripe (0.976). Per-mode energy is NON-monotone (no clean freq order). Practical rule:
+  over-supplying k is nearly free (accuracy plateaus, doesn't collapse) → default generous k≈50-150, trim via
+  label-CV on the hardest factor.
+ICA:
+- `ica_vs_pca_stripe`: FastICA(whiten) ≡ PCA for these models — BYTE-FOR-BYTE identical accuracy at every n
+  (rotation within the top-n PCA subspace; logistic + full-cov GMM are invariant to invertible linear maps;
+  subspace residual ~3e-6). So ICA is NOT a stripe-recovery lever (won't get stripe in fewer components).
+- `ica_disentangle`: ICA DOES isolate the strong independent COLOR factors into single clean components
+  (tail 0.996 vs PCA 0.884; belly 0.980) — good for interpretability — but stripe stays weak/spread
+  (best single comp ~0.86 ≈ a raw GFT mode); use the multi-mode classifier for stripe, not one component.
+
+### EXP-56 — Class-imbalance handling for rare factors (stripe 21%, cheeks 5.6%) while tagging
+`experiments/exp56_imbalance.py` (balanced accuracy on held-out, mean of 40 seeds; feature = demo PCA-24).
+Methods: plain logistic vs `class_weight='balanced'` vs manual SMOTE vs oracle stratified-acquisition+balanced.
+- STRIPE (21%): reweighting/SMOTE give a BIG boost in the LOW-label regime — M=40 plain 0.756 → balanced 0.842
+  (+0.09); gap fades by M=160 (0.913 vs 0.927). **`balanced` ≈ SMOTE** (no gain from synthetic oversampling).
+  strat-acq (oracle minority-aware acquisition) only marginally beats balanced for stripe.
+- CHEEKS (5.6%): everyone struggles (0.52→~0.68 even at M=160) — at M≤40 there are only ~1–2 positives, so no
+  reweighting/oversampling can conjure signal; the binding lever is ACQUIRING minority examples (active /
+  stratified), and 5.6% @ N=250 stays hard regardless.
+RECOMMENDATION for the tagging demo: add **`class_weight='balanced'`** to the per-tag logistic (free, helps rare
+tags exactly in the early incremental regime; matches SMOTE without the dependency); rely on the EXP-52 active
+uncertainty sampling to surface rare-class examples. SMOTE not worth the imblearn dependency here.
+
+### EXP-57 — SMOTE vs ADASYN (vs class_weight, plain) for rare factors
+`experiments/exp57_smote_adasyn.py` (balanced-acc + minority recall on held-out, 50 seeds, manual SMOTE/ADASYN
+since imblearn pins sklearn). **SMOTE ≈ ADASYN — indistinguishable** (within ~0.002–0.003 at every M, both
+stripe 21% and cheeks 5.6%). ADASYN's boundary-density weighting gives no edge because the binding constraint
+is the tiny minority COUNT — r_i is estimated from too few points and at low prevalence nearly all minority
+points are "hard", so ADASYN collapses to ~uniform = SMOTE. Nuance for cheeks: at the SMALLEST budgets
+class_weight='balanced' beats both synths (it upweights a single positive; SMOTE/ADASYN need ≥2 to interpolate),
+while synths edge ahead at M≥80. CONCLUSION unchanged: keep `class_weight='balanced'` (free, ties/【wins,
+no imblearn dependency); neither SMOTE nor ADASYN worth adding, and ADASYN buys nothing over SMOTE here.
+
+### EXP-59 — Do more color-PCA/ICA components help the rare cheeks factor?
+`experiments/exp59_color_components_cheeks.py` (color-only 640-dim descriptor; balanced-acc, repeated
+stratified 5-fold CV, class_weight='balanced'). YES more components help cheeks — its signal is in the
+LOW-VARIANCE TAIL: cheeks acc recovers only by n≈32-48 while cumulative EV is 96% by n≈12 (EV under-counts
+hugely). Striking U-SHAPE: at n≈8-16 cheeks dips BELOW chance (~0.43) — the top color PCs (belly/tail variance)
+mislead the rare signal until you go deep enough. Ceiling still low (~0.62 bal-acc) — cheeks is rare AND its
+color signal is weak. ICA ≡ PCA (overlapping curves, linear-invariant per EXP-55) AND ICA gives cheeks NO
+dedicated component (best single ICA comp 0.62, gap 0.006 — unlike belly/tail which ICA isolates cleanly). →
+keep enough PCA dims to include the tail (≥~32 / full descriptor) for rare low-variance factors; ICA not a lever.
+
+### EXP-58 — Improving the rare CHEEKS factor (5.6%) in the incremental tagging pipeline (4 directions)
+`experiments/exp58_*.py`, shared cache `results/exp58/cache.npz`. Cheeks plateaus ~0.66 balanced-acc even with
+all positives (oracle ceiling) — fundamentally hard; the wins are DISCOVERY SPEED, not final accuracy.
+- REPRESENTATION (`cheeks_repr`): cheeks wants MORE dims — full-Xs PCA-60/100 beats demo Z24 at M≥80
+  (BA 0.627/0.695 vs 0.614/0.678), monotone in dims (tail matters, cf EXP-59). Supervised feature/region
+  selection FAILS (too few positives to rank). Budget-gate: Z24 while M<60, swap to PCA-60/100 at M≥80.
+- ACQUISITION (`acquisition`): UNCERTAINTY sampling accumulates positives fastest (3 positives @~39 labels vs
+  ~54 random). **NN-expansion / "find more like this" FAILS** (worse than random — the tiny cheeks cluster
+  drains, then it wastes budget on near-duplicate negatives). Density-weighting = no gain. The demo's existing
+  active uncertainty roll (EXP-52) is already right. Judge by positives-discovered (accuracy plateaus ~0.66).
+- COLD-START (`coldstart_discovery`): **the big new win** — unsupervised novelty ranking on Z24 (LOF or
+  mean-kNN-distance) hits the FIRST cheeks at rank 1 (vs ~16 labels random) and 3 by labels 3–5 (vs ~49),
+  ~10–16x speedup, harvesting ~6/14 cheeks in the first ~16–20 labels, then saturates → switch to active.
+  (IsolationForest on raw color-640 is worse than random.)
+- CLASSIFIER TRICKS (`loss_threshold_tricks`): NOTHING beats plain `class_weight='balanced'` + 0.5 threshold —
+  focal/balanced-bagging tie, threshold-CV overfits (negative @M120), calibration HURTS recall. Binding
+  constraint = minority COUNT, not loss machinery → keep the current classifier.
+RECIPE: cold-start novelty seeding (round 0) → active uncertainty roll (already in demo) → budget-gated
+higher-dim PCA → keep balanced logistic. Highest-value NEW addition = cold-start novelty queue ordering.
+
+### EXP-60 — Do anomaly-detection methods surface the minority classes?
+`experiments/exp60_anomaly_minority.py` (ROC-AUC of unsupervised anomaly score vs minority membership on Z24).
+YES, but it's about SEPARABILITY not frequency. AUC: cheeks(5.6%) 0.63-0.67 · **5-stripe(21%) 0.71-0.76** ·
+random-6% control **0.50**. So (a) both planted minorities are surfaced well above the random-rare control
+(which sits at chance → anomaly does NOT surface arbitrary rare sets); (b) the RARER cheeks is surfaced LESS
+than the more-common 5-stripe → "rarer ≠ more surfaced"; what matters is whether the class occupies a
+lower-density / atypical region (5-stripe = structurally distinct extra-stripe texture). kNN-dist & LOF best;
+top-20 cheeks enrichment ~5-6x. Feature space matters: Z24 (compressed PCA) AUC 0.67 >> raw colour-640 0.53
+(curse of dimensionality kills distance-based anomaly in raw space) — do anomaly scoring in the compressed
+space. Reconciles with EXP-42/53 (stripe not cleanly CLUSTERABLE, ARI~0) — AUC 0.76 is soft 1-D enrichment,
+"enriched but overlapping", not separation. Practical: anomaly/novelty ranking is a good cold-start to surface
+ANY separable minority (generalises beyond cheeks), complements active learning; won't surface a truly
+inseparable minority.
+
 ### Resume point / open
 - New modules: `fishpipe/textons.py` (shared-codebook descriptor), `fishpipe/gating.py`
   (SigClust + consensus + Jaccard), `fishpipe/semisup.py` (constraint warp + active pairs +

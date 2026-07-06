@@ -47,6 +47,11 @@ Open the URL, pick a dataset, click **Load**.
   (on top of the auto-sample); **New anchor** sweeps to a fresh diverse one.
 - **Explain grouping** fits which PCA components account for your feedback (metric learning), with a
   body heatmap, color/pattern split, significance, held-out coverage, and leave-one-out placement.
+- **⊞ Recover** learns a low-rank metric from your graded feedback, clusters into *N* groups (GMM),
+  recolours the morphospace by recovered group (with the GT-ARI on fishy), and enables **Factor grid** —
+  which snaps the specimens into a structured 4-quadrant × split layout so you can *see* the recovered
+  groups (a 2-D force layout can't settle into ≥8). This is the EXP-42..45 recipe (graded target
+  distances + rank-4 metric + K≈24 PCs); see `RESEARCH_LOG.md`.
 - **Save / Load feedback** writes/reads the preference set as JSON (validates the dataset on load).
 - **color by** recolours nodes by a ground-truth factor (fishy only; mussel nodes are uniform).
 - **Reset feedback** clears the preference springs; **Reset layout** reseeds from the PCA layout.

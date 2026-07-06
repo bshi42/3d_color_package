@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tagging Morphospace — multi-label latent space</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Tagging Morphospace <span class="sub">· label → classify → latent space</span></h1>
+  <div class="controls">
+    <button id="helpBtn" title="how to use this demo">❔ Instructions</button>
+    <label class="lbl">Dataset <select id="dataset"></select></label>
+    <button id="load" class="primary">Load</button>
+    <span id="status">no session</span>
+    <button id="saveBtn">⬇ Save labels</button>
+    <button id="loadBtn">⬆ Load labels</button>
+    <input id="loadFile" type="file" accept=".json,application/json" class="hidden">
+    <button id="reset" class="warn">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section id="left">
+    <div id="mWrap"><canvas id="morpho"></canvas><div id="tip" class="tip"></div></div>
+    <div id="mControls">
+      <span class="lbl">color by <select id="colorBy"></select></span>
+      <label class="lbl" title="show specimen thumbnails on the map · off = colored dots only"><input type="checkbox" id="showThumbs" checked> exemplars</label>
+      <span id="legend" class="legend"></span>
+      <span class="grow"></span>
+      <span id="busy" class="busy hidden">updating…</span>
+    </div>
+    <section id="dendroWrap"><svg id="dendroSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="dlDendro"><button id="dlSvg">⬇ SVG</button></div>
+      <div class="dendro-cap">latent-space tree (clusters the classifier's latent)</div>
+    </section>
+  </section>
+
+  <section id="right">
+    <div class="panel">
+      <div class="section-title">Tags <span id="tagHint" class="hint">click a tag to activate, then click specimens to apply</span></div>
+      <div id="tagList" class="tag-list"></div>
+      <div class="tag-add">
+        <input id="newTag" type="text" placeholder="new tag name…" maxlength="40">
+        <button id="addTag">+ Add</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">Label a batch <span class="hint">Apply auto-rolls the next, most-informative batch</span></div>
+      <div class="batch-controls">
+        <label class="lbl">size <input id="batchN" type="number" value="12" min="1" max="60"></label>
+        <label class="lbl" title="pick the specimens the classifier is most unsure about (active learning)"><input id="informative" type="checkbox" checked> informative</label>
+        <label class="lbl"><input id="onlyUnlabeled" type="checkbox" checked> only unlabeled</label>
+        <button id="reroll">↻ Re-roll</button>
+        <button id="apply" class="primary">Apply labels →</button>
+      </div>
+      <div id="batch" class="batch-grid"></div>
+    </div>
+  </section>
+</main>
+
+<div id="helpModal" class="modal hidden">
+  <div class="modal-card">
+    <button id="helpClose" class="modal-x" title="close">✕</button>
+    <h2>How to use this demo</h2>
+    <ol>
+      <li><b>Explore &amp; create your labels first.</b> <span class="k">↻ Re-roll</span> the batch a few times and
+        study the specimens — note the recurring visual traits (colors, patterns, shapes). For each trait you want
+        to track, type a name in the <span class="k">Tags</span> panel and click <span class="k">+ Add</span>.
+        Don't apply anything to specimens yet — just build up your set of labels.</li>
+      <li><b>Label a batch.</b> Once you're happy with your set of labels, click a label to make it the
+        <span class="k">active class</span>, then click every specimen that has that trait. Select the next label
+        and repeat, and so on. A single specimen can carry <b>multiple labels</b>. When you've applied all the
+        relevant labels, hit <span class="k">Apply labels →</span> to train the classifier and update the map.</li>
+    </ol>
+    <ul>
+      <li>If you're not happy with the specimens shown, just <span class="k">↻ Re-roll</span> for a new batch.</li>
+      <li>You can <span class="k">⬇ Save</span> / <span class="k">⬆ Load</span> your labels to a file at any time.</li>
+      <li>You can change how the 2-D graph is colored using the <span class="k">color by</span> dropdown.</li>
+    </ul>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

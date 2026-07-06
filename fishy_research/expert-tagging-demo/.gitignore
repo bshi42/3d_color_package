@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# static_demo/ is the built browser bundle. Hand-authored source (engine.js, index.html, lib/, README.md) IS
+# tracked; the regenerated parts are not — app.js/style.css come from build_static_frontend.py, and the bundles
+# + thumbnails from export_tagging_static.py (both rebuild from this repo + the fishy_research venv).
+static_demo/app.js
+static_demo/style.css
+static_demo/bundle_*.json
+static_demo/thumb/
+static_demo/thumb_hi/

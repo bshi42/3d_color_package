@@ -63,6 +63,12 @@
         <button id="deselectAll">Deselect all</button>
         <button id="newAnchor">New anchor</button>
         <button id="explainBtn">Explain grouping ▾</button>
+        <span class="recover-grp" title="learn a low-rank metric from your feedback, cluster, and lay the recovered groups on a factor grid">
+          <button id="recoverBtn">⊞ Recover</button>
+          <input id="nClusters" type="number" value="8" min="2" max="12" title="number of clusters to recover">
+          <button id="factorGrid" disabled>Factor grid</button>
+          <span id="recoverInfo" class="lbl"></span>
+        </span>
         <button id="saveFb">⬇ Save feedback</button>
         <button id="loadFb">⬆ Load feedback</button>
         <input id="loadFbFile" type="file" accept=".json,application/json" class="hidden">

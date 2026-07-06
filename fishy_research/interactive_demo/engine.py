@@ -28,6 +28,8 @@ from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.metrics import adjusted_rand_score
+from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -213,11 +215,88 @@ def _fit_diag_metric(DS, aS, DD, aD, w0, lam, mu, iters=500, lr=0.4):
     return w
 
 
+# --------------------------------------------------------------------------- 8-cluster recovery
+def _lowrank_metric(Z, pairs, t, rank=4, iters=600, lr=0.05, lam=1e-3, seed=0):
+    """Low-rank metric L (rank x K) s.t. ||L(z_i-z_j)||^2 ~ target t_ij (graded). Returns the projected
+    coords Z @ L.T. Rank ~ #latent factors; far fewer params than a full metric -> works from few
+    labels in a high-K space (EXP-43/44: diagonal too weak, full Mahalanobis overfits)."""
+    rng = np.random.default_rng(seed)
+    K = Z.shape[1]
+    L = rng.standard_normal((rank, K)) * 0.3
+    Dz = np.array([Z[i] - Z[j] for (i, j) in pairs], float)
+    t = np.asarray(t, float)
+    mL = vL = 0.0
+    b1, b2, eps = 0.9, 0.999, 1e-8
+    for it in range(1, iters + 1):
+        Y = Dz @ L.T
+        e = (Y ** 2).sum(1) - t
+        g = 4.0 * ((e[:, None] * Y).T @ Dz) / len(pairs) + 2.0 * lam * L
+        mL = b1 * mL + (1 - b1) * g
+        vL = b2 * vL + (1 - b2) * g * g
+        L = L - lr * (mL / (1 - b1 ** it)) / (np.sqrt(vL / (1 - b2 ** it)) + eps)
+    return Z @ L.T
+
+
+def _balanced_code(cen):
+    """3-bit code per centroid via recursive balanced median bisection on the local top PC -> a clean
+    2x2x2 factor grid (only used when n_clusters == 8)."""
+    code = np.zeros((len(cen), 3), int)
+
+    def split(idx, level):
+        if level == 3 or len(idx) <= 1:
+            return
+        X = cen[idx]
+        Xc = X - X.mean(0)
+        u = np.linalg.svd(Xc, full_matrices=False)[2][0]
+        order = np.argsort(Xc @ u)
+        hi = set(np.asarray(idx)[order[len(idx) // 2:]])
+        lo_i, hi_i = [], []
+        for k in idx:
+            (hi_i if k in hi else lo_i).append(k)
+            if k in hi:
+                code[k, level] = 1
+        split(lo_i, level + 1)
+        split(hi_i, level + 1)
+
+    split(list(range(len(cen))), 0)
+    return code
+
+
+def _grid_layout(Y, labels, n_clusters):
+    """Per-specimen (x, y) in [0,1]^2: clusters placed on a structured grid (factor grid for k=8, else a
+    hierarchical row order), members jittered around their cell. Lets the demo SHOW the recovered groups
+    even though a 2-D force layout can't settle into them."""
+    cen = np.array([Y[labels == c].mean(0) if (labels == c).any() else Y.mean(0)
+                    for c in range(n_clusters)])
+    if n_clusters == 8:
+        code = _balanced_code(cen)
+        col = code[:, 0] * 2 + code[:, 1]                       # 4 quadrants (strong factors)
+        cell = np.stack([col % 2 + (code[:, 2]) * 0.0, col // 2], 1).astype(float)
+        cell[:, 0] = (col % 2) + 0.0                            # x: 0/1 (two columns of quadrants)
+        cx = (col % 2).astype(float)
+        cy = (col // 2).astype(float) * 2 + code[:, 2]          # y: quadrant-row*2 + weak-factor row
+        gx, gy = cx, cy
+        nx, ny = 2.0, 4.0
+    else:
+        order = np.argsort(cen @ (np.linalg.svd(cen - cen.mean(0), full_matrices=False)[2][0]))
+        rank_of = {c: r for r, c in enumerate(order)}
+        ncol = int(np.ceil(np.sqrt(n_clusters)))
+        gx = np.array([rank_of[c] % ncol for c in range(n_clusters)], float)
+        gy = np.array([rank_of[c] // ncol for c in range(n_clusters)], float)
+        nx = ny = float(ncol)
+    rng = np.random.default_rng(0)
+    pos = np.zeros((len(labels), 2))
+    for i, c in enumerate(labels):
+        pos[i] = [(gx[c] + 0.5) / nx + rng.normal(0, 0.05),
+                  1.0 - (gy[c] + 0.5) / ny + rng.normal(0, 0.05 / max(1, ny / nx))]
+    return pos
+
+
 # --------------------------------------------------------------------------- session
 class Session:
     """One interactive session over one dataset. Holds live morph state."""
 
-    def __init__(self, dataset: str, n_pcs: int = 10, seed: int = 0):
+    def __init__(self, dataset: str, n_pcs: int = 24, seed: int = 0):
         ld = load_dataset(dataset)
         self.ld = ld
         self.dataset = dataset
@@ -581,3 +660,41 @@ class Session:
                 "top_regions": top_regions, "top_features": top_features, "exemplars": exemplars,
                 "heldout_acc": round(heldout, 3), "baseline_acc": round(baseline, 3),
                 "place_err": place_err, "coverage": coverage}
+
+    # ---- recover the latent cluster structure from graded feedback (EXP-42..45 recipe) -----
+    def recover(self, pairs, n_clusters: int = 8, rank: int = 4, seed: int = 0):
+        """Learn a low-rank metric from the graded similar/dissimilar feedback, cluster in it (GMM), and
+        lay the clusters on a structured factor grid. `pairs` = [{a,b,kind('near'/'far'),amp}].
+
+        The graded amplitude IS the signal: each pair's TARGET squared distance is small for very-similar
+        and large for very-dissimilar, so partial-overlap pairs still separate proportionally (no need for
+        the rare all-different pair). Returns per-specimen recovered labels + a [0,1]^2 grid layout (+ ARI
+        vs the joint GT when available)."""
+        Z = self.Z0
+        P, t = [], []
+        for p in pairs:
+            a, b = int(p["a"]), int(p["b"])
+            amp = float(p.get("amp", 1.0))
+            P.append((a, b))
+            t.append((1.0 - amp) if p.get("kind") == "near" else (1.0 + amp))   # near->0, far->2
+        if len(P) < max(3, n_clusters - 1):
+            return {"ok": False, "reason": "need more similar/dissimilar feedback to recover clusters"}
+        # scale graded targets to the data's distance spread so the metric fit is well-conditioned
+        d2 = pdist(Z) ** 2
+        t = np.asarray(t) * (np.percentile(d2, 95) / 2.0)
+        Y = _lowrank_metric(Z, P, t, rank=rank, seed=seed)
+        labels = GaussianMixture(int(n_clusters), covariance_type="full", n_init=3,
+                                 random_state=seed).fit_predict(Y)
+        pos = _grid_layout(Y, labels, int(n_clusters))
+        out = {"ok": True, "n_clusters": int(n_clusters), "rank": int(rank),
+               "labels": [int(v) for v in labels],
+               "grid": [[round(float(x), 4), round(float(y), 4)] for x, y in pos],
+               "sizes": [int(v) for v in np.bincount(labels, minlength=int(n_clusters))]}
+        if self.ld.spec.has_gt:
+            try:
+                joint = data.joint_label(self.ld.gt, factors=("belly", "tail", "stripe"))
+                out["ari"] = round(float(adjusted_rand_score(joint, labels)), 3)
+                out["gt_joint"] = [int(v) for v in joint]
+            except Exception:
+                pass
+        return out

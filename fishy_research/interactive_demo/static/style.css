@@ -77,6 +77,10 @@ main { flex: 1 1 auto; display: grid; grid-template-columns: 1.55fr 1fr; min-hei
 .card .remoteTag { position: absolute; bottom: 2px; right: 2px; background: #000b; color: var(--cyan);
   font-size: 9px; padding: 1px 3px; border-radius: 3px; }
 #fbButtons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.recover-grp { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px;
+  border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.recover-grp #nClusters { width: 42px; }
+#recoverInfo { color: var(--accent); }
 
 #dendroWrap { flex: 0 0 auto; height: 30vh; overflow: hidden; background: #fff; position: relative;
   border-top: 1px solid var(--line); }

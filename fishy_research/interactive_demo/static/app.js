@@ -36,6 +36,7 @@ const S = {
   sid:null, dataset:null, K:0, hasGt:false, names:[],
   nodes:[], edges:[], adj:[], fbSprings:[], pcValues:[], thumbs:{},
   active_pc:0, colorBy:"joint", gtJoint:[], gtFactors:{},
+  recovered:null, recoveredGrid:null, gridMode:false, savedPos:null,   // 8-cluster recovery (EXP-42..45)
   view:{scale:1,ox:0,oy:0,fitted:false}, hover:null, round:0,
   anchor:null, panel:null, marks:{}, remote:null, cands:[],  // marks: idx->{kind,amp}; cands: ranking set
   alpha:0, raf:null, frozen:false, showEdges:true, hideUnlabeled:false, hideLabeled:false, graphMul:2.5, fitScale:null, autoFit:true,
@@ -111,6 +112,9 @@ function setPanelSize(sz){ const c=PANEL_SIZES[sz]||PANEL_SIZES.m;
   document.documentElement.style.setProperty("--anchorimg", c.anchor+"px"); }
 function setGraphSize(sz){ S.graphMul=GRAPH_SIZES[sz]||GRAPH_SIZES.m; draw(); }
 function updateLegend(){ const lg=$("legend"); lg.innerHTML="";
+  if(S.colorBy==="recovered" && S.recovered){
+    [...new Set(S.recovered)].sort((a,b)=>a-b).forEach(u=>{ const s=document.createElement("span"); s.className="sw";
+      s.innerHTML=`<span class="dot" style="background:${CAT[u%CAT.length]}"></span>#${u}`; lg.appendChild(s); }); return; }
   if(!S.hasGt || S.colorBy==="uniform") return;
   const labs=S.colorBy==="joint"?S.gtJoint:(S.gtFactors[S.colorBy]||[]);
   [...new Set(labs)].sort((a,b)=>a-b).forEach(u=>{ const s=document.createElement("span"); s.className="sw";
@@ -193,6 +197,47 @@ function renderExplain(d){
      <div class="exrow">${imgs(ex.low)}</div>
      <div style="font-size:11px;color:var(--muted);margin-top:3px">…from these:</div>
      <div class="exrow">${imgs(ex.high)}</div>`;
+}
+
+// ----------------------------------------------------------------------------- recover clusters (EXP-42..45)
+// Learn a low-rank metric from the graded feedback, cluster (GMM), recolour by recovered group, and
+// enable a factor-grid view. 2-D springs can't settle into 8, so recovery is a separate, deliberate step.
+async function runRecover(){
+  if(!S.sid) return;
+  const pairs=S.fbSprings.map(e=>({a:e.a,b:e.b,kind:e.kind,amp:(e.amp==null?1:e.amp)}));
+  if(pairs.length<3){ toast("Give more similar/dissimilar feedback first"); return; }
+  const k=Math.max(2,Math.min(12,parseInt($("nClusters").value)||8));
+  toast("recovering clusters…");
+  let d; try{ d=await api("POST",`/api/session/${S.sid}/recover`,{pairs,n_clusters:k}); }
+  catch(e){ toast("recover failed: "+e.message); return; }
+  if(!d.ok){ toast(d.reason||"could not recover"); return; }
+  S.recovered=d.labels; S.recoveredGrid=d.grid;
+  // expose a "recovered" colour mode and switch to it
+  const sel=$("colorBy"), wrap=$("colorByWrap");
+  if(wrap) wrap.style.display="";
+  if(![...sel.options].some(o=>o.value==="recovered")){
+    const o=document.createElement("option"); o.value="recovered"; o.textContent="recovered"; sel.appendChild(o); }
+  S.colorBy="recovered"; sel.value="recovered";
+  $("factorGrid").disabled=false;
+  $("recoverInfo").textContent=`${d.n_clusters} groups${d.ari!=null?` · ARI ${d.ari}`:""}`;
+  updateLegend(); draw();
+  toast(`recovered ${d.n_clusters} groups${d.ari!=null?` (ARI ${d.ari} vs ground truth)`:""}`);
+}
+// Snap the nodes into the recovered factor grid (physics paused) / restore the live layout.
+function toggleFactorGrid(){
+  if(!S.recoveredGrid){ toast("Recover clusters first"); return; }
+  if(!S.gridMode){
+    S.savedPos=S.nodes.map(n=>[n.x,n.y]);
+    const sp=S.spacing*13;                                // grid box size (auto-fit frames it)
+    S.nodes.forEach((n,i)=>{ const g=S.recoveredGrid[i]||[0.5,0.5];
+      n.x=(g[0]-0.5)*sp*1.0; n.y=(0.5-g[1])*sp*1.6; n.vx=0; n.vy=0; n.fx=null; n.fy=null; });
+    S.gridMode=true; S.frozen=true; $("freeze").checked=true; $("factorGrid").textContent="Live layout";
+    S.view.fitted=false; updateBadge(); draw();
+  } else {
+    if(S.savedPos) S.nodes.forEach((n,i)=>{ n.x=S.savedPos[i][0]; n.y=S.savedPos[i][1]; n.vx=0; n.vy=0; });
+    S.gridMode=false; S.frozen=false; $("freeze").checked=false; $("factorGrid").textContent="Factor grid";
+    S.view.fitted=false; reheat(0.5); startSim(); updateBadge();
+  }
 }
 
 // ----------------------------------------------------------------------------- feedback
@@ -339,7 +384,8 @@ function fitView(){ if(!S.nodes.length)return;
   S.fitScale=S.view.scale; S.view.fitted=true; }
 function w2s(x,y){ return [S.view.scale*x+S.view.ox, -S.view.scale*y+S.view.oy]; }
 function s2w(sx,sy){ return [(sx-S.view.ox)/S.view.scale, (S.view.oy-sy)/S.view.scale]; }
-function colorOf(i){ if(!S.hasGt || S.colorBy==="uniform") return "#7fa8c9";
+function colorOf(i){ if(S.colorBy==="recovered" && S.recovered) return CAT[(S.recovered[i]??0)%CAT.length];
+  if(!S.hasGt || S.colorBy==="uniform") return "#7fa8c9";
   const labs=S.colorBy==="joint"?S.gtJoint:(S.gtFactors[S.colorBy]||[]); return CAT[(labs[i]??0)%CAT.length]; }
 
 // A node is "labeled" if it is an endpoint of any feedback spring (committed similar/dissimilar
@@ -655,6 +701,8 @@ $("clearRank").onclick=()=>{S.marks={};updateMarks();};
 $("deselectAll").onclick=()=>{ S.cands=[]; S.marks={}; S.remote=null; renderPanel(); draw(); updateDendroSelection(); };
 $("newAnchor").onclick=()=>newAnchor();
 $("explainBtn").onclick=runExplain;
+$("recoverBtn").onclick=runRecover;
+$("factorGrid").onclick=toggleFactorGrid;
 $("saveFb").onclick=saveFeedback;
 $("loadFb").onclick=()=>$("loadFbFile").click();
 $("loadFbFile").onchange=e=>{ const f=e.target.files[0]; if(f) loadFeedbackFile(f); e.target.value=""; };
