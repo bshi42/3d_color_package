@@ -37,6 +37,98 @@ import glob
 import colorsys
 
 
+# macOS may add AppleDouble/resource-fork entries (for example, ``._sample.obj``)
+# alongside the actual dataset files. They are not independent specimens and
+# must never be considered by dataset enumeration code.
+def _is_visible_dataset_file(file_name):
+  return bool(file_name) and not file_name.startswith('.')
+
+
+LANDMARK_SURFACE_WARNING_RELATIVE_THRESHOLD = 0.02
+ATLAS_ANCHOR_LABELS = ('beak', 'hinge_anterior', 'hinge_posterior')
+ATLAS_SIDE_LABEL = 'anterior_adductor_dorsal'
+GROWTH_AXIS_LABELS = tuple(f'max_growth_axis_{i:03d}' for i in range(1, 9))
+
+
+def _relative_landmark_surface_distance(distance, mesh_diagonal):
+  """Return landmark-to-surface distance as a fraction of mesh size."""
+  if mesh_diagonal > 0:
+    return distance / mesh_diagonal
+  return float('inf') if distance > 0 else 0.0
+
+
+def _growth_axis_quality(points, beak_index, growth_indices):
+  """Calculate ordering and spacing diagnostics for an eight-point axis."""
+  points = np.asarray(points, dtype=float)
+  growth_indices = list(growth_indices)
+  if points.ndim != 2 or points.shape[1] != 3:
+    raise ValueError("Landmark points must have shape (N, 3)")
+  if len(growth_indices) != 8:
+    raise ValueError("Growth axis must contain exactly eight landmarks")
+
+  growth = points[growth_indices]
+  steps = np.linalg.norm(np.diff(growth, axis=0), axis=1)
+  if np.any(steps <= 0):
+    return {
+      'closest_to_beak': int(np.argmin(np.linalg.norm(growth - points[beak_index], axis=1))),
+      'spacing_cv': float('inf'),
+      'min_turn_cosine': -1.0,
+      'path_to_direct': float('inf'),
+    }
+
+  directions = np.diff(growth, axis=0)
+  turn_cosines = [
+    np.dot(first, second) / (np.linalg.norm(first) * np.linalg.norm(second))
+    for first, second in zip(directions[:-1], directions[1:])
+  ]
+  direct = np.linalg.norm(growth[-1] - growth[0])
+  return {
+    'closest_to_beak': int(np.argmin(np.linalg.norm(growth - points[beak_index], axis=1))),
+    'spacing_cv': float(np.std(steps) / np.mean(steps)),
+    'min_turn_cosine': float(min(turn_cosines)),
+    'path_to_direct': float(np.sum(steps) / direct) if direct > 0 else float('inf'),
+  }
+
+
+def _anatomical_anchor_frame(points, beak_index, anterior_hinge_index,
+                             posterior_hinge_index):
+  """Express landmarks in a scale-normalized frame defined by three anchors."""
+  points = np.asarray(points, dtype=float)
+  beak = points[beak_index]
+  anterior = points[anterior_hinge_index]
+  posterior = points[posterior_hinge_index]
+  hinge_axis = anterior - posterior
+  hinge_length = np.linalg.norm(hinge_axis)
+  hinge_midpoint = 0.5 * (anterior + posterior)
+  beak_to_hinge = hinge_midpoint - beak
+  beak_hinge_length = np.linalg.norm(beak_to_hinge)
+  if hinge_length <= 0 or beak_hinge_length <= 0:
+    raise ValueError("Anchor landmarks are coincident")
+
+  x_axis = hinge_axis / hinge_length
+  y_axis = beak_to_hinge - np.dot(beak_to_hinge, x_axis) * x_axis
+  y_length = np.linalg.norm(y_axis)
+  if y_length <= 1e-12 * max(hinge_length, beak_hinge_length):
+    raise ValueError("Anchor landmarks are collinear")
+  y_axis /= y_length
+  z_axis = np.cross(x_axis, y_axis)
+  z_axis /= np.linalg.norm(z_axis)
+  scale = math.sqrt(hinge_length ** 2 + beak_hinge_length ** 2)
+  axes = np.column_stack((x_axis, y_axis, z_axis))
+  return (points - beak) @ axes / scale
+
+
+def _robust_modified_z(values):
+  """Return median/MAD modified z-scores, with stable zero-MAD handling."""
+  values = np.asarray(values, dtype=float)
+  median = np.median(values, axis=0)
+  absolute_deviation = np.abs(values - median)
+  mad = np.median(absolute_deviation, axis=0)
+  fallback = np.maximum(np.median(np.abs(values), axis=0) * 1e-9, 1e-12)
+  scale = np.where(mad > 0, mad, fallback)
+  return 0.6744897501960817 * (values - median) / scale
+
+
 
 # Attempts to import optional machine learning libraries
 try:
@@ -3926,6 +4018,12 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       removeScale = True  # Removes scale differences during alignment
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
 
+    if self.atlasModel is None or self.atlasLMs is None:
+      self.logInfoDCL.appendPlainText(
+        "Atlas generation did not complete. Review the preflight messages above."
+      )
+      return
+
     # Saves the atlas model to the colorAnalysis directory for later use
     atlasModelPath = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasModel.ply')
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
@@ -3971,6 +4069,46 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       tuple: (atlasModel, atlasLMs) - Generated atlas and average landmarks
     """
     logic = InterDeCALogic()
+
+    log.appendPlainText("Running mesh/landmark preflight validation...")
+    try:
+      def reportProgress(current, total, subject):
+        if current == total or current % 10 == 0:
+          log.appendPlainText(f"Preflight: checked {current}/{total} specimens")
+
+      preflight = logic.validateAtlasDataset(
+        self.folderNames['originalModels'],
+        self.folderNames['originalLMs'],
+        coordinateSystem='LPS',
+        progressCallback=reportProgress,
+      )
+    except Exception as error:
+      log.appendPlainText(f"Error: Dataset preflight failed unexpectedly: {error}")
+      return None, None
+
+    log.appendPlainText(
+      f"Preflight checked {preflight['checked']} paired specimens: "
+      f"{len(preflight['severe'])} severe issue(s), "
+      f"{len(preflight['warnings'])} warning(s)."
+    )
+    for warning in preflight['warnings'][:20]:
+      log.appendPlainText(f"WARNING: {warning}")
+    if len(preflight['warnings']) > 20:
+      log.appendPlainText(
+        f"WARNING: {len(preflight['warnings']) - 20} additional warning(s) omitted."
+      )
+    if not preflight['passed']:
+      for issue in preflight['severe'][:30]:
+        log.appendPlainText(f"ERROR: {issue}")
+      if len(preflight['severe']) > 30:
+        log.appendPlainText(
+          f"ERROR: {len(preflight['severe']) - 30} additional severe issue(s) omitted."
+        )
+      log.appendPlainText(
+        "Atlas generation stopped because TPS would be unsafe. "
+        "Correct the reported mesh/landmark pairs and try again."
+      )
+      return None, None
 
     # Determines which specimen is closest to the mean shape configuration
     # This specimen will serve as the initial template for alignment
@@ -4230,8 +4368,13 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
         displayNode.SetScalarVisibility(False)
 
     median_dist = logic._median_landmark_to_surface_dist(self.atlasModel, self.atlasLMs)
-    if median_dist > 5.0 * np.mean(self.atlasModel.GetPolyData().GetLength()):
-      self.logInfoDC.appendPlainText(f"WARNING: Landmarks are far from the surface ({median_dist:.1f} mm)")
+    mesh_diagonal = float(self.atlasModel.GetPolyData().GetLength())
+    relative_dist = _relative_landmark_surface_distance(median_dist, mesh_diagonal)
+    if relative_dist > LANDMARK_SURFACE_WARNING_RELATIVE_THRESHOLD:
+      self.logInfoDC.appendPlainText(
+        f"WARNING: Landmarks are far from the surface "
+        f"({median_dist:.3g}; {relative_dist:.1%} of mesh diagonal)"
+      )
 
     # Save atlas landmarks & a copy of the atlas (PLY) for provenance
     atlasLMPath   = os.path.join(self.folderNames['colorAnalysisSubDir'], 'atlasLM.mrk.json')
@@ -6521,10 +6664,11 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if not baseNode.GetNthControlPointSelected(i):  # Checks selection status
         deletionIndex.append(i)  # Marks for deletion
     for lmFileName in os.listdir(lmDirectory):
-      if(not lmFileName.startswith(".")):  # Skips hidden files
-        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))  # Loads landmark file
-        for index in reversed(deletionIndex):  # Removes points in reverse order
-          currentLMNode.RemoveNthControlPoint(index)  # Deletes unselected point
+      if not _is_visible_dataset_file(lmFileName):  # Skips hidden/resource-fork files
+        continue
+      currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))  # Loads landmark file
+      for index in reversed(deletionIndex):  # Removes points in reverse order
+        currentLMNode.RemoveNthControlPoint(index)  # Deletes unselected point
       slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))  # Saves subset
       slicer.mrmlScene.RemoveNode(currentLMNode)  # Cleans up scene
 
@@ -6632,7 +6776,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     for meshFileName in os.listdir(meshDirectory):
       if(not meshFileName.startswith(".")):
         meshFilePath = os.path.join(meshDirectory, meshFileName)
-        currentMeshNode = slicer.util.loadModel(meshFilePath)
+        # RealityCapture meshes are written in LPS, matching the coordinate
+        # system declared by their source .mrk.json files.  Keep both inputs
+        # in the same space before mirroring/alignment.
+        currentMeshNode = self._load_model_with_cs(meshFilePath, 'LPS')
         # Extract subject ID by removing only the first extension (e.g., .obj from .obj.rcInfo)
         name_parts = meshFileName.split('.', 1)
         subjectID = name_parts[0] if len(name_parts) > 1 else meshFileName
@@ -6691,7 +6838,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           # save output files
           outputMeshName = subjectID + '_mirror.ply'
           outputMeshPath = os.path.join(mirrorMeshDirectory, outputMeshName)
-          slicer.util.saveNode(currentMeshNode, outputMeshPath)
+          # Mirrored meshes are pipeline intermediates.  Write them
+          # explicitly as RAS because importMeshes() reads generated meshes
+          # in RAS, while the original RealityCapture inputs above are LPS.
+          self._save_model_with_cs(currentMeshNode, outputMeshPath, 'RAS')
           outputLMName = subjectID + '_mirror.mrk.json'
           outputLMPath = os.path.join(mirrorLMDirectory, outputLMName)
           slicer.util.saveNode(mirrorLMNode, outputLMPath)
@@ -6773,13 +6923,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       print(f"Warning: Failed to remove baseNode: {e}")
 
   def runDCAlignSymmetric(self, baseMeshPath, baseLMPath, meshDir, landmarkDir, mirrorMeshDir, mirrorLandmarkDir, outputDir, optionErrorOutput):
-    baseNode = slicer.util.loadModel(baseMeshPath)
+    baseNode = self._load_model_with_cs(baseMeshPath, 'RAS')
     baseMesh = baseNode.GetPolyData()
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
     modelExt=['ply','stl','vtp', 'obj']
-    self.modelNames, models = self.importMeshes(meshDir, modelExt)
+    # In the symmetry workflow meshDir may be the original RealityCapture
+    # collection (LPS), whereas mirrorMeshDir contains generated RAS output.
+    self.modelNames, models = self.importMeshes(meshDir, modelExt,
+                                                coordinateSystem='LPS')
     landmarkNames, landmarks = self.importLandmarks(landmarkDir)
-    modelMirrorNames, mirrorModels = self.importMeshes(mirrorMeshDir, modelExt)
+    modelMirrorNames, mirrorModels = self.importMeshes(mirrorMeshDir, modelExt,
+                                                       coordinateSystem='RAS')
     mirrorLandmarkNames, mirrorLandmarks = self.importLandmarks(mirrorLandmarkDir)
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks)
     denseCorrespondenceGroupMirror = self.denseCorrespondenceBaseMesh(mirrorLandmarks, mirrorModels, baseMesh, baseLandmarks)
@@ -6818,6 +6972,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # Fallback implementation if ATLAS is not available
     fileList = os.listdir(directory)
     for fileName in fileList:
+      if not _is_visible_dataset_file(fileName):
+        continue
       fileNameBase = Path(fileName)
       while fileNameBase.suffix in {'.fcsv', '.mrk', '.json'}:
         fileNameBase = fileNameBase.with_suffix('')
@@ -6838,6 +6994,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # Only process files with valid model extensions
     model_extensions = ['.ply', '.stl', '.obj', '.vtk', '.vtp']
     for fileName in fileList:
+      if not _is_visible_dataset_file(fileName):
+        continue
       # Get the first extension only (e.g., .obj from .obj.rcInfo)
       name_parts = fileName.split('.', 1)
       if len(name_parts) < 2:
@@ -6853,7 +7011,10 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if str(fileNameBase).startswith(str(subjectID)):
         filePath = os.path.join(directory, fileName)
         try:
-          currentNode = self._load_model_with_cs(filePath, 'RAS')
+          # This lookup is used while building an atlas from the original
+          # RealityCapture files, not for the RAS intermediates produced by
+          # runAlign().
+          currentNode = self._load_model_with_cs(filePath, 'LPS')
           return currentNode
         except Exception as e:
           print(f"Error loading model from {filePath}: {e}")
@@ -6863,6 +7024,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   def runAlign(self, baseMeshNode, baseLMNode, meshDirectory, lmDirectory, ouputMeshDirectory, outputLMDirectory, removeScaleOption, slmDirectory=False, outputSLMDirectory=False):
     semilandmarkOption = bool(slmDirectory and outputSLMDirectory)
+    self._validate_mesh_landmarks(baseMeshNode, baseLMNode,
+                                  context="atlas template mesh")
     targetPoints = vtk.vtkPoints()
     point=[0,0,0]
     # Set up base points for transform
@@ -6880,13 +7043,18 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
         currentLMNode = self.getLandmarkFileByID(lmDirectory, subjectID)
         if currentLMNode :
           try:
-            currentMeshNode = slicer.util.loadModel(meshFilePath)
+            # The source mesh and source markups are both in LPS.  Aligned
+            # outputs are saved explicitly as RAS and are loaded as RAS by
+            # importMeshes() later in the pipeline.
+            currentMeshNode = self._load_model_with_cs(meshFilePath, 'LPS')
           except:
             slicer.mrmlScene.RemoveNode(currentLMNode)
             continue
           if currentLMNode.GetNumberOfControlPoints() != baseLMNode.GetNumberOfControlPoints():
             raise ValueError(f"Landmark points mismatch: subject has {currentLMNode.GetNumberOfControlPoints()} points, "
               f"atlas has {baseLMNode.GetNumberOfControlPoints()} points")
+          self._validate_mesh_landmarks(currentMeshNode, currentLMNode,
+                                        context=f"{subjectID} source mesh")
           # set up transform between base lms and current lms
           sourcePoints = vtk.vtkPoints()
           for i in range(currentLMNode.GetNumberOfControlPoints()):
@@ -7011,6 +7179,8 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     pick = {}  # base -> (rank, fullpath)
 
     for f in os.listdir(topDir):
+      if not _is_visible_dataset_file(f):
+        continue
       fl = f.lower()
       if fl.endswith(tuple(prefer)):
         p = Path(f)
@@ -7032,12 +7202,17 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     return names, group.GetOutput()
 
 
-  def importMeshes(self, topDir, extensions, restrict_to=None):
+  def importMeshes(self, topDir, extensions, restrict_to=None,
+                   coordinateSystem='RAS'):
     # choose exactly one mesh per subject, preferring OBJ over PLY/STL/VTP/VTK
+    # Generated intermediates are RAS by default; raw source collections can
+    # opt into LPS at the call site.
     priority = {'.obj':0, '.ply':1, '.stl':2, '.vtp':3, '.vtk':4}
     pick = {}  # base -> (rank, fullpath)
 
     for f in os.listdir(topDir):
+      if not _is_visible_dataset_file(f):
+        continue
       ext = os.path.splitext(f)[1].lower()
       if ext in priority:
         base = os.path.splitext(f)[0]  # e.g. 'Subject01_align'
@@ -7053,7 +7228,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     modelGroup = vtk.vtkMultiBlockDataGroupFilter()
     for b in names:
       inputFilePath = pick[b][1]
-      modelNode = self._load_model_with_cs(inputFilePath, 'RAS')
+      modelNode = self._load_model_with_cs(inputFilePath, coordinateSystem)
       modelGroup.AddInputData(modelNode.GetPolyData())
       slicer.mrmlScene.RemoveNode(modelNode)
     modelGroup.Update()
@@ -7667,19 +7842,290 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # No flipping – Blender/Slicer UVs now match
     dn.SetTextureImageDataConnection(reader.GetOutputPort())
 
-  def _median_landmark_to_surface_dist(self, modelNode, lmNode):
+  def _dataset_file_map(self, directory, kind):
+    """Return one deterministic input path per specimen for preflight checks."""
+    if kind == 'landmark':
+      extensions = ('.mrk.json', '.json', '.fcsv')
+    elif kind == 'model':
+      extensions = ('.obj', '.ply', '.stl', '.vtp', '.vtk')
+    else:
+      raise ValueError(f"Unsupported dataset file kind: {kind}")
+
+    selected = {}
+    for file_name in os.listdir(directory):
+      if not _is_visible_dataset_file(file_name):
+        continue
+      lower_name = file_name.lower()
+      matched_extension = next((extension for extension in extensions
+                                if lower_name.endswith(extension)), None)
+      if matched_extension is None:
+        continue
+      subject_id = file_name[:-len(matched_extension)]
+      rank = extensions.index(matched_extension)
+      if subject_id not in selected or rank < selected[subject_id][0]:
+        selected[subject_id] = (rank, os.path.join(directory, file_name))
+    return {subject_id: value[1] for subject_id, value in selected.items()}
+
+  def _landmark_to_surface_distances(self, modelNode, lmNode):
     locator = vtk.vtkStaticCellLocator()
     locator.SetDataSet(modelNode.GetPolyData())
     locator.BuildLocator()
-    dists = []
-    for i in range(lmNode.GetNumberOfControlPoints()):
-        p = [0.0,0.0,0.0]
-        lmNode.GetNthControlPointPosition(i, p)
-        cp = [0.0,0.0,0.0]
-        cid = vtk.mutable(0); sid = vtk.mutable(0); d2 = vtk.mutable(0.0)
-        locator.FindClosestPoint(p, cp, cid, sid, d2)
-        dists.append(d2.get()**0.5)
-    return np.median(dists) if dists else float('inf')
+    distances = []
+    for index in range(lmNode.GetNumberOfControlPoints()):
+      point = [0.0, 0.0, 0.0]
+      lmNode.GetNthControlPointPosition(index, point)
+      closest = [0.0, 0.0, 0.0]
+      cell_id = vtk.mutable(0)
+      sub_id = vtk.mutable(0)
+      distance_squared = vtk.mutable(0.0)
+      locator.FindClosestPoint(point, closest, cell_id, sub_id, distance_squared)
+      distances.append(distance_squared.get() ** 0.5)
+    return np.asarray(distances, dtype=float)
+
+  def validateAtlasDataset(self, meshDirectory, landmarkDirectory,
+                           coordinateSystem='LPS', progressCallback=None):
+    """Run mesh/landmark, anchor-frame, and sequence QA before TPS.
+
+    Severe failures indicate that dense correspondence is unsafe and should be
+    stopped. Group-shape outliers are warnings because they may represent real
+    biological variation rather than landmarking mistakes.
+    """
+    landmark_paths = self._dataset_file_map(landmarkDirectory, 'landmark')
+    model_paths = self._dataset_file_map(meshDirectory, 'model')
+    landmark_ids = set(landmark_paths)
+    model_ids = set(model_paths)
+    common_ids = sorted(landmark_ids & model_ids)
+    report = {
+      'checked': 0,
+      'passed': False,
+      'severe': [],
+      'warnings': [],
+      'subjects': {},
+    }
+
+    missing_models = sorted(landmark_ids - model_ids)
+    missing_landmarks = sorted(model_ids - landmark_ids)
+    if missing_models:
+      report['severe'].append(f"Missing models for: {', '.join(missing_models)}")
+    if missing_landmarks:
+      report['severe'].append(f"Missing landmarks for: {', '.join(missing_landmarks)}")
+    if not common_ids:
+      report['severe'].append("No paired mesh and landmark files were found")
+      return report
+
+    reference_labels = None
+    reference_point_count = None
+    frame_records = []
+    anchor_ratio_records = []
+    side_records = []
+
+    for specimen_index, subject_id in enumerate(common_ids):
+      model_node = None
+      landmark_node = None
+      subject_metrics = {}
+      subject_severe = []
+      subject_warnings = []
+      try:
+        landmark_node = slicer.util.loadMarkups(landmark_paths[subject_id])
+        model_node = self._load_model_with_cs(model_paths[subject_id], coordinateSystem)
+        point_count = landmark_node.GetNumberOfControlPoints()
+        labels = [landmark_node.GetNthControlPointLabel(i) for i in range(point_count)]
+        points = np.empty((point_count, 3), dtype=float)
+        for point_index in range(point_count):
+          landmark_node.GetNthControlPointPosition(point_index, points[point_index])
+
+        if reference_labels is None:
+          reference_labels = labels
+          reference_point_count = point_count
+        elif point_count != reference_point_count:
+          subject_severe.append(
+            f"has {point_count} landmarks; expected {reference_point_count}"
+          )
+        elif labels != reference_labels:
+          subject_severe.append("landmark labels or ordering differ from the dataset reference")
+
+        polydata = model_node.GetPolyData()
+        mesh_diagonal = float(polydata.GetLength()) if polydata else 0.0
+        if mesh_diagonal <= 0 or not np.isfinite(mesh_diagonal):
+          raise ValueError("mesh has an invalid or zero bounding-box diagonal")
+
+        distances = self._landmark_to_surface_distances(model_node, landmark_node)
+        relative_distances = distances / mesh_diagonal
+        subject_metrics['median_surface_distance'] = float(np.median(relative_distances))
+        subject_metrics['max_surface_distance'] = float(np.max(relative_distances))
+        if subject_metrics['median_surface_distance'] > 0.02:
+          subject_severe.append(
+            f"median landmark-to-surface distance is "
+            f"{subject_metrics['median_surface_distance']:.1%} of mesh size"
+          )
+        elif subject_metrics['max_surface_distance'] > 0.05:
+          subject_warnings.append(
+            f"one or more landmarks are as far as "
+            f"{subject_metrics['max_surface_distance']:.1%} of mesh size from the surface"
+          )
+
+        label_to_index = {label: index for index, label in enumerate(labels)}
+        missing_anchors = [label for label in ATLAS_ANCHOR_LABELS
+                           if label not in label_to_index]
+        if missing_anchors:
+          subject_warnings.append(
+            f"anchor-frame check skipped; missing: {', '.join(missing_anchors)}"
+          )
+        else:
+          anchor_indices = [label_to_index[label] for label in ATLAS_ANCHOR_LABELS]
+          anchor_surface_max = float(np.max(relative_distances[anchor_indices]))
+          subject_metrics['anchor_surface_distance'] = anchor_surface_max
+          if anchor_surface_max > 0.03:
+            subject_severe.append(
+              f"an anchor is {anchor_surface_max:.1%} of mesh size from the surface"
+            )
+          try:
+            frame = _anatomical_anchor_frame(points, *anchor_indices)
+            if labels == reference_labels:
+              frame_records.append((subject_id, frame))
+            beak = points[anchor_indices[0]]
+            anterior = points[anchor_indices[1]]
+            posterior = points[anchor_indices[2]]
+            hinge_midpoint = 0.5 * (anterior + posterior)
+            anchor_ratio_records.append((
+              subject_id,
+              np.array((np.linalg.norm(anterior - posterior) / mesh_diagonal,
+                        np.linalg.norm(hinge_midpoint - beak) / mesh_diagonal))
+            ))
+            if ATLAS_SIDE_LABEL in label_to_index:
+              side_value = frame[label_to_index[ATLAS_SIDE_LABEL], 2]
+              if abs(side_value) > 1e-8:
+                side_records.append((subject_id, int(np.sign(side_value))))
+          except ValueError as error:
+            subject_severe.append(f"invalid anatomical anchor frame: {error}")
+
+        present_growth = [label for label in GROWTH_AXIS_LABELS
+                          if label in label_to_index]
+        if present_growth and len(present_growth) != len(GROWTH_AXIS_LABELS):
+          missing_growth = [label for label in GROWTH_AXIS_LABELS
+                            if label not in label_to_index]
+          subject_severe.append(
+            f"growth axis is incomplete; missing: {', '.join(missing_growth)}"
+          )
+        elif len(present_growth) == len(GROWTH_AXIS_LABELS) and 'beak' in label_to_index:
+          growth_indices = [label_to_index[label] for label in GROWTH_AXIS_LABELS]
+          quality = _growth_axis_quality(points, label_to_index['beak'], growth_indices)
+          subject_metrics.update({f'growth_{key}': value
+                                  for key, value in quality.items()})
+          if quality['closest_to_beak'] != 0:
+            subject_severe.append(
+              f"growth axis is out of order: {GROWTH_AXIS_LABELS[quality['closest_to_beak']]} "
+              "is closest to the beak, not max_growth_axis_001"
+            )
+          if quality['min_turn_cosine'] <= 0:
+            maximum_turn = math.degrees(math.acos(
+              float(np.clip(quality['min_turn_cosine'], -1.0, 1.0))))
+            subject_severe.append(
+              f"growth axis reverses direction ({maximum_turn:.1f} degree turn)"
+            )
+          if quality['spacing_cv'] > 0.35:
+            subject_severe.append(
+              f"growth-axis spacing variation is {quality['spacing_cv']:.0%}"
+            )
+          elif quality['spacing_cv'] > 0.15:
+            subject_warnings.append(
+              f"growth-axis spacing variation is {quality['spacing_cv']:.0%}"
+            )
+          if quality['path_to_direct'] > 1.75:
+            subject_severe.append(
+              f"growth-axis path is {quality['path_to_direct']:.2f}x its direct length"
+            )
+          elif quality['path_to_direct'] > 1.50:
+            subject_warnings.append(
+              f"growth-axis path is {quality['path_to_direct']:.2f}x its direct length"
+            )
+
+      except Exception as error:
+        subject_severe.append(f"preflight could not read or validate the pair: {error}")
+      finally:
+        if landmark_node is not None:
+          slicer.mrmlScene.RemoveNode(landmark_node)
+        if model_node is not None:
+          slicer.mrmlScene.RemoveNode(model_node)
+
+      report['checked'] += 1
+      report['subjects'][subject_id] = subject_metrics
+      report['severe'].extend(f"{subject_id}: {message}" for message in subject_severe)
+      report['warnings'].extend(f"{subject_id}: {message}" for message in subject_warnings)
+      if progressCallback:
+        progressCallback(specimen_index + 1, len(common_ids), subject_id)
+
+    # Compare anchor-normalized shapes only after every specimen has its own
+    # anatomical frame. These are warnings because genuine morphology can be
+    # an outlier without being incorrectly landmarked.
+    if len(frame_records) >= 5:
+      frame_stack = np.stack([record[1] for record in frame_records])
+      median_frame = np.median(frame_stack, axis=0)
+      frame_deviation = np.sqrt(np.mean((frame_stack - median_frame) ** 2,
+                                        axis=(1, 2)))
+      frame_z = np.abs(_robust_modified_z(frame_deviation))
+      for (subject_id, _), z_score in zip(frame_records, frame_z):
+        report['subjects'][subject_id]['anchor_frame_outlier_z'] = float(z_score)
+        if z_score > 6.0:
+          report['warnings'].append(
+            f"{subject_id}: anchor-normalized landmark shape is a robust group outlier "
+            f"(z={z_score:.1f})"
+          )
+
+    if len(anchor_ratio_records) >= 5:
+      ratios = np.stack([record[1] for record in anchor_ratio_records])
+      ratio_z = np.abs(_robust_modified_z(ratios))
+      for (subject_id, _), z_scores in zip(anchor_ratio_records, ratio_z):
+        max_z = float(np.max(z_scores))
+        report['subjects'][subject_id]['anchor_geometry_outlier_z'] = max_z
+        if max_z > 6.0:
+          report['warnings'].append(
+            f"{subject_id}: anchor geometry is a robust group outlier (z={max_z:.1f})"
+          )
+
+    if len(side_records) >= 5:
+      majority_sign = 1 if sum(record[1] for record in side_records) >= 0 else -1
+      for subject_id, sign in side_records:
+        if sign != majority_sign:
+          report['warnings'].append(
+            f"{subject_id}: anatomical frame handedness differs from the group; "
+            "check for a mirrored valve or swapped hinge labels"
+          )
+
+    report['passed'] = not report['severe']
+    return report
+
+  def _median_landmark_to_surface_dist(self, modelNode, lmNode):
+    distances = self._landmark_to_surface_distances(modelNode, lmNode)
+    return np.median(distances) if len(distances) else float('inf')
+
+  def _validate_mesh_landmarks(self, modelNode, lmNode, context="", threshold=0.02):
+    """Warn when a mesh and its markups are not in the same coordinate space.
+
+    Landmark points need not lie exactly on a reconstructed surface, so use
+    the median point-to-surface distance.  Normalize by the mesh bounding-box
+    diagonal rather than total edge length; this remains meaningful across
+    meshes with different tessellation densities and scales.
+    """
+    if modelNode is None or lmNode is None or modelNode.GetPolyData() is None:
+      return None
+    polydata = modelNode.GetPolyData()
+    bounds = [0.0] * 6
+    polydata.GetBounds(bounds)
+    diagonal = np.linalg.norm((bounds[1] - bounds[0],
+                               bounds[3] - bounds[2],
+                               bounds[5] - bounds[4]))
+    if not np.isfinite(diagonal) or diagonal <= 0:
+      return None
+    median_dist = self._median_landmark_to_surface_dist(modelNode, lmNode)
+    relative_dist = median_dist / diagonal
+    if relative_dist > threshold:
+      label = f" for {context}" if context else ""
+      print("WARNING: median landmark-to-surface distance"
+            f"{label} is {relative_dist:.2%} of mesh diagonal "
+            f"({median_dist:.6g} / {diagonal:.6g}). "
+            "Check mesh and landmark coordinate systems.")
+    return relative_dist
   
   def _load_model_with_cs(self, filePath, coordinateSystem='RAS'):
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')

@@ -12,13 +12,48 @@ This module replaces DeCA's shape correspondence functions while
 preserving InterDeCA's color analysis capabilities.
 """
 
-import vtk
+try:
+    # VTK is provided by the Slicer runtime.  Keeping the import optional lets
+    # the numerical parts of this module (in particular Procrustes/Kabsch)
+    # be regression-tested in a regular Python environment.
+    import vtk
+except ImportError:  # pragma: no cover - exercised only outside Slicer
+    vtk = None
 import numpy as np
 import os
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _row_kabsch_rotation(source, target):
+    """Return the best *proper* rotation for row-vector point sets.
+
+    ``source`` and ``target`` are centered ``(N, D)`` arrays and points are
+    transformed as ``source @ R``.  With ``H = source.T @ target``, the SVD
+    solution is ``R = U @ Vt`` (not ``Vt.T @ U.T``, which is the convention for
+    column vectors).  The final diagonal correction prevents a reflection
+    from being introduced when the landmark configurations have opposite
+    handedness or are close to rank deficient.
+    """
+    source = np.asarray(source, dtype=float)
+    target = np.asarray(target, dtype=float)
+    if source.ndim != 2 or target.ndim != 2 or source.shape != target.shape:
+        raise ValueError("source and target must have the same 2-D shape")
+
+    h = source.T @ target
+    u, _, vt = np.linalg.svd(h, full_matrices=False)
+    rotation = u @ vt
+
+    # Kabsch's determinant correction: U @ D @ Vt, where D differs from the
+    # identity only when the unconstrained optimum is a reflection.
+    if np.linalg.det(rotation) < 0.0:
+        correction = np.eye(rotation.shape[0])
+        correction[-1, -1] = -1.0
+        rotation = u @ correction @ vt
+
+    return rotation
 
 
 class ATLASShapeBridge:
@@ -215,7 +250,15 @@ class ATLASShapeBridge:
                     points.GetPoint(j, landmark_array[j, :])
                 landmarks.append(landmark_array)
         else:
-            landmarks = [np.array(lm) for lm in originalLandmarks]
+            landmarks = [np.asarray(lm, dtype=float) for lm in originalLandmarks]
+
+        if not landmarks:
+            raise ValueError("At least one landmark configuration is required")
+        first_shape = landmarks[0].shape
+        if len(first_shape) != 2 or first_shape[1] != 3:
+            raise ValueError("Landmarks must have shape (N, 3)")
+        if any(lm.shape != first_shape for lm in landmarks):
+            raise ValueError("All landmark configurations must have the same shape")
         
         # Center all configurations
         centered = []
@@ -233,26 +276,34 @@ class ATLASShapeBridge:
         
         # Iterative alignment to mean
         mean_shape = np.mean(centered, axis=0)
-        
-        for iteration in range(10):  # Max 10 iterations
+        if not sizeOption:
+            mean_norm = np.linalg.norm(mean_shape)
+            if mean_norm > 0:
+                mean_shape = mean_shape / mean_norm
+
+        # Generalized Procrustes is iterative because the mean itself changes
+        # as each specimen is rotated into it.  Ten iterations is often not
+        # enough for a heterogeneous group, so use a bounded convergence loop.
+        for iteration in range(100):
             aligned = []
             for lm in centered:
-                # Align to current mean using SVD
-                H = lm.T @ mean_shape
-                U, _, Vt = np.linalg.svd(H)
-                R = Vt.T @ U.T
-                
-                # Ensure proper rotation (det = 1)
-                if np.linalg.det(R) < 0:
-                    Vt[-1, :] *= -1
-                    R = Vt.T @ U.T
-                
-                aligned.append(lm @ R)
+                # Align row-vector points using the proper Kabsch rotation.
+                aligned.append(lm @ _row_kabsch_rotation(lm, mean_shape))
             
             new_mean = np.mean(aligned, axis=0)
+            if not sizeOption:
+                # Each input has unit centroid size.  Normalize the mean too;
+                # otherwise averaging leaves it with a norm below one and the
+                # next iteration is no longer equivalent to VTK's
+                # size-invariant Procrustes alignment.
+                new_mean_norm = np.linalg.norm(new_mean)
+                if new_mean_norm > 0:
+                    new_mean = new_mean / new_mean_norm
             
             # Check convergence
-            if np.allclose(mean_shape, new_mean, atol=1e-6):
+            if np.linalg.norm(mean_shape - new_mean) <= 1e-8:
+                mean_shape = new_mean
+                centered = aligned
                 break
             
             mean_shape = new_mean
@@ -338,8 +389,9 @@ class ATLASShapeBridge:
         landmark_files = []
         landmarks_data = []
         
+        valid_exts = ('.mrk.json', '.json', '.fcsv')
         for filename in os.listdir(landmarkDirectory):
-            if filename.endswith('.mrk.json') and not filename.startswith('.'):
+            if filename.lower().endswith(valid_exts) and not filename.startswith('.'):
                 filepath = os.path.join(landmarkDirectory, filename)
                 landmark_files.append(filename)  # Store just filename, not full path
                 
@@ -545,16 +597,24 @@ class ATLASShapeBridge:
         """
         import slicer
         
-        # Try exact match first
-        exact_path = os.path.join(directory, f"{subjectID}.mrk.json")
-        if os.path.exists(exact_path):
-            return slicer.util.loadMarkups(exact_path)
+        valid_exts = ('.mrk.json', '.json', '.fcsv')
+
+        # Try exact matches for each valid extension first
+        for ext in valid_exts:
+            exact_path = os.path.join(directory, f"{subjectID}{ext}")
+            if os.path.exists(exact_path):
+                return slicer.util.loadMarkups(exact_path)
         
-        # Try pattern matching
+        # Try pattern matching / base name matching
         for filename in os.listdir(directory):
-            if filename.startswith(subjectID) and filename.endswith('.mrk.json'):
-                filepath = os.path.join(directory, filename)
-                return slicer.util.loadMarkups(filepath)
+            fl = filename.lower()
+            if fl.endswith(valid_exts) and not filename.startswith('.'):
+                fileNameBase = Path(filename)
+                while fileNameBase.suffix.lower() in ('.mrk', '.json', '.fcsv'):
+                    fileNameBase = fileNameBase.with_suffix('')
+                if subjectID == str(fileNameBase) or filename.startswith(subjectID):
+                    filepath = os.path.join(directory, filename)
+                    return slicer.util.loadMarkups(filepath)
         
         logger.warning(f"No landmark file found for subject: {subjectID}")
         return None
