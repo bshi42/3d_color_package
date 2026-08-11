@@ -90,32 +90,110 @@ def _growth_axis_quality(points, beak_index, growth_indices):
   }
 
 
-def _anatomical_anchor_frame(points, beak_index, anterior_hinge_index,
-                             posterior_hinge_index):
+def _anchor_frame(points, origin_index, positive_axis_index, negative_axis_index):
   """Express landmarks in a scale-normalized frame defined by three anchors."""
   points = np.asarray(points, dtype=float)
-  beak = points[beak_index]
-  anterior = points[anterior_hinge_index]
-  posterior = points[posterior_hinge_index]
-  hinge_axis = anterior - posterior
-  hinge_length = np.linalg.norm(hinge_axis)
-  hinge_midpoint = 0.5 * (anterior + posterior)
-  beak_to_hinge = hinge_midpoint - beak
-  beak_hinge_length = np.linalg.norm(beak_to_hinge)
-  if hinge_length <= 0 or beak_hinge_length <= 0:
+  origin = points[origin_index]
+  positive = points[positive_axis_index]
+  negative = points[negative_axis_index]
+  anchor_axis = positive - negative
+  axis_length = np.linalg.norm(anchor_axis)
+  axis_midpoint = 0.5 * (positive + negative)
+  origin_to_axis = axis_midpoint - origin
+  origin_axis_length = np.linalg.norm(origin_to_axis)
+  if axis_length <= 0 or origin_axis_length <= 0:
     raise ValueError("Anchor landmarks are coincident")
 
-  x_axis = hinge_axis / hinge_length
-  y_axis = beak_to_hinge - np.dot(beak_to_hinge, x_axis) * x_axis
+  x_axis = anchor_axis / axis_length
+  y_axis = origin_to_axis - np.dot(origin_to_axis, x_axis) * x_axis
   y_length = np.linalg.norm(y_axis)
-  if y_length <= 1e-12 * max(hinge_length, beak_hinge_length):
+  if y_length <= 1e-12 * max(axis_length, origin_axis_length):
     raise ValueError("Anchor landmarks are collinear")
   y_axis /= y_length
   z_axis = np.cross(x_axis, y_axis)
   z_axis /= np.linalg.norm(z_axis)
-  scale = math.sqrt(hinge_length ** 2 + beak_hinge_length ** 2)
+  scale = math.sqrt(axis_length ** 2 + origin_axis_length ** 2)
   axes = np.column_stack((x_axis, y_axis, z_axis))
-  return (points - beak) @ axes / scale
+  return (points - origin) @ axes / scale
+
+
+def _anatomical_anchor_frame(points, beak_index, anterior_hinge_index,
+                             posterior_hinge_index):
+  """Compatibility wrapper for the original mussel anchor definition."""
+  return _anchor_frame(
+    points, beak_index, anterior_hinge_index, posterior_hinge_index)
+
+
+def _select_generic_anchor_indices(point_sets):
+  """Choose a stable, well-spaced anchor triangle for any landmark scheme.
+
+  The farthest pair defines the frame's x-axis. The third anchor is the
+  landmark with the greatest perpendicular distance from that axis. Selection
+  uses median, centroid-size-normalized geometry across specimens, so it is
+  unaffected by pose or scale and is not dictated by one reference specimen.
+
+  Returns indices as ``(origin, positive_axis, negative_axis)`` for direct use
+  with :func:`_anchor_frame`.
+  """
+  configurations = np.asarray(point_sets, dtype=float)
+  if configurations.ndim == 2:
+    configurations = configurations[np.newaxis, ...]
+  if (configurations.ndim != 3 or configurations.shape[2] != 3 or
+      configurations.shape[1] < 3):
+    raise ValueError("At least three 3D landmarks are required for an anchor frame")
+  if not np.all(np.isfinite(configurations)):
+    raise ValueError("Landmark coordinates contain non-finite values")
+
+  centered = configurations - configurations.mean(axis=1, keepdims=True)
+  centroid_sizes = np.linalg.norm(centered, axis=(1, 2))
+  valid = centroid_sizes > 0
+  if not np.any(valid):
+    raise ValueError("Landmark configurations have zero centroid size")
+  normalized = centered[valid] / centroid_sizes[valid, np.newaxis, np.newaxis]
+
+  pair_vectors = normalized[:, :, np.newaxis, :] - normalized[:, np.newaxis, :, :]
+  median_distances = np.median(np.linalg.norm(pair_vectors, axis=3), axis=0)
+  np.fill_diagonal(median_distances, -np.inf)
+  negative_axis, positive_axis = np.unravel_index(
+    np.argmax(median_distances), median_distances.shape)
+  if positive_axis < negative_axis:
+    negative_axis, positive_axis = positive_axis, negative_axis
+
+  base_vectors = normalized[:, positive_axis] - normalized[:, negative_axis]
+  base_lengths = np.linalg.norm(base_vectors, axis=1)
+  valid_bases = base_lengths > 1e-12
+  if not np.any(valid_bases):
+    raise ValueError("Selected anchor axis is coincident across the dataset")
+  candidate_heights = np.full(configurations.shape[1], -np.inf, dtype=float)
+  for candidate in range(configurations.shape[1]):
+    if candidate in (negative_axis, positive_axis):
+      continue
+    offsets = normalized[valid_bases, candidate] - normalized[valid_bases, negative_axis]
+    heights = (np.linalg.norm(
+      np.cross(base_vectors[valid_bases], offsets), axis=1
+    ) / base_lengths[valid_bases])
+    candidate_heights[candidate] = float(np.median(heights))
+
+  origin = int(np.argmax(candidate_heights))
+  if not np.isfinite(candidate_heights[origin]) or candidate_heights[origin] <= 1e-6:
+    raise ValueError("Landmark configurations do not contain a stable non-collinear triangle")
+  return origin, int(positive_axis), int(negative_axis)
+
+
+def _select_generic_side_index(frames, anchor_indices):
+  """Choose a non-anchor landmark that reliably identifies frame handedness."""
+  frames = np.asarray(frames, dtype=float)
+  if frames.ndim == 2:
+    frames = frames[np.newaxis, ...]
+  if frames.ndim != 3 or frames.shape[2] != 3:
+    raise ValueError("Anchor frames must have shape (S, N, 3)")
+
+  median_depth = np.median(np.abs(frames[:, :, 2]), axis=0)
+  median_depth[list(anchor_indices)] = -np.inf
+  side_index = int(np.argmax(median_depth))
+  if not np.isfinite(median_depth[side_index]) or median_depth[side_index] <= 1e-6:
+    return None
+  return side_index
 
 
 def _robust_modified_z(values):
@@ -4091,6 +4169,11 @@ class InterDeCAWidget(ScriptedLoadableModuleWidget):
       f"{len(preflight['severe'])} severe issue(s), "
       f"{len(preflight['warnings'])} warning(s)."
     )
+    if preflight.get('anchor_labels'):
+      log.appendPlainText(
+        f"Preflight anchor frame ({preflight['anchor_mode']}): "
+        f"{', '.join(preflight['anchor_labels'])}"
+      )
     for warning in preflight['warnings'][:20]:
       log.appendPlainText(f"WARNING: {warning}")
     if len(preflight['warnings']) > 20:
@@ -7918,6 +8001,7 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     frame_records = []
     anchor_ratio_records = []
     side_records = []
+    anchor_candidates = []
 
     for specimen_index, subject_id in enumerate(common_ids):
       model_node = None
@@ -7965,39 +8049,13 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
           )
 
         label_to_index = {label: index for index, label in enumerate(labels)}
-        missing_anchors = [label for label in ATLAS_ANCHOR_LABELS
-                           if label not in label_to_index]
-        if missing_anchors:
-          subject_warnings.append(
-            f"anchor-frame check skipped; missing: {', '.join(missing_anchors)}"
-          )
-        else:
-          anchor_indices = [label_to_index[label] for label in ATLAS_ANCHOR_LABELS]
-          anchor_surface_max = float(np.max(relative_distances[anchor_indices]))
-          subject_metrics['anchor_surface_distance'] = anchor_surface_max
-          if anchor_surface_max > 0.03:
-            subject_severe.append(
-              f"an anchor is {anchor_surface_max:.1%} of mesh size from the surface"
-            )
-          try:
-            frame = _anatomical_anchor_frame(points, *anchor_indices)
-            if labels == reference_labels:
-              frame_records.append((subject_id, frame))
-            beak = points[anchor_indices[0]]
-            anterior = points[anchor_indices[1]]
-            posterior = points[anchor_indices[2]]
-            hinge_midpoint = 0.5 * (anterior + posterior)
-            anchor_ratio_records.append((
-              subject_id,
-              np.array((np.linalg.norm(anterior - posterior) / mesh_diagonal,
-                        np.linalg.norm(hinge_midpoint - beak) / mesh_diagonal))
-            ))
-            if ATLAS_SIDE_LABEL in label_to_index:
-              side_value = frame[label_to_index[ATLAS_SIDE_LABEL], 2]
-              if abs(side_value) > 1e-8:
-                side_records.append((subject_id, int(np.sign(side_value))))
-          except ValueError as error:
-            subject_severe.append(f"invalid anatomical anchor frame: {error}")
+        if labels == reference_labels:
+          anchor_candidates.append((
+            subject_id,
+            points.copy(),
+            relative_distances.copy(),
+            mesh_diagonal,
+          ))
 
         present_growth = [label for label in GROWTH_AXIS_LABELS
                           if label in label_to_index]
@@ -8055,9 +8113,77 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
       if progressCallback:
         progressCallback(specimen_index + 1, len(common_ids), subject_id)
 
+    # Establish one shared anchor definition for the whole dataset. Preserve
+    # the anatomical mussel definition when those labels exist; otherwise
+    # choose a robust triangle from the dataset's median normalized geometry.
+    report['anchor_mode'] = 'unavailable'
+    report['anchor_labels'] = []
+    report['anchor_side_label'] = None
+    anchor_indices = None
+    if anchor_candidates and reference_labels:
+      reference_label_to_index = {
+        label: index for index, label in enumerate(reference_labels)
+      }
+      if all(label in reference_label_to_index for label in ATLAS_ANCHOR_LABELS):
+        anchor_indices = tuple(
+          reference_label_to_index[label] for label in ATLAS_ANCHOR_LABELS
+        )
+        report['anchor_mode'] = 'anatomical'
+      else:
+        try:
+          anchor_indices = _select_generic_anchor_indices(
+            np.stack([record[1] for record in anchor_candidates])
+          )
+          report['anchor_mode'] = 'automatic'
+        except ValueError as error:
+          report['warnings'].append(f"Anchor-frame check skipped: {error}")
+
+    if anchor_indices is not None:
+      report['anchor_labels'] = [reference_labels[index]
+                                 for index in anchor_indices]
+      for subject_id, points, relative_distances, mesh_diagonal in anchor_candidates:
+        anchor_surface_max = float(np.max(relative_distances[list(anchor_indices)]))
+        report['subjects'][subject_id]['anchor_surface_distance'] = anchor_surface_max
+        if anchor_surface_max > 0.03:
+          report['severe'].append(
+            f"{subject_id}: an anchor is {anchor_surface_max:.1%} "
+            "of mesh size from the surface"
+          )
+        try:
+          frame = _anchor_frame(points, *anchor_indices)
+          frame_records.append((subject_id, frame))
+          origin = points[anchor_indices[0]]
+          positive = points[anchor_indices[1]]
+          negative = points[anchor_indices[2]]
+          axis_midpoint = 0.5 * (positive + negative)
+          anchor_ratio_records.append((
+            subject_id,
+            np.array((np.linalg.norm(positive - negative) / mesh_diagonal,
+                      np.linalg.norm(axis_midpoint - origin) / mesh_diagonal))
+          ))
+        except ValueError as error:
+          report['severe'].append(
+            f"{subject_id}: invalid anchor frame: {error}"
+          )
+
+      if frame_records:
+        if (ATLAS_SIDE_LABEL in reference_label_to_index and
+            reference_label_to_index[ATLAS_SIDE_LABEL] not in anchor_indices):
+          side_index = reference_label_to_index[ATLAS_SIDE_LABEL]
+        else:
+          side_index = _select_generic_side_index(
+            np.stack([record[1] for record in frame_records]), anchor_indices
+          )
+        if side_index is not None:
+          report['anchor_side_label'] = reference_labels[side_index]
+          for subject_id, frame in frame_records:
+            side_value = frame[side_index, 2]
+            if abs(side_value) > 1e-8:
+              side_records.append((subject_id, int(np.sign(side_value))))
+
     # Compare anchor-normalized shapes only after every specimen has its own
-    # anatomical frame. These are warnings because genuine morphology can be
-    # an outlier without being incorrectly landmarked.
+    # shared frame. These are warnings because genuine morphology can be an
+    # outlier without being incorrectly landmarked.
     if len(frame_records) >= 5:
       frame_stack = np.stack([record[1] for record in frame_records])
       median_frame = np.median(frame_stack, axis=0)
