@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""DeCA (Dense Correspondence Analysis) Module for 3D Slicer.
+"""
+DeCA (Dense Correspondence Analysis) module for 3D Slicer.
 
-Provides tools for establishing dense point correspondences between
-biological specimens for morphometric analysis. Originally developed
-for analyzing 3D shape variations in biological structures.
+Provides workflows for establishing dense point correspondences between 3D models
+using landmark-based registration and non-rigid alignment. Supports shape analysis,
+symmetry analysis, and texture-based segmentation for biological specimens.
 
-Key Features:
-- Atlas generation from specimen sets
-- Dense correspondence mapping
-- Procrustes alignment and shape analysis
-- Landmark-based registration
-- Statistical shape modeling
+Key features:
+- Atlas-based correspondence mapping
+- Dense landmarking with subsampling control
+- Symmetric structure analysis
+- Texture integration for color-based analysis
 
-Originally generated from Colab notebook:
+Original development in Colab:
     https://colab.research.google.com/drive/1I5HVk7KOmgTSesAYsK4UDC3BTmlvACkx
 """
 
@@ -37,59 +37,77 @@ import shutil  # Enables high-level file operations
 #
 
 class deca(ScriptedLoadableModule):
-  """Module class for Dense Correspondence Analysis (DeCA).
+  """
+  Module class for Dense Correspondence Analysis (DeCA) in 3D Slicer.
 
-  Registers the module with 3D Slicer and defines metadata.
-  Uses ScriptedLoadableModule base class, available at:
+  Implements morphometric analysis workflows for biological specimens,
+  providing tools for establishing point correspondences across samples
+  and performing shape/symmetry analyses.
+
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
   def __init__(self, parent):
-    """Initializes the DeCA module with metadata and configuration.
+    """
+    Initializes the DeCA module with metadata and configuration.
 
     Args:
       parent: Parent object from 3D Slicer framework
     """
-    ScriptedLoadableModule.__init__(self, parent)  # Calls parent constructor
-    self.parent.title = "DeCA"  # Sets module name in Slicer interface
-    self.parent.categories = ["SlicerMorph.DeCA Toolbox"]  # Categorizes module in menu
-    self.parent.dependencies = []  # Declares no dependencies
-    self.parent.contributors = ["Sara Rolfe (SCRI)"]  # Lists module authors
+    ScriptedLoadableModule.__init__(self, parent)
+
+    # Sets module metadata for 3D Slicer's module browser
+    self.parent.title = "DeCA"  # Dense Correspondence Analysis
+    self.parent.categories = ["SlicerMorph.DeCA Toolbox"]
+    self.parent.dependencies = []  # No external module dependencies
+    self.parent.contributors = ["Sara Rolfe (SCRI)"]
+
+    # Provides user-facing documentation
     self.parent.helpText = """
       This module provides several flexible workflows for finding and analyzing dense correspondence points between models.
-      """  # Provides user-facing help documentation
-    self.parent.helpText += self.getDefaultModuleDocumentationLink()  # Adds link to online docs
+      """
+    self.parent.helpText += self.getDefaultModuleDocumentationLink()
+
+    # Acknowledges funding sources
     self.parent.acknowledgementText = """This extension was developed by funding from National Institutes of Health (OD032627 and HD104435) to A. Murat Maga (SCRI)
-      """  # Acknowledges funding sources
+      """
 
 #
 # DeCAWidget
 #
 
 class decaWidget(ScriptedLoadableModuleWidget):
-  """GUI widget for the DeCA module.
+  """
+  GUI widget for the DeCA module.
 
-  Creates and manages the user interface with three main tabs:
-  - DeCA: Main dense correspondence workflow
-  - DeCAL: Dense landmarking functionality
-  - Visualize Results: Output visualization tools
+  Creates and manages the user interface for dense correspondence analysis,
+  including tabs for DeCA, DeCAL (Dense Correspondence Landmarking), and
+  visualization of results. Handles user interactions and workflow management.
 
-  Uses ScriptedLoadableModuleWidget base class, available at:
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
   def setup(self):
-    """Builds the module's user interface with tabbed layout."""
-    ScriptedLoadableModuleWidget.setup(self)  # Initializes base widget
+    """
+    Builds the module's user interface.
 
-    # Sets up tabs to organize workflow into logical sections
-    tabsWidget = qt.QTabWidget()  # Creates main tab container
-    DeCATab = qt.QWidget()  # Creates widget for DeCA workflow
-    DeCATabLayout = qt.QFormLayout(DeCATab)  # Sets form layout for DeCA tab
-    DeCALTab = qt.QWidget()  # Creates widget for DeCAL workflow
-    DeCALTabLayout = qt.QFormLayout(DeCALTab)  # Sets form layout for DeCAL tab
-    visualizeTab = qt.QWidget()  # Creates widget for visualization
-    visualizeTabLayout = qt.QFormLayout(visualizeTab)  # Sets form layout for visualization
+    Creates a tabbed interface with three main workflows:
+    - DeCA: Dense correspondence analysis with shape/symmetry options
+    - DeCAL: Dense correspondence landmarking with point sampling
+    - Visualize: Result visualization with heat maps
+    """
+    ScriptedLoadableModuleWidget.setup(self)
+
+    # Sets up tabs to split workflow into logical sections
+    tabsWidget = qt.QTabWidget()
+    DeCATab = qt.QWidget()
+    DeCATabLayout = qt.QFormLayout(DeCATab)
+    DeCALTab = qt.QWidget()
+    DeCALTabLayout = qt.QFormLayout(DeCALTab)
+    visualizeTab = qt.QWidget()
+    visualizeTabLayout = qt.QFormLayout(visualizeTab)
 
     tabsWidget.addTab(DeCATab, "DeCA")  # Adds main DeCA tab
     tabsWidget.addTab(DeCALTab, "DeCAL")  # Adds landmarking tab
@@ -98,31 +116,37 @@ class decaWidget(ScriptedLoadableModuleWidget):
     self.layout.addWidget(tabsWidget)  # Adds tab widget to main layout
 
     ################################### DeCA Tab ###################################
-    # Creates layout within the DeCA tab for main workflow
-    decaWidget=ctk.ctkCollapsibleButton()  # Creates collapsible section
-    DeCAWidgetLayout = qt.QFormLayout(decaWidget)  # Sets form layout
-    decaWidget.text = "Dense Correspondence I/O"  # Sets section title
-    DeCATabLayout.addRow(decaWidget)  # Adds to tab layout
+    # Layout within the DeCA tab
+    # Creates main collapsible section for DeCA inputs/outputs
+    decaWidget=ctk.ctkCollapsibleButton()
+    DeCAWidgetLayout = qt.QFormLayout(decaWidget)
+    decaWidget.text = "Dense Correspondence I/O"  # Input/Output configuration
+    DeCATabLayout.addRow(decaWidget)
 
     #
     # Select Atlas Type
     #
-    self.calculateAtlasOptionDC=qt.QRadioButton()  # Creates option to generate atlas
-    self.calculateAtlasOptionDC.setChecked(True)  # Sets as default option
-    self.loadAtlasOptionDC=qt.QRadioButton()  # Creates option to load existing atlas
-    DCAtlasButtonGroup = qt.QButtonGroup(decaWidget)  # Groups radio buttons
-    DCAtlasButtonGroup.addButton(self.calculateAtlasOptionDC)  # Adds calculate option to group
-    DCAtlasButtonGroup.addButton(self.loadAtlasOptionDC)  # Adds load option to group
-    DeCAWidgetLayout.addRow("Create atlas: ", self.calculateAtlasOptionDC)  # Adds to form
-    DeCAWidgetLayout.addRow("Load atlas: ", self.loadAtlasOptionDC)  # Adds to form
+    # Creates radio buttons for atlas selection mode
+    self.calculateAtlasOptionDC=qt.QRadioButton()
+    self.calculateAtlasOptionDC.setChecked(True)  # Default: generate new atlas
+    self.loadAtlasOptionDC=qt.QRadioButton()
+
+    # Groups radio buttons for exclusive selection
+    DCAtlasButtonGroup = qt.QButtonGroup(decaWidget)
+    DCAtlasButtonGroup.addButton(self.calculateAtlasOptionDC)
+    DCAtlasButtonGroup.addButton(self.loadAtlasOptionDC)
+
+    DeCAWidgetLayout.addRow("Create atlas: ", self.calculateAtlasOptionDC)
+    DeCAWidgetLayout.addRow("Load atlas: ", self.loadAtlasOptionDC)
 
     #
-    # Hidden atlas options - Shows additional settings when atlas loading is selected
-    self.atlasCollapsibleButtonDC = ctk.ctkCollapsibleButton()  # Creates collapsible section
-    self.atlasCollapsibleButtonDC.text = "Atlas Options"  # Sets section label
-    self.atlasCollapsibleButtonDC.collapsed = True  # Starts collapsed
-    self.atlasCollapsibleButtonDC.enabled = False  # Starts disabled until atlas option selected
-    DeCAWidgetLayout.addRow(self.atlasCollapsibleButtonDC)  # Adds to layout
+    # Hidden atlas options
+    # Creates collapsible section for atlas loading parameters
+    self.atlasCollapsibleButtonDC = ctk.ctkCollapsibleButton()
+    self.atlasCollapsibleButtonDC.text = "Atlas Options"
+    self.atlasCollapsibleButtonDC.collapsed = True  # Initially hidden
+    self.atlasCollapsibleButtonDC.enabled = False  # Disabled until load option selected
+    DeCAWidgetLayout.addRow(self.atlasCollapsibleButtonDC)
     atlasOptionLayout = qt.QFormLayout(self.atlasCollapsibleButtonDC)
 
     #
@@ -144,12 +168,16 @@ class decaWidget(ScriptedLoadableModuleWidget):
     #
     # Select Analysis Type
     #
+    # Creates radio buttons for analysis mode selection
     self.analysisTypeShape=qt.QRadioButton()
-    self.analysisTypeShape.setChecked(True)
+    self.analysisTypeShape.setChecked(True)  # Default: shape analysis
     self.analysisTypeSymmetry=qt.QRadioButton()
+
+    # Groups for exclusive selection
     DCAnalysisButtonGroup = qt.QButtonGroup(decaWidget)
     DCAnalysisButtonGroup.addButton(self.analysisTypeShape)
     DCAnalysisButtonGroup.addButton(self.analysisTypeSymmetry)
+
     DeCAWidgetLayout.addRow("Shape analysis: ", self.analysisTypeShape)
     DeCAWidgetLayout.addRow("Symmetry analysis: ", self.analysisTypeSymmetry)
 
@@ -181,9 +209,8 @@ class decaWidget(ScriptedLoadableModuleWidget):
     self.landmarkDirectoryDC.filters = ctk.ctkPathLineEdit.Dirs
     self.landmarkDirectoryDC.setToolTip("Select directory containing landmarks")
     DeCAWidgetLayout.addRow("Landmark directory: ", self.landmarkDirectoryDC)
-    #NEW
-    #select texture directory
-    #
+    # NEW: Texture directory selection
+    # Enables texture-based analysis for colored specimens
     self.textureDirectoryDC=ctk.ctkPathLineEdit()
     self.textureDirectoryDC.filters = ctk.ctkPathLineEdit.Dirs
     self.textureDirectoryDC.setToolTip("Select directory containing texture images")
@@ -199,10 +226,11 @@ class decaWidget(ScriptedLoadableModuleWidget):
     #
     # Remove scale option
     #
-    self.removeScaleCheckBoxDC = qt.QCheckBox()  # Creates checkbox for scale option
-    self.removeScaleCheckBoxDC.checked = False  # Defaults to keeping scale
-    self.removeScaleCheckBoxDC.setToolTip("If checked, DeCA alignment will include isotropic scaling.")  # Provides helpful tooltip
-    DeCAWidgetLayout.addRow("Remove scale: ", self.removeScaleCheckBoxDC)  # Adds to form
+    # Controls whether to normalize for size differences
+    self.removeScaleCheckBoxDC = qt.QCheckBox()
+    self.removeScaleCheckBoxDC.checked = False  # Default: preserve scale
+    self.removeScaleCheckBoxDC.setToolTip("If checked, DeCA alignment will include isotropic scaling.")
+    DeCAWidgetLayout.addRow("Remove scale: ", self.removeScaleCheckBoxDC)
 
     #
     # Error checking directory option
@@ -448,11 +476,32 @@ class decaWidget(ScriptedLoadableModuleWidget):
 
   ################################### GUI SUpport Functions
   def setUpDeCADir(self, outDir, symmetryOption=False, errorDirectoryOption=False, DeCALOption=False, loadAtlasOption = False):
+    """
+    Creates directory structure for DeCA output.
+
+    Generates timestamped output folders organized by data type,
+    ensuring clean separation of results and intermediate files.
+
+    Args:
+      outDir: Base output directory path
+      symmetryOption: Whether to create mirror data folders
+      errorDirectoryOption: Whether to create error checking folder
+      DeCALOption: Whether to create DeCAL output folder
+      loadAtlasOption: Whether atlas is pre-loaded (skips temp folders)
+
+    Returns:
+      Dictionary mapping folder types to their paths
+    """
+    # Creates unique timestamped folder for this analysis
     dateTimeStamp = datetime.now().strftime('%Y_%m-%d_%H_%M_%S')
     outputFolderDC = os.path.join(outDir, dateTimeStamp)
     fileNameDictionary = {}
+
     try:
+      # Creates main output structure
       os.makedirs(outputFolderDC)
+
+      # Creates folders for aligned data
       alignedLMFolderDC = os.path.join(outputFolderDC, "alignedLMs")
       os.makedirs(alignedLMFolderDC)
       alignedModelFolderDC = os.path.join(outputFolderDC, "alignedModels")
@@ -488,10 +537,17 @@ class decaWidget(ScriptedLoadableModuleWidget):
     return fileNameDictionary
 
   def onToggleAnalysis(self):
+    """
+    Handles analysis type toggle between shape and symmetry.
+
+    Shows or hides symmetry-specific options based on selection.
+    """
     if self.analysisTypeSymmetry.checked == True:
+      # Shows symmetry options when symmetry analysis selected
       self.symmetryCollapsibleButton.collapsed = False
       self.symmetryCollapsibleButton.enabled = True
     else:
+      # Hides symmetry options for shape analysis
       self.symmetryCollapsibleButton.collapsed = True
       self.symmetryCollapsibleButton.enabled = False
 
@@ -539,8 +595,17 @@ class decaWidget(ScriptedLoadableModuleWidget):
         self.subjectIDBox.enabled = False
   #NEW
   def onParameterSelectDC(self):
+    """
+    Updates DeCA button state based on parameter selection.
+
+    Enables the run button only when all required inputs are provided.
+    Validates atlas source and directory paths.
+    """
+    # Checks if atlas is available (either loaded or will be generated)
     atlasPathSelected = bool(self.DCBaseModelSelector.currentPath and self.DCBaseLMSelector.currentPath) or self.calculateAtlasOptionDC.checked
+    # Verifies all required directories are selected
     inputPathsSelected = bool(self.meshDirectoryDC.currentPath and self.landmarkDirectoryDC.currentPath and self.outputDirectoryDC.currentPath and self.textureDirectoryDC.currentPath)
+    # Enables button only when all requirements met
     self.applyButtonDC.enabled = bool(atlasPathSelected and inputPathsSelected)
   #NEW
   def onParameterSelectDCL(self):
@@ -555,48 +620,92 @@ class decaWidget(ScriptedLoadableModuleWidget):
     self.subsetApplyButton.enabled = bool(self.DCLLandmarkDirectory.currentPath and self.pointSelection.currentNode())
 
   def onGenerateAtlasButton(self):
+    # Instantiates DeCA logic processor for atlas generation algorithms
     logic = decaLogic()
-    #set up output directory
+
+    # Creates timestamped output directory structure for DeCAL analysis results
+    # Parameters control symmetry (False), error checking (False), DeCAL mode (True), and atlas loading
     self.folderNames = self.setUpDeCADir(self.OutputDirectoryDCL.currentPath, False, False, True, self.loadAtlasOptionDCL.checked)
+    # Validates directory creation succeeded before continuing
     if self.folderNames == {}:
+      # Logs error message to GUI when folder creation fails
       self.logInfoDCL.appendPlainText(f'Output folders could not be created in {self.OutputDirectoryDCL.currentPath}')
-      return
-    self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath
-    self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath
-    self.folderNames['originalTextures']=self.textureDirectoryDCL.currentPath
+      return  # Exits early if setup failed
+    # Stores source directory paths in the folder name dictionary
+    self.folderNames['originalLMs'] = self.landmarkDirectoryDCL.currentPath  # Landmark files location
+    self.folderNames['originalModels'] = self.meshDirectoryDCL.currentPath  # 3D model files location
+    self.folderNames['originalTextures']=self.textureDirectoryDCL.currentPath  # Texture image files location
+    # Handles pre-existing atlas loading workflow
     if self.loadAtlasOptionDCL.checked:
       try:
+        # Retrieves user-specified atlas model path from GUI
         atlasModelPath = self.DCLBaseModelSelector.currentPath
+        # Loads atlas model into 3D Slicer scene
         self.atlasModel = slicer.util.loadModel(atlasModelPath)
       except:
+        # Reports model loading failure to user
         self.logInfoDCL.appendPlainText(f"Can't load model from: {atlasModelPath}")
-        return
+        return  # Aborts if atlas model can't be loaded
       try:
+        # Retrieves user-specified atlas landmark path from GUI
         atlasLMPath = self.DCLBaseLMSelector.currentPath
+        # Loads atlas landmarks into 3D Slicer scene
         self.atlasLMs = slicer.util.loadMarkups(atlasLMPath)
       except:
+        # Prints debug message to console
         print("Can't load from: ", atlasLMPath)
+        # Reports landmark loading failure to user
         self.logInfoDCL.appendPlainText(f"Can't load landmarks from: {atlasLMPath}")
-        return
+        return  # Aborts if atlas landmarks can't be loaded
     else:
-      removeScale = True
+      # Generates new atlas from input specimens
+      removeScale = True  # Normalizes for size differences across specimens
+      # Creates unbiased atlas from all specimens in the dataset
       self.atlasModel, self.atlasLMs = self.generateNewAtlas(removeScale, self.logInfoDCL)
+    # Constructs output path for atlas model file
     atlasModelPath = os.path.join(self.folderNames['output'], 'decaAtlasModel.ply')
+    # Notifies user of save operation
     self.logInfoDCL.appendPlainText(f"Saving atlas model to {atlasModelPath}")
+    # Writes atlas model to disk in PLY format
     slicer.util.saveNode(self.atlasModel, atlasModelPath)
+
+    # Constructs output path for atlas landmark file
     atlasLMPath = os.path.join(self.folderNames['output'], 'decaAtlasLM.mrk.json')
+    # Notifies user of save operation
     self.logInfoDCL.appendPlainText(f"Saving atlas landmarks to {atlasLMPath}")
+    # Writes atlas landmarks to disk in Slicer's JSON format
     slicer.util.saveNode(self.atlasLMs, atlasLMPath)
+
+    # Enables point number calculation button now that atlas is ready
     self.getPointNumberButton.enabled = True
 
   def generateNewAtlas(self, removeScale, log):
+    """
+    Generates a new atlas from input specimens.
+
+    Finds the specimen closest to the mean shape, aligns all specimens
+    to it, then computes the average to create an unbiased atlas.
+
+    Args:
+      removeScale: Whether to normalize for size differences
+      log: Text widget for progress logging
+
+    Returns:
+      Tuple of (atlas model node, atlas landmark node)
+    """
     logic = decaLogic()
+
+    # Identifies specimen closest to mean configuration
     closestToMeanLandmarkPath = logic.getClosestToMeanPath(self.folderNames['originalLMs'])
     tempBaseLMs = slicer.util.loadMarkups(os.path.join(self.folderNames['originalLMs'],closestToMeanLandmarkPath))
+
+    # Extracts subject ID from filename
     subjectID = Path(closestToMeanLandmarkPath)
     while subjectID.suffix in {'.fcsv', '.mrk', '.json'}:
       subjectID = subjectID.with_suffix('')
     log.appendPlainText(f"Closest sample to mean: {subjectID}")
+
+    # Loads corresponding model
     tempBaseModel = logic.getModelFileByID(self.folderNames['originalModels'], subjectID)
     log.appendPlainText(f"Rigid Alignment to: {subjectID}")
     logic.runAlign(tempBaseModel, tempBaseLMs, self.folderNames['originalModels'], self.folderNames['originalLMs'], self.folderNames['tempAlignedModels'], self.folderNames['tempAlignedLMs'], removeScale)
@@ -609,18 +718,36 @@ class decaWidget(ScriptedLoadableModuleWidget):
     return atlasModel, atlasLMs
 #need to set up indexing correctly for the code to run follow down from runMean
   def onGetPointNumberButton(self):
+    # Instantiates logic processor for point calculations
     logic = decaLogic()
+
+    # Performs downsampling on atlas model based on user-specified spacing
+    # Returns both the downsampled mesh and the resulting point count
     subsampledTemplate, pointNumber = logic.runCheckPoints(self.atlasModel, self.spacingTolerance.value)
+
+    # Reports point count to user for planning computational requirements
     self.logInfoDCL.appendPlainText(f'The subsampled template has a total of {pointNumber} points.')
+
+    # Enables DeCAL execution now that point density is confirmed
     self.DCLApplyButton.enabled = True
 
   def onDCApplyButton(self):
+    """
+    Handles DeCA execution button click.
+
+    Orchestrates the full DeCA workflow including atlas generation/loading,
+    specimen alignment, and correspondence computation based on selected
+    analysis type (shape or symmetry).
+    """
     logic = decaLogic()
-    #set up output directory
+
+    # Gathers user-selected options
     symmetryOption = self.analysisTypeSymmetry.checked
     writeErrorOption = self.writeErrorCheckBox.checked
     loadAtlasOption = self.loadAtlasOptionDC.checked
     removeScaleOption = self.removeScaleCheckBoxDC.checked
+
+    # Sets up output directory structure
     self.folderNames = self.setUpDeCADir(self.outputDirectoryDC.currentPath, symmetryOption, writeErrorOption, False, loadAtlasOption)
     if self.folderNames == {}:
       self.logInfoDC.appendPlainText(f'Output folders could not be created in {self.outputDirectoryDC.currentPath}')
@@ -703,58 +830,93 @@ class decaWidget(ScriptedLoadableModuleWidget):
 #
 
 class decaLogic(ScriptedLoadableModuleLogic):
-  """Logic class implementing DeCA analysis algorithms.
+  """
+  Processing logic for dense correspondence analysis.
 
-  Contains the core computational methods for:
-  - Atlas generation from specimen sets
+  Implements core algorithms for atlas generation, specimen alignment,
+  point correspondence computation, and morphometric analysis. Designed
+  to be callable independently of the GUI for batch processing.
+
+  Key methods:
+  - Atlas generation and alignment
   - Dense correspondence mapping
-  - Procrustes alignment and registration
-  - Landmark manipulation and subsampling
-  - Mesh processing and transformation
-  - Statistical shape analysis
+  - Symmetry analysis
+  - Texture-based feature extraction
 
-  The interface is designed to be independent of the GUI,
-  allowing batch processing and scripted automation.
-
-  Uses ScriptedLoadableModuleLogic base class, available at:
+  Base class documentation:
     https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
   def runSubsetLandmarks(self, baseNode, lmDirectory, lmDirectorySubset):
-    """Creates subset of landmarks based on selected points.
+    """
+    Subsets landmark sets based on selected points.
 
-    Processes all landmark files in a directory to keep only the
-    points that are selected in the base node.
+    Removes unselected landmarks from all specimens to create a
+    reduced landmark set for focused analysis.
 
     Args:
-      baseNode: Reference markup node with selected/unselected points
-      lmDirectory: Source directory containing landmark files
+      baseNode: Atlas landmarks with points selected/unselected
+      lmDirectory: Source directory with full landmark sets
       lmDirectorySubset: Output directory for subset landmarks
     """
-    deletionIndex = []  # Collects indices of points to remove
+    # Identifies points to remove (unselected ones)
+    deletionIndex = []
     for i in range(baseNode.GetNumberOfControlPoints()):
-      if not baseNode.GetNthControlPointSelected(i):  # Checks if point is unselected
-        deletionIndex.append(i)  # Marks index for deletion
+      if not baseNode.GetNthControlPointSelected(i):
+        deletionIndex.append(i)
+
+    # Processes each landmark file
     for lmFileName in os.listdir(lmDirectory):
-      if(not lmFileName.startswith(".")):  # Skips hidden files
-        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))  # Loads landmark file
-        for index in reversed(deletionIndex):  # Processes in reverse to maintain indices
-          currentLMNode.RemoveNthControlPoint(index)  # Removes unselected point
-      slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))  # Saves subset file
-      slicer.mrmlScene.RemoveNode(currentLMNode)  # Cleans up scene
+      if(not lmFileName.startswith(".")):
+        currentLMNode = slicer.util.loadMarkups(os.path.join(lmDirectory, lmFileName))
+        # Removes points in reverse order to preserve indices
+        for index in reversed(deletionIndex):
+          currentLMNode.RemoveNthControlPoint(index)
+      # Saves subset landmarks
+      slicer.util.saveNode(currentLMNode, os.path.join(lmDirectorySubset, lmFileName))
+      slicer.mrmlScene.RemoveNode(currentLMNode)
 
   def runCheckPoints(self, atlasNode, spacingTolerance):
+    # Converts user-specified tolerance value to percentage for VTK filter
     spacingPercentage = spacingTolerance/100
+
+    # Applies downsampling filter to reduce point density
     templateModel = self.downsampleModel(atlasNode, spacingPercentage)
+
+    # Returns both the downsampled model and its point count for user feedback
     return templateModel, templateModel.GetNumberOfPoints()
 
   def runDeCAL(self, baseNode, baseLMPath, meshDirectory, landmarkDirectory, outputDirectory, spacingTolerance):
+    """
+    Performs Dense Correspondence Landmarking (DeCAL).
+
+    Generates densely sampled corresponding landmarks across specimens
+    using non-rigid registration guided by sparse anatomical landmarks.
+
+    Args:
+      baseNode: Atlas model node
+      baseLMPath: Atlas landmark node
+      meshDirectory: Directory containing aligned models
+      landmarkDirectory: Directory containing aligned landmarks
+      outputDirectory: Output directory for dense landmarks
+      spacingTolerance: Point spacing control (percentage)
+
+    Returns:
+      Atlas landmark node with dense sampling
+    """
+    # Converts tolerance to percentage for downsampling
     spacingPercentage = spacingTolerance/100
     loadOption=False
+
+    # Loads atlas landmarks as VTK points
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath, loadOption).GetPoints()
+
+    # Imports all specimen data
     modelExt=['ply','stl','vtp', 'vtk']
     self.modelNames, models = self.importMeshes(meshDirectory, modelExt)
     landmarkNames, landmarks = self.importLandmarks(landmarkDirectory)
     self.outputDirectory = outputDirectory
+
+    # Computes dense correspondences
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseNode.GetPolyData(), baseLandmarks)
     # get downsampled template with index array
     indexArrayName = "indexArray"
@@ -790,28 +952,60 @@ class decaLogic(ScriptedLoadableModuleLogic):
       return None
 
   def downsampleModel(self, model, spacingPercentage):
+    # Extracts polydata from the input model node
     points=model.GetPolyData()
+
+    # Creates VTK clean filter to merge nearby points
     cleanFilter=vtk.vtkCleanPolyData()
+
+    # Uses relative tolerance based on mesh bounding box
     cleanFilter.SetToleranceIsAbsolute(False)
+
+    # Sets merge tolerance as percentage of diagonal
     cleanFilter.SetTolerance(spacingPercentage)
+
+    # Connects input polydata to filter
     cleanFilter.SetInputData(points)
+
+    # Executes the downsampling operation
     cleanFilter.Update()
+
+    # Returns the decimated polydata
     return cleanFilter.GetOutput()
 
   def addIndexArray(self, mesh, arrayName):
-    # Array of original index values
+    # Creates integer array to store original point indices
+    # This preserves point identity through downsampling operations
     indexArray = vtk.vtkIntArray()
+
+    # Sets array as single-component (one value per point)
     indexArray.SetNumberOfComponents(1)
+
+    # Assigns identifying name for later retrieval
     indexArray.SetName(arrayName)
+
+    # Iterates through all mesh points
     for i in range(mesh.GetPolyData().GetNumberOfPoints()):
+      # Stores original index value for each point
       indexArray.InsertNextValue(i)
+
+    # Attaches index array to mesh point data
     mesh.GetPolyData().GetPointData().AddArray(indexArray)
 
   def computeNormals(self, inputModel):
+    # Creates VTK filter for normal vector computation
     normals = vtk.vtkPolyDataNormals()
+
+    # Connects input model's polydata to filter
     normals.SetInputData(inputModel.GetPolyData())
+
+    # Ensures consistent normal orientation across surface
     normals.SetAutoOrientNormals(True)
+
+    # Executes normal computation
     normals.Update()
+
+    # Replaces model's polydata with normal-enhanced version
     inputModel.SetAndObservePolyData(normals.GetOutput())
 
   def runMirroring(self, meshDirectory, lmDirectory, mirrorMeshDirectory, mirrorLMDirectory, mirrorAxis, mirrorIndexText, slmDirectory=None, outputSLMDirectoryy=None, mirrorSLMIndexText=None):
@@ -908,18 +1102,43 @@ class decaLogic(ScriptedLoadableModuleLogic):
 
   #NEW
   def runDCAlign(self, baseMeshPath, baseLMPath, meshDirectory, landmarkDirectory, outputDirectory, optionErrorOutput, textureDirectory):
+    """
+    Performs DeCA shape analysis with optional texture features.
+
+    Computes dense correspondences and extracts morphometric features
+    including shape deformation magnitudes and color-based comparisons.
+
+    Args:
+      baseMeshPath: Path to atlas model
+      baseLMPath: Path to atlas landmarks
+      meshDirectory: Directory with aligned models
+      landmarkDirectory: Directory with aligned landmarks
+      outputDirectory: Output directory for results
+      optionErrorOutput: Whether to generate error checking data
+      textureDirectory: Directory with texture images for color analysis
+    """
+    # Sets up error checking directory if requested
     if optionErrorOutput:
       self.errorCheckPath = os.path.join(outputDirectory, "errorChecking")
       if not os.path.exists(self.errorCheckPath):
         os.mkdir(self.errorCheckPath)
+
+    # Loads atlas data
     baseNode = slicer.util.loadModel(baseMeshPath)
     baseMesh = baseNode.GetPolyData()
     baseLandmarks=self.fiducialNodeToPolyData(baseLMPath).GetPoints()
+
+    # Imports specimen data
     modelExt=['ply','stl','vtp']
     self.modelNames, models = self.importMeshes(meshDirectory, modelExt)
     landmarkNames,landmarks = self.importLandmarks(landmarkDirectory)
+
+    # Computes correspondences with texture support
     denseCorrespondenceGroup = self.denseCorrespondenceBaseMesh(landmarks, models, baseMesh, baseLandmarks, textureDirectory)
+
+    # Extracts morphometric features
     self.addMagnitudeFeature(denseCorrespondenceGroup, self.modelNames, baseMesh)
+    # Adds color-based features for texture analysis
     self.addColorComparisonFeatures(denseCorrespondenceGroup, self.modelNames, baseMesh)
     # save results to output directory
     outputModelName = 'decaResultModel.vtp'
@@ -985,10 +1204,28 @@ class decaLogic(ScriptedLoadableModuleLogic):
         return currentNode
 
   def runAlign(self, baseMeshNode, baseLMNode, meshDirectory, lmDirectory, outputMeshDirectoryDirectory, outputLMDirectory, removeScaleOption, slmDirectory=False, outputSLMDirectory=False):
-    semilandmarkOption = bool(slmDirectory and outputSLMDirectoryy)
+    """
+    Aligns all specimens to atlas using landmark-based registration.
+
+    Performs rigid or similarity transformation to align specimens
+    to a common reference frame defined by the atlas landmarks.
+
+    Args:
+      baseMeshNode: Atlas model node
+      baseLMNode: Atlas landmark node
+      meshDirectory: Directory with original models
+      lmDirectory: Directory with original landmarks
+      outputMeshDirectoryDirectory: Output for aligned models
+      outputLMDirectory: Output for aligned landmarks
+      removeScaleOption: Whether to normalize for size
+      slmDirectory: Optional semi-landmark directory
+      outputSLMDirectory: Optional output for aligned semi-landmarks
+    """
+    semilandmarkOption = bool(slmDirectory and outputSLMDirectory)
     targetPoints = vtk.vtkPoints()
     point=[0,0,0]
-    # Set up base points for transform
+
+    # Extracts atlas landmark positions as target
     for i in range(baseLMNode.GetNumberOfControlPoints()):
       point = baseLMNode.GetNthControlPointPosition(i)
       targetPoints.InsertNextPoint(point)
@@ -1056,112 +1293,248 @@ class decaLogic(ScriptedLoadableModuleLogic):
     Computes the euclidean distance matrix for n points in a 3D space
     Returns a nXn matrix
      """
+    # Extracts shape dimensions from input array
     id,jd=a.shape
+
+    # Defines lambda for creating difference matrices
+    # Subtracts each element from reshaped column vector
     fnx = lambda q : q - np.reshape(q, (id, 1))
+
+    # Computes pairwise differences for x coordinates
     dx=fnx(a[:,0])
+
+    # Computes pairwise differences for y coordinates
     dy=fnx(a[:,1])
+
+    # Computes pairwise differences for z coordinates
     dz=fnx(a[:,2])
+
+    # Calculates Euclidean distances from coordinate differences
     return (dx**2.0+dy**2.0+dz**2.0)**0.5
 
   def numpyToFiducialNode(self, numpyArray, nodeName):
+    # Creates new fiducial node in 3D Slicer scene
     fiducialNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode',nodeName)
+
+    # Iterates through numpy array points
     for index in range(len(numpyArray)):
+      # Adds each point as control point with string index label
       fiducialNode.AddControlPoint(numpyArray[index], str(index))
+
+    # Returns populated fiducial node
     return fiducialNode
 
   def computeAverageLM(self, fiducialGroup):
+    # Counts number of specimens in the group
     sampleNumber = fiducialGroup.GetNumberOfBlocks()
+
+    # Gets landmark count from first specimen
     pointNumber = fiducialGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes 3D array: points x coordinates x samples
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
+
+    # Extracts landmark coordinates from each specimen
     for i in range(sampleNumber):
+      # Gets VTK point data from current specimen
       pointData = fiducialGroup.GetBlock(i).GetPoints().GetData()
+
+      # Converts VTK data to numpy array
       pointData_np = vtk_np.vtk_to_numpy(pointData)
+
+      # Stores in 3D array structure
       groupArray_np[:,:,i] = pointData_np
-    #Calculate mean point positions of aligned group
+
+    # Calculates mean position across all specimens for each landmark
     averagePoints_np = np.mean(groupArray_np, axis=2)
+
+    # Converts mean positions to fiducial node
     averageLMNode = self.numpyToFiducialNode(averagePoints_np, "Atlas Landmarks")
+
     return averageLMNode
 
   def fiducialNodeToPolyData(self, nodeLocation, loadOption=True):
+    # Initializes point coordinate array
     point = [0,0,0]
+
+    # Creates empty polydata object
     polydataPoints = vtk.vtkPolyData()
+
+    # Creates VTK points container
     points = vtk.vtkPoints()
+
+    # Determines whether to load from file or use existing node
     if not loadOption:
+      # Uses passed node directly
       fiducialNode = nodeLocation
     else:
+      # Loads fiducial node from file path
       [success,fiducialNode] = slicer.util.loadMarkupsFiducialList(nodeLocation)
+
+      # Validates successful loading
       if not success:
         print("Could not load landmarks: ", nodeLocation)
         return
+
+    # Converts fiducial points to VTK points
     for i in range(fiducialNode.GetNumberOfControlPoints()):
+      # Gets position of current control point
       point = fiducialNode.GetNthControlPointPosition(i)
+
+      # Adds point to VTK points collection
       points.InsertNextPoint(point)
+
+    # Assigns points to polydata structure
     polydataPoints.SetPoints(points)
+
+    # Removes temporary node from scene
     slicer.mrmlScene.RemoveNode(fiducialNode)
+
     return polydataPoints
 
   def importLandmarks(self, topDir):
+    # Creates multi-block filter to group multiple landmark sets
     fiducialGroup = vtk.vtkMultiBlockDataGroupFilter()
+
+    # Initializes list to track processed filenames
     fileNameList = []
+
+    # Processes all landmark files in directory
     for file in sorted(os.listdir(topDir)):
+      # Filters for supported landmark formats
       if file.endswith(".fcsv") or file.endswith(".json"):
+        # Stores filename for reference
         fileNameList.append(file)
+
+        # Constructs full file path
         inputFilePath = os.path.join(topDir, file)
-        # may want to replace with vtk reader
+
+        # Converts landmark file to polydata format
+        # Note: may want to replace with vtk reader for efficiency
         polydataPoints = self.fiducialNodeToPolyData(inputFilePath)
+
+        # Adds to multi-block group
         fiducialGroup.AddInputData(polydataPoints)
+
+    # Executes grouping operation
     fiducialGroup.Update()
+
+    # Returns filenames and grouped landmark data
     return fileNameList, fiducialGroup.GetOutput()
 
   def importMeshes(self, topDir, extensions):
+      # Creates multi-block filter to group multiple mesh models
       modelGroup = vtk.vtkMultiBlockDataGroupFilter()
+
+      # Initializes list to track processed model names
       fileNameList = []
+
+      # Processes all mesh files in directory
       for file in sorted(os.listdir(topDir)):
+        # Checks if file has supported mesh extension
         if file.endswith(tuple(extensions)):
+          # Extracts base filename without extension
           base, ext = os.path.splitext(file)
+
+          # Stores base name for specimen identification
           fileNameList.append(base)
+
+          # Constructs full file path
           inputFilePath = os.path.join(topDir, file)
-          # may want to replace with vtk reader
+
+          # Loads mesh model into Slicer scene
+          # Note: may want to replace with vtk reader for efficiency
           modelNode = slicer.util.loadModel(inputFilePath)
+
+          # Extracts polydata and adds to group
           modelGroup.AddInputData(modelNode.GetPolyData())
+
+          # Removes temporary node from scene to free memory
           slicer.mrmlScene.RemoveNode(modelNode)
+
+      # Executes grouping operation
       modelGroup.Update()
+
+      # Returns model names and grouped mesh data
       return fileNameList, modelGroup.GetOutput()
 
   def procrustesImposition(self, originalLandmarks, sizeOption):
+    # Creates Procrustes alignment filter for shape analysis
     procrustesFilter = vtk.vtkProcrustesAlignmentFilter()
-    if(sizeOption):
-      procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
 
+    # Configures alignment mode based on size normalization preference
+    if(sizeOption):
+      # Uses rigid body transformation (preserves size)
+      procrustesFilter.GetLandmarkTransform().SetModeToRigidBody()
+    # Default mode is similarity transform (removes size)
+
+    # Connects landmark data to filter
     procrustesFilter.SetInputData(originalLandmarks)
+
+    # Executes Procrustes alignment
     procrustesFilter.Update()
+
+    # Extracts computed mean shape
     meanShape = procrustesFilter.GetMeanPoints()
+
+    # Returns mean shape and aligned landmark sets
     return [meanShape, procrustesFilter.GetOutput()]
 
   def getClosestToMeanIndex(self, meanShape, alignedPoints):
+    # Imports operator for min function key extraction
     import operator
+
+    # Gets number of specimens in aligned group
     sampleNumber = alignedPoints.GetNumberOfBlocks()
+
+    # Initializes list to store Procrustes distances
     procrustesDistances = []
+
+    # Calculates distance from each specimen to mean shape
     for i in range(sampleNumber):
+      # Gets current specimen's aligned landmarks
       alignedShape = alignedPoints.GetBlock(i)
+
+      # Initializes point coordinate arrays
       meanPoint = [0,0,0]
       alignedPoint = [0,0,0]
+
+      # Accumulates total distance for this specimen
       distance = 0
+
+      # Sums distances across all landmark points
       for j in range(meanShape.GetNumberOfPoints()):
+        # Gets coordinates from mean shape
         meanShape.GetPoint(j,meanPoint)
+
+        # Gets corresponding coordinates from specimen
         alignedShape.GetPoint(j,alignedPoint)
+
+        # Adds Euclidean distance to total
         distance += np.sqrt(vtk.vtkMath.Distance2BetweenPoints(meanPoint,alignedPoint))
+
+      # Stores total distance for this specimen
       procrustesDistances.append(distance)
+
     try:
+      # Finds specimen with minimum distance to mean
       min_index, min_value = min(enumerate(procrustesDistances), key=operator.itemgetter(1))
       return min_index
     except:
+      # Returns first specimen if error occurs
       return 0
 
   def getClosestToMeanPath(self, landmarkDirectory):
+    # Imports all landmark files from directory
     lmNames, landmarks = self.importLandmarks(landmarkDirectory)
+
+    # Performs Procrustes alignment without size preservation
     meanShape, alignedLandmarks = self.procrustesImposition(landmarks, False)
+
+    # Identifies specimen closest to mean configuration
     closestToMeanIndex = self.getClosestToMeanIndex(meanShape, alignedLandmarks)
+
+    # Returns filename of most representative specimen
     return lmNames[closestToMeanIndex]
 
   def denseCorrespondence(self, originalLandmarks, originalMeshes, textureImageNode, writeErrorOption=False):
@@ -1244,88 +1617,147 @@ class decaLogic(ScriptedLoadableModuleLogic):
   #NEW
 
   def denseSurfaceCorrespondencePair(self, originalMesh, originalLandmarks, alignedLandmarks,baseMesh, baseLandmarks, meanShape, iteration,textureImageNode, saveAsPointData='uchar-vector'):
-    # TPS warp target and base mesh to meanshape
+    # Creates thin-plate spline transform for warping to mean space
     meanTransform = vtk.vtkThinPlateSplineTransform()
+    # Sets source landmarks from original specimen
     meanTransform.SetSourceLandmarks(originalLandmarks)
+    # Sets target as mean shape coordinates
     meanTransform.SetTargetLandmarks(meanShape)
-    meanTransform.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    meanTransform.SetBasisToR()
 
+    # Creates filter to apply TPS transform to mesh
     meanTransformFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects original mesh as input
     meanTransformFilter.SetInputData(originalMesh)
+    # Applies TPS warping transform
     meanTransformFilter.SetTransform(meanTransform)
+    # Executes transformation
     meanTransformFilter.Update()
+    # Retrieves warped mesh in mean space
     meanWarpedMesh = meanTransformFilter.GetOutput()
 
+    # Creates TPS transform for warping atlas to mean space
     meanTransformBase = vtk.vtkThinPlateSplineTransform()
+    # Sets source landmarks from atlas
     meanTransformBase.SetSourceLandmarks(baseLandmarks)
+    # Sets target as mean shape coordinates
     meanTransformBase.SetTargetLandmarks(meanShape)
-    meanTransformBase.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    meanTransformBase.SetBasisToR()
 
+    # Creates filter to apply TPS transform to atlas
     meanTransformBaseFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects atlas mesh as input
     meanTransformBaseFilter.SetInputData(baseMesh)
+    # Applies TPS warping transform
     meanTransformBaseFilter.SetTransform(meanTransformBase)
+    # Executes transformation
     meanTransformBaseFilter.Update()
+    # Retrieves warped atlas in mean space
     meanWarpedBase = meanTransformBaseFilter.GetOutput()
 
-    # write ouput
+    # Writes intermediate results for error checking if requested
     if hasattr(self,"errorCheckPath"):
+      # Creates PLY writer for subject mesh
       plyWriterSubject = vtk.vtkPLYWriter()
+      # Constructs filename with specimen ID
       plyName = "subject_" + self.modelNames[iteration] + ".ply"
       plyPath = os.path.join(self.errorCheckPath, plyName)
+      # Configures writer with output path
       plyWriterSubject.SetFileName(plyPath)
+      # Sets warped subject mesh as data source
       plyWriterSubject.SetInputData(meanWarpedMesh)
+      # Writes subject mesh to file
       plyWriterSubject.Write()
 
+      # Creates PLY writer for atlas mesh
       plyWriterBase = vtk.vtkPLYWriter()
+      # Uses fixed name for atlas reference
       plyName = "base.ply"
       plyPath = os.path.join(self.errorCheckPath, plyName)
+      # Configures writer with output path
       plyWriterBase.SetFileName(plyPath)
+      # Sets warped atlas mesh as data source
       plyWriterBase.SetInputData(meanWarpedBase)
+      # Writes atlas mesh to file
       plyWriterBase.Write()
 
-    # Dense correspondence
+    # Creates cell locator for finding closest points
     cellLocator = vtk.vtkCellLocator()
+    # Sets warped subject mesh as search target
     cellLocator.SetDataSet(meanWarpedMesh)
+    # Builds spatial search structure
     cellLocator.BuildLocator()
 
+    # Initializes coordinate arrays
     point = [0,0,0]
     correspondingPoint = [0,0,0]
+    # Creates container for correspondence points
     correspondingPoints = vtk.vtkPoints()
-    cellId = vtk.reference(0)
-    subId = vtk.reference(0)
-    distance = vtk.reference(0.0)
+    # Creates reference variables for VTK output
+    cellId = vtk.reference(0)  # Cell containing closest point
+    subId = vtk.reference(0)  # Subcell ID
+    distance = vtk.reference(0.0)  # Distance to closest point
+
+    # Finds correspondence for each atlas point
     for i in range(meanWarpedBase.GetNumberOfPoints()):
+      # Gets current atlas point position
       meanWarpedBase.GetPoint(i,point)
+      # Finds closest point on subject mesh
       cellLocator.FindClosestPoint(point,correspondingPoint,cellId, subId, distance)
+      # Stores corresponding point with same index
       correspondingPoints.InsertPoint(i,correspondingPoint)
 
-    #Copy points into mesh with base connectivity
+    # Creates new mesh with correspondence points and atlas topology
     correspondingMesh = vtk.vtkPolyData()
+    # Assigns correspondence points
     correspondingMesh.SetPoints(correspondingPoints)
+    # Copies polygon connectivity from atlas
     correspondingMesh.SetPolys(meanWarpedBase.GetPolys())
 
-    # Apply inverse warping
+    # Creates inverse TPS transform to return from mean space
     inverseTransform = vtk.vtkThinPlateSplineTransform()
+    # Sets mean shape as source (reverse of forward transform)
     inverseTransform.SetSourceLandmarks(meanShape)
+    # Sets original landmarks as target
     inverseTransform.SetTargetLandmarks(originalLandmarks)
-    inverseTransform.SetBasisToR() # for 3D transform
+    # Uses radial basis function for 3D deformation
+    inverseTransform.SetBasisToR()
 
+    # Creates filter to apply inverse transform
     inverseTransformFilter = vtk.vtkTransformPolyDataFilter()
+    # Connects correspondence mesh as input
     inverseTransformFilter.SetInputData(correspondingMesh)
+    # Applies inverse TPS transform
     inverseTransformFilter.SetTransform(inverseTransform)
+    # Executes inverse transformation
     inverseTransformFilter.Update()
+    # Retrieves final mesh in original space
     finalMesh = inverseTransformFilter.GetOutput()
-    #NEW LINE FOR COLOR
+
+    # Transfers texture colors from original to correspondence mesh
     colorWrappedMesh = self.wrapTextureFromImage(originalMesh, textureImageNode, finalMesh, saveAsPointData)
 
     return colorWrappedMesh
 
   def convertPointsToVTK(self, points):
+    # Converts numpy array to VTK array format
+    # deep=True creates independent copy, VTK_FLOAT specifies data type
     array_vtk = vtk_np.numpy_to_vtk(points, deep=True, array_type=vtk.VTK_FLOAT)
+
+    # Creates VTK points object
     points_vtk = vtk.vtkPoints()
+
+    # Assigns converted array as point data
     points_vtk.SetData(array_vtk)
+
+    # Creates polydata structure to hold points
     polydata_vtk = vtk.vtkPolyData()
+
+    # Attaches points to polydata
     polydata_vtk.SetPoints(points_vtk)
+
     return polydata_vtk
 #NEW BEGIN
   def wrapTextureFromImage(self, sourceMesh, textureImageNode, targetMesh, saveAsPointData='uchar-vector'):
@@ -1468,93 +1900,177 @@ class decaLogic(ScriptedLoadableModuleLogic):
     baseMesh.GetPointData().AddArray(colorVariance)
   #NEW END
   def computeAverageModelFromGroup(self, denseCorrespondenceGroup, baseIndex):
+    # Counts number of specimens in correspondence group
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets point count from first specimen
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes 3D array: points x coordinates x samples
     groupArray_np = np.empty((pointNumber,3,sampleNumber))
-    # get base mesh as closest to the meanshape
+
+    # Retrieves base mesh for topology reference
+    # Base mesh is specimen closest to mean shape
     baseMesh = denseCorrespondenceGroup.GetBlock(baseIndex)
-     # get points as array
+
+    # Extracts point coordinates from all specimens
     for i in range(sampleNumber):
+      # Gets current specimen's aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Converts VTK points to numpy array
       alignedMesh_np = vtk_np.vtk_to_numpy(alignedMesh.GetPoints().GetData())
+
+      # Stores in 3D array structure
       groupArray_np[:,:,i] = alignedMesh_np
-    #Calculate mean point positions of aligned group
+
+    # Calculates mean position for each point across all specimens
     averagePoints_np = np.mean(groupArray_np, axis=2)
+
+    # Converts mean points to VTK format
     averagePointsPolydata = self.convertPointsToVTK(averagePoints_np)
-    #Copy points into mesh with base connectivity
+
+    # Creates new polydata with mean points and base topology
     averageModel = vtk.vtkPolyData()
+
+    # Assigns averaged point positions
     averageModel.SetPoints(averagePointsPolydata.GetPoints())
+
+    # Copies connectivity from base mesh
     averageModel.SetPolys(baseMesh.GetPolys())
+
     return averageModel
 
   def addMagnitudeFeature(self, denseCorrespondenceGroup, modelNameArray, model):
+    # Counts specimens in correspondence group
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets number of corresponding points
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes array to store deformation magnitudes
     statsArray = np.zeros((pointNumber, sampleNumber))
+
+    # Creates VTK array for mean deformation values
     magnitudeMean = vtk.vtkDoubleArray()
     magnitudeMean.SetNumberOfComponents(1)
     magnitudeMean.SetName("Magnitude Mean")
+
+    # Creates VTK array for deformation standard deviations
     magnitudeSD = vtk.vtkDoubleArray()
     magnitudeSD.SetNumberOfComponents(1)
     magnitudeSD.SetName("Magnitude SD")
 
-     # get distance arrays
+    # Calculates deformation distances for each specimen
     for i in range(sampleNumber):
+      # Gets current specimen's aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Creates array for this specimen's deformations
       magnitudes = vtk.vtkDoubleArray()
       magnitudes.SetNumberOfComponents(1)
-      magnitudes.SetName(modelNameArray[i])
+      magnitudes.SetName(modelNameArray[i])  # Names array by specimen ID
+
+      # Computes point-wise distances from atlas
       for j in range(pointNumber):
+        # Gets atlas point position
         modelPoint = model.GetPoint(j)
+
+        # Gets corresponding point on specimen
         targetPoint = alignedMesh.GetPoint(j)
+
+        # Calculates Euclidean distance
         distance = np.sqrt(vtk.vtkMath.Distance2BetweenPoints(modelPoint,targetPoint))
+
+        # Stores distance in VTK array
         magnitudes.InsertNextValue(distance)
+
+        # Stores distance in statistics array
         statsArray[j,i]=distance
 
+      # Attaches specimen's magnitude array to model
       model.GetPointData().AddArray(magnitudes)
 
+    # Computes statistics across specimens for each point
     for i in range(pointNumber):
+      # Calculates mean deformation at this point
       pointMean = statsArray[i,:].mean()
       magnitudeMean.InsertNextValue(pointMean)
+
+      # Calculates standard deviation at this point
       pointSD = statsArray[i,:].std()
       magnitudeSD.InsertNextValue(pointSD)
 
+    # Attaches statistical arrays to model for visualization
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
 
   def addMagnitudeFeatureSymmetry(self, denseCorrespondenceGroup, denseCorrespondenceGroupMirror, modelNameArray, model):
+    # Counts specimens in correspondence groups
     sampleNumber = denseCorrespondenceGroup.GetNumberOfBlocks()
+
+    # Gets number of corresponding points
     pointNumber = denseCorrespondenceGroup.GetBlock(0).GetNumberOfPoints()
+
+    # Initializes array for asymmetry measurements
     statsArray = np.zeros((pointNumber, sampleNumber))
+
+    # Creates VTK array for mean asymmetry values
     magnitudeMean = vtk.vtkDoubleArray()
     magnitudeMean.SetNumberOfComponents(1)
     magnitudeMean.SetName("Magnitude Mean")
+
+    # Creates VTK array for asymmetry standard deviations
     magnitudeSD = vtk.vtkDoubleArray()
     magnitudeSD.SetNumberOfComponents(1)
     magnitudeSD.SetName("Magnitude SD")
 
-     # get distance arrays
+    # Calculates asymmetry distances for each specimen
     for i in range(sampleNumber):
+      # Gets original aligned mesh
       alignedMesh = denseCorrespondenceGroup.GetBlock(i)
+
+      # Gets mirrored aligned mesh
       mirrorMesh = denseCorrespondenceGroupMirror.GetBlock(i)
+
+      # Creates array for this specimen's asymmetry
       magnitudes = vtk.vtkDoubleArray()
       magnitudes.SetNumberOfComponents(1)
-      magnitudes.SetName(modelNameArray[i])
+      magnitudes.SetName(modelNameArray[i])  # Names array by specimen ID
+
+      # Computes point-wise asymmetry
       for j in range(pointNumber):
+        # Gets atlas point (unused but kept for consistency)
         modelPoint = model.GetPoint(j)
+
+        # Gets corresponding point on original
         targetPoint1 = alignedMesh.GetPoint(j)
+
+        # Gets corresponding point on mirror
         targetPoint2 = mirrorMesh.GetPoint(j)
+
+        # Calculates distance between original and mirrored points
         distance = np.sqrt(vtk.vtkMath.Distance2BetweenPoints(targetPoint1,targetPoint2))
+
+        # Stores asymmetry distance
         magnitudes.InsertNextValue(distance)
+
+        # Stores in statistics array
         statsArray[j,i]=distance
 
+      # Attaches specimen's asymmetry array to model
       model.GetPointData().AddArray(magnitudes)
 
+    # Computes asymmetry statistics for each point
     for i in range(pointNumber):
+      # Calculates mean asymmetry at this point
       pointMean = statsArray[i,:].mean()
       magnitudeMean.InsertNextValue(pointMean)
+
+      # Calculates asymmetry variability at this point
       pointSD = statsArray[i,:].std()
       magnitudeSD.InsertNextValue(pointSD)
 
+    # Attaches statistical arrays for visualization
     model.GetPointData().AddArray(magnitudeMean)
     model.GetPointData().AddArray(magnitudeSD)
