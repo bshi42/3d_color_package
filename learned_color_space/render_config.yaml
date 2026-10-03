@@ -1,0 +1,51 @@
+# Directory containing OBJ mesh files.
+models_dir: ../data/All_Clams/models
+
+# Directory containing texture images matched to meshes by specimen id.
+textures_dir: ../data/All_Clams/textures
+
+# Specimen ids to render. Leave empty to render every OBJ that has a matching texture.
+specimen_ids:
+  # - UF_IZ_438751
+
+# Standard camera view to render: exterior above, interior beneath, or both.
+view: above
+
+# Directory where rendered PNG files are written.
+output_dir: renders
+
+# Final per-view image width in pixels after cropping and resizing.
+width: 2048
+
+# Final per-view image height in pixels after cropping and resizing.
+height: 2048
+
+# Combined image layout when view is both.
+layout: horizontal
+
+# Background color passed to PyVista.
+background: white
+
+# Write PNGs with a transparent background.
+transparent: false
+
+# Orthographic framing margin around the mesh.
+margin: 1.08
+
+# Downsample texture long edge to this size before rendering. Use 0 for original size.
+texture_max_size: 4096
+
+# Render polygon edges on top of the textured mesh.
+show_edges: false
+
+# Disable smooth mesh shading.
+flat_shading: false
+
+# Show VTK warnings such as missing DISPLAY messages.
+show_vtk_warnings: false
+
+# Padding in pixels to keep around content before resizing to the final image dimensions.
+crop_padding_pixels: 5
+
+# Per-channel tolerance for treating pixels as background during cropping.
+crop_background_tolerance: 8
