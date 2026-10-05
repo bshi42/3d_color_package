@@ -37,3 +37,6 @@ debug.txt
 /out_uniform.ply
 /out_uniform_nonormal.obj
 /out_uniform_nonormal.mtl
+
+# paper drafts (kept locally, not versioned)
+*.docx

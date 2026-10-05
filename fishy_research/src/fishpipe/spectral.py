@@ -57,17 +57,40 @@ def vertex_lab(fcd: FaceColorData, mesh=None, cache_dir=None) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Mesh graph Laplacian eigenbasis — cached
 # ---------------------------------------------------------------------------
+_SIGN_SEED = 0
+
+
+def _canonical_signs(U: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Flip each eigenvector so its dot product with a fixed pseudo-random vector is positive.
+
+    eigsh returns every eigenvector with an arbitrary sign, so without this each fresh build
+    flips about half of them and anything sensitive to coefficient sign (PCA/ICA orientation,
+    UMAP, optimiser paths) shifts slightly. A random reference vector avoids the near-ties that
+    the mesh's near-bilateral symmetry creates for max-entry or skewness rules.
+    Returns (U with canonical signs, whether any column was flipped).
+    """
+    r = np.random.default_rng(_SIGN_SEED).standard_normal(U.shape[0])
+    s = np.sign(r @ U.astype(np.float64))
+    s[s == 0] = 1.0
+    return U * s.astype(U.dtype), bool((s < 0).any())
+
+
 def laplacian_eigenbasis(k: int = 300, mesh=None, cache_dir=None) -> tuple[np.ndarray, np.ndarray]:
     """Smallest-k eigenpairs of the symmetric-normalized mesh graph Laplacian.
 
     Returns (eigvals (k,), U (Nv, k)). Cached. Uses shift-invert for the low end.
+    Eigenvector signs are canonical (see `_canonical_signs`); a cache written before that
+    rule existed is re-signed and rewritten on first load.
     `mesh`/`cache_dir` default to the fishy mesh/cache; inject for other datasets.
     """
     cdir = cache_dir or config.CACHE_DIR
     cache_u = cdir / f"lap_U_{k}.npy"
     cache_w = cdir / f"lap_w_{k}.npy"
     if cache_u.exists() and cache_w.exists():
-        return np.load(cache_w), np.load(cache_u)
+        U, flipped = _canonical_signs(np.load(cache_u))
+        if flipped:
+            np.save(cache_u, U)
+        return np.load(cache_w), U
 
     mesh = mesh if mesh is not None else load_mesh()
     fv = mesh.face_v
@@ -84,13 +107,15 @@ def laplacian_eigenbasis(k: int = 300, mesh=None, cache_dir=None) -> tuple[np.nd
     D = sp.diags(dinv)
     L = sp.identity(nv) - D @ A @ D       # symmetric normalized Laplacian
     L = L.tocsc()
-    # smallest eigenvalues via shift-invert near 0
-    w, U = spla.eigsh(L, k=k, sigma=-1e-6, which="LM")
+    # smallest eigenvalues via shift-invert near 0 (fixed start vector: deterministic solve)
+    v0 = np.random.default_rng(_SIGN_SEED).standard_normal(nv)
+    w, U = spla.eigsh(L, k=k, sigma=-1e-6, which="LM", v0=v0)
     order = np.argsort(w)
     w, U = w[order], U[:, order]
+    U, _ = _canonical_signs(U.astype(np.float32))
     np.save(cache_w, w)
-    np.save(cache_u, U.astype(np.float32))
-    return w, U.astype(np.float32)
+    np.save(cache_u, U)
+    return w, U
 
 
 # ---------------------------------------------------------------------------

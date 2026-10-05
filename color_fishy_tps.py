@@ -15,6 +15,7 @@ Pipeline:
 import bpy
 import colorsys
 import copy
+import csv
 import json
 import os
 import shutil
@@ -23,8 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# Blender's snap Python disables user site-packages; add them explicitly
-# so that pip-installed packages (pandas, scikit-learn, etc.) are visible.
+# Blender's snap Python disables user site-packages; add them explicitly so that
+# a pip-installed numpy is visible if the bundled one is missing. (This script
+# deliberately depends only on numpy beyond the stdlib + bpy — Blender's bundled
+# pandas/sklearn builds are version-mismatched and fail to import.)
 import site
 _user_site = site.getusersitepackages()
 if _user_site not in sys.path:
@@ -32,33 +35,40 @@ if _user_site not in sys.path:
 sys.path.append("/snap/blender/common/BlenderPython")
 
 import numpy as np
-import pandas as pd
-from sklearn.datasets import make_blobs
+
+# NB: do NOT call sys.stdout.reconfigure() here — Blender wraps sys.stdout, and
+# reconfiguring it when stdout is redirected to a plain file silently breaks the
+# whole script (0 output, exit 0). For live logs, pipe Blender's output through
+# `tee` instead of redirecting to a file, or watch the output dir's file count.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # USER CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-LANDMARK_FILES: List[str] = [
-    # [0] is the REFERENCE specimen
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/Mchenga_m1.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/Nimbo_f1.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/Nimbo_f2.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/yellowhead_m1.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/yellowhead_m2.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/yellowhead_m4.mrk.json',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/LMS/yellowhead_m5.mrk.json',
+# Dataset root (the /media drive the paths originally pointed at is gone; the
+# data now lives under /mnt/data). Specimens listed in a fixed order — index 0
+# (Mchenga_m1) is the REFERENCE specimen.
+DATA_ROOT = "/mnt/data/ml_data/color-modeling-pub/3D_Fish (Copy)/3D_Fish"
+
+SPECIMEN_STEMS: List[str] = [
+    "Mchenga_m1",   # [0] REFERENCE
+    "Nimbo_f1",
+    "Nimbo_f2",
+    "yellowhead_m1",
+    "yellowhead_m2",
+    "yellowhead_m4",
+    "yellowhead_m5",
 ]
 
-MESH_FILES: List[str] = [
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/Mchenga_m1.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/Nimbo_f1.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/Nimbo_f2.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/yellowhead_m1.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/yellowhead_m2.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/yellowhead_m4.obj',
-    '/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/color-modeling-pub/3D_Fish/3D_Fish/Models/yellowhead_m5.obj',
-]
+# Meshes: use the DECIMATED scans (~25k verts, UV-preserving) so the pipeline is
+# fast. Switch MESH_DIR back to f"{DATA_ROOT}/Models" for the full-res scans.
+MESH_DIR = os.environ.get("FISHY_MESH_DIR", f"{DATA_ROOT}/Downsampled_decimate/Models")
+# Landmarks: REUSED from the original scans. Decimation preserves vertex
+# coordinates, so the landmarks placed on the full-res meshes still apply.
+LM_DIR = os.environ.get("FISHY_LM_DIR", f"{DATA_ROOT}/LMS")
+
+LANDMARK_FILES: List[str] = [f"{LM_DIR}/{s}.mrk.json" for s in SPECIMEN_STEMS]
+MESH_FILES: List[str] = [f"{MESH_DIR}/{s}.obj" for s in SPECIMEN_STEMS]
 
 TOP_LANDMARKS: List[str] = ['TFH', 'TFT']
 BOTTOM_LANDMARKS: List[str] = ['LBWL', 'RBWR', 'RBWL', 'LBWR', 'AH']
@@ -67,10 +77,13 @@ BACK_LANDMARKS: List[str] = ['TT', 'TV', 'TA']
 
 TPS_LAMBDA: float = 1e-6
 
-OUTPUT_DIR = "/media/alek/e6852e67-f061-4723-a0d3-c6271961077a/ml_data/cichlid-synth"
+OUTPUT_DIR = os.environ.get("FISHY_OUTPUT_DIR", "/mnt/data/ml_data/cichlid-synth-decimated")
 IMAGE_SIZE = 2048
-SEED = 49
-N_SAMPLES = 25
+SEED = int(os.environ.get("FISHY_SEED", "49"))
+N_SAMPLES = int(os.environ.get("FISHY_N_SAMPLES", "250"))
+# EMIT bake device: 'CPU' (default; stable) or 'GPU'. GPU segfaulted the RTX
+# 5090 partway through a 250-sample run; the emission bake is cheap on CPU.
+BAKE_DEVICE = os.environ.get("FISHY_BAKE_DEVICE", "CPU").upper()
 
 ADD_NOISE = True
 NOISE_AMOUNT = 0.10
@@ -499,6 +512,22 @@ def preprocess_specimens() -> Tuple[CanonicalTransform, np.ndarray, List[str], L
 # COLORING — parameter sampling & brush generation (from color_fishy.py)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _make_bimodal(n_samples: int, cluster_std: float,
+                  center_box: Tuple[float, float]) -> np.ndarray:
+    """Draw n_samples from a 2-mode 1-D mixture (stdlib/numpy replacement for
+    sklearn.datasets.make_blobs with n_features=1, centers=2).
+
+    Two mode centers are drawn uniformly from center_box; each sample is
+    assigned to a random mode and jittered by N(0, cluster_std). Uses the numpy
+    global RNG so it stays deterministic under the np.random.seed set by the
+    caller.
+    """
+    lo, hi = center_box
+    centers = np.random.uniform(lo, hi, size=2)
+    assign = np.random.randint(0, 2, size=n_samples)
+    return centers[assign] + np.random.normal(0.0, cluster_std, size=n_samples)
+
+
 def sample_space(n_samples: int, random_state: int = 42) -> List[dict]:
     """Sample n_samples parameter sets for fishy coloration."""
     np.random.seed(random_state)
@@ -510,15 +539,11 @@ def sample_space(n_samples: int, random_state: int = 42) -> List[dict]:
     stripe_width = np.random.normal(NOMINAL_STRIPE_WIDTH, STRIPE_WIDTH_STD, n_samples)
     stripe_longitudinal_offset = np.random.normal(
         NOMINAL_STRIPE_LONGITUDINAL_OFFSET, STRIPE_LONGITUDINAL_OFFSET_STD, n_samples)
-    belly_hue_shift = make_blobs(
-        n_samples=n_samples, n_features=1, centers=2,
-        cluster_std=BELLY_HUE_SHIFT_STD, center_box=BELLY_HUE_SHIFT_RANGE)[0][:, 0]
+    belly_hue_shift = _make_bimodal(n_samples, BELLY_HUE_SHIFT_STD, BELLY_HUE_SHIFT_RANGE)
     belly_hue = (BLUE[0] + belly_hue_shift) % 1.0
     belly_strength = np.clip(np.random.normal(1.0 - BELLY_STRENGTH_STD, BELLY_STRENGTH_STD, n_samples), 0, 1)
     belly_translation = np.random.normal(0, BELLY_TRANSLATION_STD, n_samples)
-    tail_hue_shift = make_blobs(
-        n_samples=n_samples, n_features=1, centers=2,
-        cluster_std=TAIL_HUE_SHIFT_STD, center_box=TAIL_HUE_SHIFT_RANGE)[0][:, 0]
+    tail_hue_shift = _make_bimodal(n_samples, TAIL_HUE_SHIFT_STD, TAIL_HUE_SHIFT_RANGE)
     tail_hue = (GREEN[0] + tail_hue_shift) % 1.0
     tail_strength = np.clip(np.random.normal(1.0 - TAIL_STRENGTH_STD, TAIL_STRENGTH_STD, n_samples), 0, 1)
     rosy_cheeks_present = np.random.choice([0, 1], n_samples, p=[1 - ROSY_CHEEKS_PROB, ROSY_CHEEKS_PROB])
@@ -831,6 +856,15 @@ def write_vertex_colors(obj, rgb: np.ndarray) -> None:
 
 def ensure_bake_material(obj):
     """Create emission material reading SynColor attribute; return (image, tex_node)."""
+    # Purge bake datablocks left over from previous samples so images/materials
+    # do not accumulate in bpy.data across the run (order-independent hygiene).
+    for m in list(bpy.data.materials):
+        if m.name.startswith("Syn_Bake_Mat"):
+            bpy.data.materials.remove(m, do_unlink=True)
+    for im in list(bpy.data.images):
+        if im.name.startswith("SynTex"):
+            bpy.data.images.remove(im, do_unlink=True)
+
     mat = bpy.data.materials.new(name="Syn_Bake_Mat")
     mat.use_nodes = True
     nt = mat.node_tree
@@ -857,11 +891,47 @@ def ensure_bake_material(obj):
     return img, tex
 
 
+def _configure_cycles(device: str) -> str:
+    """Enable the Cycles addon and, for GPU, activate a compute device.
+
+    `read_factory_settings(use_empty=True)` (run on every mesh import) disables
+    the Cycles addon, so this must run before each bake. Returns the device
+    string actually usable ('CPU' or 'GPU').
+
+    NOTE: an EMIT bake is a direct emission read-out — negligible compute — so
+    'CPU' is the default. It is also far more stable than repeatedly setting up
+    the GPU compute context 250x (that segfaulted the RTX 5090 mid-run).
+    """
+    import addon_utils
+    addon_utils.enable("cycles", default_set=True, persistent=True)
+    if device != "GPU":
+        return "CPU"
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+    except KeyError:
+        return "CPU"
+    for backend in ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL"):
+        try:
+            prefs.compute_device_type = backend
+        except TypeError:
+            continue
+        if hasattr(prefs, "refresh_devices"):
+            prefs.refresh_devices()
+        elif hasattr(prefs, "get_devices"):
+            prefs.get_devices()
+        if any(d.type == backend for d in prefs.devices):
+            for d in prefs.devices:
+                d.use = (d.type == backend)
+            return "GPU"
+    return "CPU"
+
+
 def bake_to_image(obj, img, output_image_path: str) -> None:
     """Bake EMIT pass to the image and save as PNG."""
     scene = bpy.context.scene
+    device = _configure_cycles(BAKE_DEVICE)
     scene.render.engine = 'CYCLES'
-    scene.cycles.device = 'GPU'
+    scene.cycles.device = device
     scene.render.bake.margin = 16
     scene.render.bake.target = 'IMAGE_TEXTURES'
 
@@ -951,7 +1021,8 @@ def main() -> None:
                      os.path.join(OUTPUT_DIR, "landmarks", f"{sample_tag}{lm_ext}"))
 
         # ── 9. Collect CSV row ──
-        row = dict(sample)
+        row = {"sample_tag": sample_tag, "sample_index": j}
+        row.update(sample)
         row["specimen_index"] = spec_idx
         row["mesh_file"] = spec.mesh_file
         row["landmark_file"] = spec.landmark_file
@@ -960,11 +1031,16 @@ def main() -> None:
         row["tps_rmse"] = spec.tps_rmse
         csv_rows.append(row)
 
-    # ── 10. Write global CSV ──
-    df = pd.DataFrame(csv_rows)
+    # ── 10. Write global ground-truth CSV ──
     csv_path = os.path.join(OUTPUT_DIR, "samples.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"\nDone. {N_SAMPLES} samples written to {OUTPUT_DIR}")
+    if csv_rows:
+        # Preserve column order: coloration params first, then provenance.
+        fieldnames = list(csv_rows[0].keys())
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(csv_rows)
+    print(f"\nDone. {len(csv_rows)} samples written to {OUTPUT_DIR}")
     print(f"CSV: {csv_path}")
 
 
