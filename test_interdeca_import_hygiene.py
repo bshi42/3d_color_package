@@ -7,6 +7,7 @@ stand-in to check the import contract without running scientific algorithms.
 """
 
 import ast
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ def _load_helpers():
         "_is_visible_dataset_file",
         "_dataset_file_paths",
         "_relative_landmark_surface_distance",
+        "_remove_temporary_scene_nodes",
         "LANDMARK_FILE_EXTENSIONS",
         "MODEL_FILE_EXTENSIONS",
     }
@@ -31,7 +33,7 @@ def _load_helpers():
              or (isinstance(node, ast.Assign) and any(
                  isinstance(target, ast.Name) and target.id in wanted
                  for target in node.targets))]
-    namespace = {"os": os, "Path": Path}
+    namespace = {"os": os, "Path": Path, "logging": logging}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), namespace)
     return namespace
 
@@ -70,7 +72,7 @@ def _load_logic(removed_nodes):
             RemoveNode=removed_nodes.append)),
     })
     methods = {}
-    for name in ("importLandmarks", "importMeshes", "_dataset_file_map"):
+    for name in ("importLandmarks", "importMeshes", "_dataset_file_map", "_load_model_with_cs"):
         method = _class_method(name)
         exec(compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"), namespace)
         methods[name] = namespace[name]
@@ -183,6 +185,142 @@ def test_mesh_import_preserves_order_coordinates_and_cleanup(
     assert group == expected_paths
     assert loaded == [(path, coordinate_system) for path in expected_paths]
     assert [node.GetPolyData() for node in removed_nodes] == expected_paths
+
+
+@pytest.mark.parametrize("failure_stage", ["polydata", "group"])
+def test_mesh_import_removes_loaded_node_when_collection_fails(monkeypatch, failure_stage):
+    monkeypatch.setattr(os, "listdir", lambda _: ["sample.obj"])
+    removed_nodes = []
+    logic = _load_logic(removed_nodes)
+    failure = RuntimeError("cannot collect mesh")
+
+    def fail(*args):
+        raise failure
+
+    node = SimpleNamespace(GetPolyData=fail if failure_stage == "polydata" else lambda: "mesh")
+    logic._load_model_with_cs = lambda *args: node
+    if failure_stage == "group":
+        monkeypatch.setattr(_DataGroup, "AddInputData", fail)
+
+    with pytest.raises(RuntimeError) as caught:
+        logic.importMeshes("/dataset", ["obj"])
+
+    assert caught.value is failure
+    assert removed_nodes == [node]
+
+
+@pytest.mark.parametrize("failure_stage", ["coordinate", "model", "filename", "read", "rejected", None])
+@pytest.mark.parametrize("legacy_storage", [False, True])
+def test_model_loader_cleans_up_scene_nodes(monkeypatch, failure_stage, legacy_storage):
+    removed_nodes = []
+    logic = _load_logic(removed_nodes)
+    calls = []
+    failure = RuntimeError("storage operation failed")
+    model = object()
+
+    def record(stage, value):
+        calls.append((stage, value))
+        if failure_stage == stage:
+            raise failure
+
+    storage = SimpleNamespace(
+        SetFileName=lambda path: record("filename", path),
+        ReadData=lambda node: (record("read", node), failure_stage != "rejected")[1],
+        SetCoordinateSystem=lambda value: record("coordinate", value),
+    )
+    if not legacy_storage:
+        storage.SetCoordinateSystemToLPS = lambda: record("coordinate", "LPS")
+        storage.SetCoordinateSystemToRAS = lambda: record("coordinate", "RAS")
+
+    def add_node(class_name):
+        if class_name == "vtkMRMLModelStorageNode":
+            return storage
+        assert class_name == "vtkMRMLModelNode"
+        record("model", model)
+        return model
+
+    scene = logic._load_model_with_cs.__func__.__globals__["slicer"].mrmlScene
+    monkeypatch.setattr(scene, "AddNewNodeByClass", add_node, raising=False)
+
+    if failure_stage is None:
+        assert logic._load_model_with_cs("/dataset/sample.obj", "lps") is model
+    else:
+        with pytest.raises(RuntimeError) as caught:
+            logic._load_model_with_cs("/dataset/sample.obj", "lps")
+        if failure_stage == "rejected":
+            assert str(caught.value) == "Failed to read model: /dataset/sample.obj"
+        else:
+            assert caught.value is failure
+
+    assert calls[0] == ("coordinate", 1 if legacy_storage else "LPS")
+    if failure_stage in ("filename", "read", "rejected"):
+        assert removed_nodes == [storage, model]
+    else:
+        assert removed_nodes == [storage]
+
+
+def test_cleanup_keeps_original_error_and_attempts_remaining_nodes(caplog):
+    logic = _load_logic([])
+    namespace = logic._load_model_with_cs.__func__.__globals__
+    attempted = []
+
+    def remove(node):
+        attempted.append(node)
+        if node == "storage":
+            raise RuntimeError("cleanup failed")
+
+    namespace["slicer"].mrmlScene.RemoveNode = remove
+    original_error = ValueError("model import failed")
+    with pytest.raises(ValueError) as caught:
+        try:
+            raise original_error
+        finally:
+            namespace["_remove_temporary_scene_nodes"]("storage", "model", suppress_errors=True)
+
+    assert caught.value is original_error
+    assert attempted == ["storage", "model"]
+    assert "cleanup failed" in caplog.text
+
+
+def test_cleanup_failure_without_import_error_is_reported():
+    logic = _load_logic([])
+    namespace = logic._load_model_with_cs.__func__.__globals__
+
+    def remove(node):
+        raise RuntimeError("cleanup failed")
+
+    namespace["slicer"].mrmlScene.RemoveNode = remove
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        namespace["_remove_temporary_scene_nodes"]("storage")
+
+
+@pytest.mark.parametrize("model_cleanup_fails", [False, True])
+def test_model_loader_releases_unreturned_model_when_storage_cleanup_fails(model_cleanup_fails):
+    removed_nodes = []
+    logic = _load_logic(removed_nodes)
+    scene = logic._load_model_with_cs.__func__.__globals__["slicer"].mrmlScene
+    model = object()
+    storage = SimpleNamespace(
+        SetCoordinateSystemToRAS=lambda: None,
+        SetFileName=lambda path: None,
+        ReadData=lambda node: True,
+    )
+    scene.AddNewNodeByClass = lambda name: storage if name == "vtkMRMLModelStorageNode" else model
+    storage_error = RuntimeError("storage cleanup failed")
+
+    def remove(node):
+        removed_nodes.append(node)
+        if node is storage:
+            raise storage_error
+        if model_cleanup_fails:
+            raise RuntimeError("model cleanup also failed")
+
+    scene.RemoveNode = remove
+    with pytest.raises(RuntimeError) as caught:
+        logic._load_model_with_cs("/dataset/sample.obj")
+
+    assert caught.value is storage_error
+    assert removed_nodes == [storage, model]
 
 
 def test_preflight_file_map_uses_matching_suffix_and_rejects_unknown_kinds(monkeypatch):

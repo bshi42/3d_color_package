@@ -48,6 +48,19 @@ LANDMARK_FILE_EXTENSIONS = ('.mrk.json', '.json', '.fcsv')
 MODEL_FILE_EXTENSIONS = ('.obj', '.ply', '.stl', '.vtp', '.vtk')
 
 
+def _remove_temporary_scene_nodes(*nodes, suppress_errors=False):
+  """Release temporary nodes; preserve an earlier import error if requested."""
+  for node in nodes:
+    if node is None:
+      continue
+    try:
+      slicer.mrmlScene.RemoveNode(node)
+    except Exception:
+      if not suppress_errors:
+        raise
+      logging.exception("Failed to remove temporary scene node during error cleanup")
+
+
 def _dataset_file_paths(directory, extensions, strip_suffixes=(), restrict_to=None):
   """Select one visible input path per subject in extension-priority order.
 
@@ -7324,8 +7337,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     for b in names:
       inputFilePath = paths[b]
       modelNode = self._load_model_with_cs(inputFilePath, coordinateSystem)
-      modelGroup.AddInputData(modelNode.GetPolyData())
-      slicer.mrmlScene.RemoveNode(modelNode)
+      collected = False
+      try:
+        modelGroup.AddInputData(modelNode.GetPolyData())
+        collected = True
+      finally:
+        _remove_temporary_scene_nodes(modelNode, suppress_errors=not collected)
     modelGroup.Update()
     return names, modelGroup.GetOutput()
 
@@ -8253,20 +8270,29 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
   
   def _load_model_with_cs(self, filePath, coordinateSystem='RAS'):
     storage = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelStorageNode')
-    cs = (coordinateSystem or 'RAS').upper()
+    modelNode = None
+    loaded = False
     try:
-      if cs == 'RAS': storage.SetCoordinateSystemToRAS()
-      else:           storage.SetCoordinateSystemToLPS()
-    except AttributeError:
-      storage.SetCoordinateSystem(0 if cs == 'RAS' else 1)
-    modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
-    storage.SetFileName(filePath)
-    ok = storage.ReadData(modelNode)
-    slicer.mrmlScene.RemoveNode(storage)
-    if not ok:
-      slicer.mrmlScene.RemoveNode(modelNode)
-      raise RuntimeError(f"Failed to read model: {filePath}")
-    return modelNode
+      cs = (coordinateSystem or 'RAS').upper()
+      try:
+        if cs == 'RAS': storage.SetCoordinateSystemToRAS()
+        else:           storage.SetCoordinateSystemToLPS()
+      except AttributeError:
+        storage.SetCoordinateSystem(0 if cs == 'RAS' else 1)
+      modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
+      storage.SetFileName(filePath)
+      loaded = bool(storage.ReadData(modelNode))
+      if not loaded:
+        raise RuntimeError(f"Failed to read model: {filePath}")
+      return modelNode
+    finally:
+      try:
+        _remove_temporary_scene_nodes(
+          storage, None if loaded else modelNode, suppress_errors=not loaded)
+      except Exception:
+        # A failed storage cleanup prevents ownership passing to the caller.
+        _remove_temporary_scene_nodes(modelNode, suppress_errors=True)
+        raise
 
   def findBlenderExecutable(self):
     """
