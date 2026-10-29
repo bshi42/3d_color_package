@@ -44,6 +44,44 @@ def _is_visible_dataset_file(file_name):
   return bool(file_name) and not file_name.startswith('.')
 
 
+LANDMARK_FILE_EXTENSIONS = ('.mrk.json', '.json', '.fcsv')
+MODEL_FILE_EXTENSIONS = ('.obj', '.ply', '.stl', '.vtp', '.vtk')
+
+
+def _dataset_file_paths(directory, extensions, strip_suffixes=(), restrict_to=None):
+  """Select one visible input path per subject in extension-priority order.
+
+  Extensions must be lowercase and ordered from most to least preferred.
+  By default only the matching extension is removed from the subject ID.
+  Landmark import can retain its legacy repeated-suffix stripping by passing
+  ``strip_suffixes``. Equal-priority files retain directory encounter order.
+  """
+  selected = {}
+  for file_name in os.listdir(directory):
+    if not _is_visible_dataset_file(file_name):
+      continue
+    lower_name = file_name.lower()
+    for rank, extension in enumerate(extensions):
+      if lower_name.endswith(extension):
+        break
+    else:
+      continue
+
+    if strip_suffixes:
+      base = Path(file_name)
+      while base.suffix.lower() in strip_suffixes:
+        base = base.with_suffix('')
+      subject_id = base.name
+    else:
+      subject_id = file_name[:-len(extension)]
+
+    if restrict_to is not None and subject_id not in restrict_to:
+      continue
+    if subject_id not in selected or rank < selected[subject_id][0]:
+      selected[subject_id] = (rank, os.path.join(directory, file_name))
+  return {subject_id: value[1] for subject_id, value in selected.items()}
+
+
 LANDMARK_SURFACE_WARNING_RELATIVE_THRESHOLD = 0.02
 ATLAS_ANCHOR_LABELS = ('beak', 'hinge_anterior', 'hinge_posterior')
 ATLAS_SIDE_LABEL = 'anterior_adductor_dorsal'
@@ -7258,28 +7296,13 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
 
   def importLandmarks(self, topDir):
     # one landmark file per subject, returned in deterministic (sorted) order
-    prefer = ['.mrk.json', '.json', '.fcsv']  # priority
-    pick = {}  # base -> (rank, fullpath)
+    paths = _dataset_file_paths(
+      topDir, LANDMARK_FILE_EXTENSIONS, strip_suffixes=('.mrk', '.json', '.fcsv'))
 
-    for f in os.listdir(topDir):
-      if not _is_visible_dataset_file(f):
-        continue
-      fl = f.lower()
-      if fl.endswith(tuple(prefer)):
-        p = Path(f)
-        base = p
-        # strip .mrk.json / .json / .fcsv
-        while base.suffix.lower() in ('.mrk', '.json', '.fcsv'):
-          base = base.with_suffix('')
-        base = base.name  # e.g. 'Subject01_align'
-        rank = 0 if fl.endswith('.mrk.json') else (1 if fl.endswith('.json') else 2)
-        if base not in pick or rank < pick[base][0]:
-          pick[base] = (rank, os.path.join(topDir, f))
-
-    names = sorted(pick.keys())
+    names = sorted(paths)
     group = vtk.vtkMultiBlockDataGroupFilter()
     for name in names:
-      polydataPoints = self.fiducialNodeToPolyData(pick[name][1])
+      polydataPoints = self.fiducialNodeToPolyData(paths[name])
       group.AddInputData(polydataPoints)
     group.Update()
     return names, group.GetOutput()
@@ -7290,27 +7313,16 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
     # choose exactly one mesh per subject, preferring OBJ over PLY/STL/VTP/VTK
     # Generated intermediates are RAS by default; raw source collections can
     # opt into LPS at the call site.
-    priority = {'.obj':0, '.ply':1, '.stl':2, '.vtp':3, '.vtk':4}
-    pick = {}  # base -> (rank, fullpath)
-
-    for f in os.listdir(topDir):
-      if not _is_visible_dataset_file(f):
-        continue
-      ext = os.path.splitext(f)[1].lower()
-      if ext in priority:
-        base = os.path.splitext(f)[0]  # e.g. 'Subject01_align'
-        if (restrict_to is None) or (base in restrict_to):
-          if base not in pick or priority[ext] < pick[base][0]:
-            pick[base] = (priority[ext], os.path.join(topDir, f))
+    paths = _dataset_file_paths(topDir, MODEL_FILE_EXTENSIONS, restrict_to=restrict_to)
 
     if restrict_to is not None:
-      names = [b for b in restrict_to if b in pick]  # keep same order as landmarks
+      names = [b for b in restrict_to if b in paths]  # keep same order as landmarks
     else:
-      names = sorted(pick.keys())
+      names = sorted(paths)
 
     modelGroup = vtk.vtkMultiBlockDataGroupFilter()
     for b in names:
-      inputFilePath = pick[b][1]
+      inputFilePath = paths[b]
       modelNode = self._load_model_with_cs(inputFilePath, coordinateSystem)
       modelGroup.AddInputData(modelNode.GetPolyData())
       slicer.mrmlScene.RemoveNode(modelNode)
@@ -7928,26 +7940,12 @@ class InterDeCALogic(ScriptedLoadableModuleLogic):
   def _dataset_file_map(self, directory, kind):
     """Return one deterministic input path per specimen for preflight checks."""
     if kind == 'landmark':
-      extensions = ('.mrk.json', '.json', '.fcsv')
+      extensions = LANDMARK_FILE_EXTENSIONS
     elif kind == 'model':
-      extensions = ('.obj', '.ply', '.stl', '.vtp', '.vtk')
+      extensions = MODEL_FILE_EXTENSIONS
     else:
       raise ValueError(f"Unsupported dataset file kind: {kind}")
-
-    selected = {}
-    for file_name in os.listdir(directory):
-      if not _is_visible_dataset_file(file_name):
-        continue
-      lower_name = file_name.lower()
-      matched_extension = next((extension for extension in extensions
-                                if lower_name.endswith(extension)), None)
-      if matched_extension is None:
-        continue
-      subject_id = file_name[:-len(matched_extension)]
-      rank = extensions.index(matched_extension)
-      if subject_id not in selected or rank < selected[subject_id][0]:
-        selected[subject_id] = (rank, os.path.join(directory, file_name))
-    return {subject_id: value[1] for subject_id, value in selected.items()}
+    return _dataset_file_paths(directory, extensions)
 
   def _landmark_to_surface_distances(self, modelNode, lmNode):
     locator = vtk.vtkStaticCellLocator()
